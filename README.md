@@ -297,7 +297,7 @@ Assets/Plugins/ProjectMakers/horizOn/
 ## Support
 
 - **Dashboard**: [horizon.pm](https://horizon.pm)
-- **Issues**: [GitHub](https://github.com/ProjectMakers/horizOn-SDK)
+- **Issues**: [GitHub](https://github.com/ProjectMakersDE/horizOn-SDK)
 
 ---
 
