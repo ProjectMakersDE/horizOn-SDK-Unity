@@ -7,58 +7,32 @@ on:
 
 jobs:
   build:
-    name: Build Unity Package
+    name: Create Unity Package
     runs-on: ubuntu-latest
 
     steps:
-      - name: Free disk space
-        run: |
-          echo "Before cleanup:"
-          df -h
-          # Remove unnecessary tools and libraries
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          # Clean apt cache
-          sudo apt-get clean
-          # Clean docker images
-          docker system prune -af
-          echo "After cleanup:"
-          df -h
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Cache Library
-        uses: actions/cache@v4
-        with:
-          path: Library
-          key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
-          restore-keys: |
-            Library-
-
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Export Unity Package
-        uses: game-ci/unity-builder@v4
-        env:
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          PACKAGE_VERSION: ${{ steps.version.outputs.VERSION }}
+      - name: Generate meta file list
+        run: |
+          # Create list of all .meta files in the SDK folder
+          echo "Assets/Plugins/ProjectMakers/horizOn.meta" > metaList
+          find Assets/Plugins/ProjectMakers/horizOn -name "*.meta" >> metaList
+          echo "=== Files to include ==="
+          cat metaList
+
+      - name: Create Unity Package
+        uses: pCYSl5EDgo/create-unitypackage@master
         with:
-          unityVersion: 6000.0.31f1
-          targetPlatform: StandaloneLinux64
-          buildMethod: PM.horizOn.Cloud.Editor.PackageExporter.Export
-          allowDirtyBuild: true
-          customImage: unityci/editor:ubuntu-6000.0.31f1-base-3
+          package-path: horizOn-SDK-${{ steps.version.outputs.VERSION }}.unitypackage
+          include-files: metaList
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
