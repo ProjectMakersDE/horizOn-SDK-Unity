@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://horizon.pm">
+    <img src="https://horizon.pm/media/images/og-image.png" alt="horizOn - Game Backend & Live-Ops Dashboard" />
+  </a>
+</p>
+
 # horizOn Cloud SDK for Unity
 
 A complete backend solution for Unity games with user authentication, cloud saves, leaderboards, remote configuration, news, gift codes, and feedback.
@@ -8,7 +14,9 @@ A complete backend solution for Unity games with user authentication, cloud save
 
 ## Quick Start
 
-See **[QUICKSTART.md](QUICKSTART.md)** for step-by-step setup instructions.
+> **[Quickstart Guide on horizon.pm](https://horizon.pm/quickstart#unity)** - Interactive setup guide with step-by-step instructions.
+
+See also **[QUICKSTART.md](QUICKSTART.md)** for offline setup instructions.
 
 **TL;DR:**
 1. Get API key from [horizon.pm](https://horizon.pm)
