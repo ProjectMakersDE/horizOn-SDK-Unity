@@ -1,31 +1,76 @@
-name: Build and Release Unity Package
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  build:
-    name: Create Unity Package
+  release:
     runs-on: ubuntu-latest
+
+    outputs:
+      released: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
+          persist-credentials: false
           lfs: true
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Install semantic-release plugins
+        run: npm install -g semantic-release @semantic-release/changelog @semantic-release/git
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release output
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          echo "New release published: ${{ steps.semantic.outputs.new_release_version }}"
+
+      - name: Trigger changelog sync
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          gh api repos/ProjectMakersDE/horizOn-Changelog/dispatches \
+            -f event_type=sync-changelog \
+            -f 'client_payload[source]=unity-sdk'
+
+  build:
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.released == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          lfs: true
 
       - name: Generate meta file list
         run: |
-          # Create list of all .meta files in the SDK folder
           echo "Assets/Plugins/ProjectMakers/horizOn.meta" > metaList
           find Assets/Plugins/ProjectMakers/horizOn -name "*.meta" >> metaList
           echo "=== Files to include ==="
@@ -34,14 +79,11 @@ jobs:
       - name: Create Unity Package
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
-          package-path: horizOn-SDK-${{ steps.version.outputs.VERSION }}.unitypackage
+          package-path: horizOn-SDK-v${{ needs.release.outputs.version }}.unitypackage
           include-files: metaList
 
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: horizOn-SDK-${{ steps.version.outputs.VERSION }}.unitypackage
-          generate_release_notes: true
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v${{ needs.release.outputs.version }}
+          files: horizOn-SDK-v${{ needs.release.outputs.version }}.unitypackage
