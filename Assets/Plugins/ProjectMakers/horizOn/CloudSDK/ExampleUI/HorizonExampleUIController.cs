@@ -39,6 +39,9 @@ namespace PM.horizOn.Cloud.ExampleUI
         private Button _btnSignOut;
         private Button _btnCheckAuth;
         private Button _btnChangeName;
+        private TextField _txtGoogleAuthCode;
+        private Button _btnSignUpGoogle;
+        private Button _btnSignInGoogle;
         private Label _lblAuthStatus;
         private TextField _txtAuthResponse;
 
@@ -138,6 +141,9 @@ namespace PM.horizOn.Cloud.ExampleUI
             _btnSignOut = _root.Q<Button>("btn-signout");
             _btnCheckAuth = _root.Q<Button>("btn-checkauth");
             _btnChangeName = _root.Q<Button>("btn-changename");
+            _txtGoogleAuthCode = _root.Q<TextField>("txt-google-auth-code");
+            _btnSignUpGoogle = _root.Q<Button>("btn-signup-google");
+            _btnSignInGoogle = _root.Q<Button>("btn-signin-google");
             _lblAuthStatus = _root.Q<Label>("lbl-auth-status");
             _txtAuthResponse = _root.Q<TextField>("txt-auth-response");
 
@@ -220,6 +226,8 @@ namespace PM.horizOn.Cloud.ExampleUI
             _btnSignOut.clicked += OnSignOutClicked;
             _btnCheckAuth.clicked += OnCheckAuthClicked;
             _btnChangeName.clicked += OnChangeNameClicked;
+            _btnSignUpGoogle.clicked += OnSignUpGoogleClicked;
+            _btnSignInGoogle.clicked += OnSignInGoogleClicked;
 
             // Password Reset
             _btnForgotPassword.clicked += OnForgotPasswordClicked;
@@ -588,6 +596,63 @@ namespace PM.horizOn.Cloud.ExampleUI
             else
             {
                 _txtAuthResponse.value = "Failed to change display name. Check console for details.";
+            }
+
+            UpdateUIState();
+        }
+
+        // Google Authentication Handlers
+        private async void OnSignUpGoogleClicked()
+        {
+            string authCode = _txtGoogleAuthCode.value;
+
+            if (string.IsNullOrWhiteSpace(authCode))
+            {
+                _txtAuthResponse.value = "Error: Google authorization code is required.\nObtain it from the Google Sign-In SDK.";
+                return;
+            }
+
+            string displayName = string.IsNullOrWhiteSpace(_txtDisplayName.value) ? null : _txtDisplayName.value;
+
+            _txtAuthResponse.value = "Signing up with Google...";
+            bool success = await UserManager.Instance.SignUpGoogle(authCode, username: displayName);
+
+            if (success)
+            {
+                var user = UserManager.Instance.CurrentUser;
+                _txtDisplayName.value = user.DisplayName;
+                _txtAuthResponse.value = $"Google sign up successful!\nUser ID: {user.UserId}\nEmail: {user.Email}\nDisplay Name: {user.DisplayName}\nAuth Type: {user.AuthType}\nAccess Token: {user.AccessToken}";
+            }
+            else
+            {
+                _txtAuthResponse.value = "Google sign up failed. Check console for details.";
+            }
+
+            UpdateUIState();
+        }
+
+        private async void OnSignInGoogleClicked()
+        {
+            string authCode = _txtGoogleAuthCode.value;
+
+            if (string.IsNullOrWhiteSpace(authCode))
+            {
+                _txtAuthResponse.value = "Error: Google authorization code is required.\nObtain it from the Google Sign-In SDK.";
+                return;
+            }
+
+            _txtAuthResponse.value = "Signing in with Google...";
+            bool success = await UserManager.Instance.SignInGoogle(authCode);
+
+            if (success)
+            {
+                var user = UserManager.Instance.CurrentUser;
+                _txtDisplayName.value = user.DisplayName;
+                _txtAuthResponse.value = $"Google sign in successful!\nUser ID: {user.UserId}\nEmail: {user.Email}\nDisplay Name: {user.DisplayName}\nAuth Type: {user.AuthType}\nAccess Token: {user.AccessToken}";
+            }
+            else
+            {
+                _txtAuthResponse.value = "Google sign in failed. Check console for details.\nUser may not exist - try Sign Up Google first.";
             }
 
             UpdateUIState();

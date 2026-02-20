@@ -4,8 +4,28 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
+    ["semantic-release-replace-plugin", {
+      "replacements": [
+        {
+          "files": ["Assets/Plugins/ProjectMakers/horizOn/README.md"],
+          "from": "\\*\\*SDK Version\\*\\*: v[0-9]+\\.[0-9]+\\.[0-9]+",
+          "to": "**SDK Version**: v${nextRelease.version}",
+          "countMatches": true
+        },
+        {
+          "files": ["Assets/Plugins/ProjectMakers/horizOn/Documentation/UNITY_SDK_API_REFERENCE.md"],
+          "from": "\\*\\*Version\\*\\*: [0-9]+\\.[0-9]+\\.[0-9]+",
+          "to": "**Version**: ${nextRelease.version}",
+          "countMatches": true
+        }
+      ]
+    }],
     ["@semantic-release/git", {
-      "assets": ["CHANGELOG.md"],
+      "assets": [
+        "CHANGELOG.md",
+        "Assets/Plugins/ProjectMakers/horizOn/README.md",
+        "Assets/Plugins/ProjectMakers/horizOn/Documentation/UNITY_SDK_API_REFERENCE.md"
+      ],
       "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
     }],
     "@semantic-release/github"

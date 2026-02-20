@@ -40,6 +40,14 @@
                     </ui:VisualElement>
                     <ui:Label text="Not Signed In" name="lbl-auth-status" class="status-label" />
 
+                    <!-- Google Authentication Section -->
+                    <ui:Label text="Google Authentication" class="subsection-title" />
+                    <ui:TextField name="txt-google-auth-code" label="Google Authorization Code" class="input-field" />
+                    <ui:VisualElement class="button-row">
+                        <ui:Button text="Sign Up Google" name="btn-signup-google" class="action-button" />
+                        <ui:Button text="Sign In Google" name="btn-signin-google" class="action-button" />
+                    </ui:VisualElement>
+
                     <!-- Password Reset Section -->
                     <ui:Label text="Password Reset" class="subsection-title" />
                     <ui:TextField name="txt-forgot-email" label="Email for Password Reset" class="input-field" />

@@ -66,7 +66,8 @@ Base path: `/api/v1/app/user-management`
   "email": "string (max 40 chars, required for EMAIL)",
   "password": "string (4-32 chars, required for EMAIL)",
   "anonymousToken": "string (max 32 chars, for ANONYMOUS)",
-  "googleAuthorizationCode": "string (max 2000 chars, for GOOGLE)"
+  "googleAuthorizationCode": "string (max 2000 chars, for GOOGLE)",
+  "googleRedirectUri": "string (for GOOGLE, empty string for mobile apps)"
 }
 ```
 
@@ -107,8 +108,9 @@ bool success = await UserManager.Instance.SignUpEmail(
 
 // Google sign-up (requires Google Sign-In SDK)
 bool success = await UserManager.Instance.SignUpGoogle(
-    googleAuthorizationCode,
-    "DisplayName"  // optional
+    googleAuthorizationCode,   // from Google Sign-In SDK
+    redirectUri: "",           // empty for mobile (Android/iOS)
+    username: "DisplayName"    // optional
 );
 
 // Error handling
@@ -133,7 +135,8 @@ if (!success)
   "email": "string (for EMAIL)",
   "password": "string (for EMAIL)",
   "anonymousToken": "string (for ANONYMOUS)",
-  "googleAuthorizationCode": "string (for GOOGLE)"
+  "googleAuthorizationCode": "string (for GOOGLE)",
+  "googleRedirectUri": "string (for GOOGLE, empty string for mobile apps)"
 }
 ```
 
@@ -176,7 +179,10 @@ if (UserManager.Instance.HasCachedAnonymousToken())
 }
 
 // Google sign-in
-bool success = await UserManager.Instance.SignInGoogle(googleAuthCode);
+bool success = await UserManager.Instance.SignInGoogle(
+    googleAuthCode,    // from Google Sign-In SDK
+    redirectUri: ""    // empty for mobile (Android/iOS)
+);
 
 // Check result and access user data
 if (success && UserManager.Instance.IsSignedIn)
