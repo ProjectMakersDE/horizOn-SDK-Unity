@@ -144,7 +144,7 @@ namespace PM.horizOn.Cloud.Core
         }
 
         /// <summary>
-        /// Reconnect to the best available host.
+        /// Reconnect to the horizOn backend.
         /// Called automatically on request failure (fallback strategy).
         /// </summary>
         public async Task<bool> Reconnect()
