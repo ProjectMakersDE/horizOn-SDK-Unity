@@ -19,7 +19,7 @@ namespace PM.horizOn.Cloud.Core
         [Tooltip("Your horizOn API key (encrypted in builds)")]
         [SerializeField] private string _encryptedApiKey;
 
-        [Tooltip("List of API host URLs to ping for connection")]
+        [Tooltip("Backend host URLs. Single URL uses direct connection; multiple URLs enable ping-based selection")]
         [SerializeField] private string[] _hosts;
 
         [Header("Environment Settings")]

@@ -56,7 +56,7 @@ async void Start()
     // Initialize SDK
     HorizonApp.Initialize();
 
-    // Connect to best server
+    // Connect to server
     var server = new HorizonServer();
     await server.Connect();
 }

@@ -44,9 +44,7 @@ Get your Unity game connected to horizOn Cloud in minutes.
 {
   "apiKey": "horizon_YOUR_API_KEY_HERE",
   "backendDomains": [
-    "https://eu.horizon.pm",
-    "https://as.horizon.pm",
-    "https://us.horizon.pm"
+    "https://horizon.pm"
   ]
 }
 ```
