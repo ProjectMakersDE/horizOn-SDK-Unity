@@ -2,7 +2,7 @@
 
 A complete backend solution for Unity games with user authentication, cloud saves, leaderboards, remote configuration, news, gift codes, and feedback.
 
-**SDK Version**: v1.0.0 | **Unity Version**: 2023.3+ (Unity 6) | **Namespace**: `PM.horizOn.Cloud`
+**SDK Version**: v1.1.0 | **Unity Version**: 2023.3+ (Unity 6) | **Namespace**: `PM.horizOn.Cloud`
 
 ---
 
@@ -297,7 +297,7 @@ Assets/Plugins/ProjectMakers/horizOn/
 ## Support
 
 - **Dashboard**: [horizon.pm](https://horizon.pm)
-- **Issues**: [GitHub](https://github.com/ProjectMakersDE/horizOn-SDK)
+- **Issues**: [GitHub](https://github.com/ProjectMakersDE/horizOn-SDK-Unity)
 
 ---
 

@@ -94,7 +94,7 @@ namespace PM.horizOn.Cloud.Core
                 // Ping all hosts
                 await PingAllHosts();
 
-                // Select best host
+                // Select host with lowest ping (multi-host mode)
                 if (_hostPingResults.Count == 0)
                 {
                     _status = ConnectionStatus.Failed;

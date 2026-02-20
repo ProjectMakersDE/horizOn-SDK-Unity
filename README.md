@@ -16,7 +16,7 @@ A complete backend solution for Unity games with user authentication, cloud save
 
 > **[Quickstart Guide on horizon.pm](https://horizon.pm/quickstart#unity)** - Interactive setup guide with step-by-step instructions.
 
-See also **[QUICKSTART.md](QUICKSTART.md)** for offline setup instructions.
+See also **[QUICKSTART.md](Assets/Plugins/ProjectMakers/horizOn/QUICKSTART.md)** for offline setup instructions.
 
 **TL;DR:**
 1. Get API key from [horizon.pm](https://horizon.pm)
@@ -286,8 +286,8 @@ Assets/Plugins/ProjectMakers/horizOn/
 
 ## Documentation
 
-- **[QUICKSTART.md](QUICKSTART.md)** - Step-by-step setup guide
-- **[Documentation/UNITY_SDK_API_REFERENCE.md](Documentation/UNITY_SDK_API_REFERENCE.md)** - Complete API reference
+- **[QUICKSTART.md](Assets/Plugins/ProjectMakers/horizOn/QUICKSTART.md)** - Step-by-step setup guide
+- **[API Reference](Assets/Plugins/ProjectMakers/horizOn/Documentation/UNITY_SDK_API_REFERENCE.md)** - Complete API reference
 
 ---
 
@@ -305,7 +305,7 @@ Assets/Plugins/ProjectMakers/horizOn/
 ## Support
 
 - **Dashboard**: [horizon.pm](https://horizon.pm)
-- **Issues**: [GitHub](https://github.com/ProjectMakersDE/horizOn-SDK)
+- **Issues**: [GitHub](https://github.com/ProjectMakersDE/horizOn-SDK-Unity)
 
 ---
 
