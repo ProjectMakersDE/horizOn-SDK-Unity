@@ -13,7 +13,8 @@ namespace PM.horizOn.Cloud.Core
 {
     /// <summary>
     /// Main server connection class for horizOn SDK.
-    /// Handles host selection via ping, connection management, and fallback on failure.
+    /// For single-host configs (loadbalancer), connects directly without ping.
+    /// For multi-host configs, selects the fastest host via ping.
     /// </summary>
     public class HorizonServer
     {
@@ -38,9 +39,9 @@ namespace PM.horizOn.Cloud.Core
         public bool IsConnected => _status == ConnectionStatus.Connected;
 
         /// <summary>
-        /// Connect to the best available host.
-        /// Pings all hosts and selects the one with the lowest ping.
-        /// On-demand reconnection: only re-pings if current host fails.
+        /// Connect to the horizOn backend.
+        /// Single host: connects directly (loadbalancer mode).
+        /// Multiple hosts: pings all and selects the one with the lowest latency.
         /// </summary>
         /// <returns>True if connection succeeded, false otherwise</returns>
         public async Task<bool> Connect()
@@ -71,6 +72,24 @@ namespace PM.horizOn.Cloud.Core
 
                 // Initialize network service
                 NetworkService.Instance?.Initialize(_config);
+
+                // Single host: skip ping, connect directly (loadbalancer handles routing)
+                if (_config.Hosts.Length == 1)
+                {
+                    _activeHost = _config.Hosts[0];
+                    NetworkService.Instance?.SetActiveHost(_activeHost);
+
+                    _status = ConnectionStatus.Connected;
+                    HorizonApp.Log?.Info($"Connected to {_activeHost} (single host, no ping)");
+
+                    EventService.Instance?.Publish(EventKeys.ConnectionSuccess, new ConnectionEventData
+                    {
+                        Status = _status,
+                        ActiveHost = _activeHost
+                    });
+
+                    return true;
+                }
 
                 // Ping all hosts
                 await PingAllHosts();
