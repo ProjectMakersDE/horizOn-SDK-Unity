@@ -85,10 +85,11 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Sign up with Google authentication.
         /// </summary>
-        /// <param name="googleAuthorizationCode">Google authorization code</param>
+        /// <param name="googleAuthorizationCode">Google authorization code from Google Sign-In SDK</param>
+        /// <param name="redirectUri">OAuth redirect URI. Leave empty for mobile apps (Android/iOS).</param>
         /// <param name="username">Optional username</param>
         /// <returns>True if signup succeeded, false otherwise</returns>
-        public async Task<bool> SignUpGoogle(string googleAuthorizationCode, string username = null)
+        public async Task<bool> SignUpGoogle(string googleAuthorizationCode, string redirectUri = "", string username = null)
         {
             if (string.IsNullOrEmpty(googleAuthorizationCode))
             {
@@ -96,7 +97,7 @@ namespace PM.horizOn.Cloud.Manager
                 return false;
             }
 
-            return await SignUp(SignUpRequest.CreateGoogle(googleAuthorizationCode, username));
+            return await SignUp(SignUpRequest.CreateGoogle(googleAuthorizationCode, redirectUri, username));
         }
 
         /// <summary>
@@ -164,9 +165,10 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Sign in with Google authentication.
         /// </summary>
-        /// <param name="googleAuthorizationCode">Google authorization code</param>
+        /// <param name="googleAuthorizationCode">Google authorization code from Google Sign-In SDK</param>
+        /// <param name="redirectUri">OAuth redirect URI. Leave empty for mobile apps (Android/iOS).</param>
         /// <returns>True if signin succeeded, false otherwise</returns>
-        public async Task<bool> SignInGoogle(string googleAuthorizationCode)
+        public async Task<bool> SignInGoogle(string googleAuthorizationCode, string redirectUri = "")
         {
             if (string.IsNullOrEmpty(googleAuthorizationCode))
             {
@@ -177,6 +179,7 @@ namespace PM.horizOn.Cloud.Manager
             var request = new SignInRequest
             {
                 googleAuthorizationCode = googleAuthorizationCode,
+                googleRedirectUri = redirectUri,
                 type = AuthType.GOOGLE.ToString()
             };
 

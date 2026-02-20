@@ -15,6 +15,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
         public string password;
         public string anonymousToken;
         public string googleAuthorizationCode;
+        public string googleRedirectUri;
 
         public static SignUpRequest CreateAnonymous(string username = null, string anonymousToken = null)
         {
@@ -44,12 +45,13 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
             };
         }
 
-        public static SignUpRequest CreateGoogle(string googleAuthorizationCode, string username = null)
+        public static SignUpRequest CreateGoogle(string googleAuthorizationCode, string redirectUri = "", string username = null)
         {
             return new SignUpRequest
             {
                 type = nameof(AuthType.GOOGLE),
                 googleAuthorizationCode = googleAuthorizationCode,
+                googleRedirectUri = redirectUri,
                 username = username
             };
         }
