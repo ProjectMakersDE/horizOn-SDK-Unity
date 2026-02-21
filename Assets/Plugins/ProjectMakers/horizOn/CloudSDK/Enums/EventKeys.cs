@@ -48,6 +48,12 @@ namespace PM.horizOn.Cloud.Enums
         FeedbackSubmitted = 402,
         LogCreated = 403,
 
+        // Crash Reporting Events
+        CrashReported = 410,
+        CrashReportFailed = 411,
+        CrashSessionRegistered = 412,
+        BreadcrumbRecorded = 413,
+
         // Network Events (500-599)
         NetworkRequestStarted = 500,
         NetworkRequestSuccess = 501,
