@@ -302,6 +302,23 @@ Assets/Plugins/ProjectMakers/horizOn/
 
 ---
 
+## Self-Hosted Option
+
+The horizOn SDKs work with both the **managed horizOn BaaS** and the **free, open-source [horizOn Simple Server](https://github.com/ProjectMakersDE/horizOn-simpleServer)**.
+
+Simple Server is a lightweight PHP backend with no dependencies — perfect as a starting point if you want full control over your infrastructure. It supports core features like leaderboards, cloud saves, remote config, news, gift codes, feedback, and crash reporting.
+
+To connect to your own server, pass your server URL when creating `HorizonServer`:
+
+```csharp
+var server = new HorizonServer("https://your-server.example.com");
+await server.Connect();
+```
+
+> **Note:** Simple Server is a starting point, not a full replacement. For the complete experience with dashboard, user authentication, multi-region deployment, and more, use [horizOn BaaS](https://horizon.pm).
+
+---
+
 ## Support
 
 - **Dashboard**: [horizon.pm](https://horizon.pm)
