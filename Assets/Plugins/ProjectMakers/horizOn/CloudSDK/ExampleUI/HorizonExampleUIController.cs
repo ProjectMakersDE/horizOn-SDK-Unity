@@ -91,6 +91,20 @@ namespace PM.horizOn.Cloud.ExampleUI
         private Button _btnGiftCodeRedeem;
         private TextField _txtGiftCodeResponse;
 
+        // UI Elements - Crash Reporting
+        private Button _btnCrashStart;
+        private Button _btnCrashStop;
+        private Label _lblCrashStatus;
+        private TextField _txtCrashBreadcrumbType;
+        private TextField _txtCrashBreadcrumbMessage;
+        private Button _btnCrashBreadcrumb;
+        private TextField _txtCrashExceptionMessage;
+        private Button _btnCrashException;
+        private TextField _txtCrashCustomKey;
+        private TextField _txtCrashCustomValue;
+        private Button _btnCrashCustomKey;
+        private TextField _txtCrashResponse;
+
         // UI Elements - Feedback
         private TextField _txtFeedbackTitle;
         private DropdownField _ddFeedbackCategory;
@@ -193,6 +207,20 @@ namespace PM.horizOn.Cloud.ExampleUI
             _btnGiftCodeRedeem = _root.Q<Button>("btn-giftcode-redeem");
             _txtGiftCodeResponse = _root.Q<TextField>("txt-giftcode-response");
 
+            // Crash Reporting
+            _btnCrashStart = _root.Q<Button>("btn-crash-start");
+            _btnCrashStop = _root.Q<Button>("btn-crash-stop");
+            _lblCrashStatus = _root.Q<Label>("lbl-crash-status");
+            _txtCrashBreadcrumbType = _root.Q<TextField>("txt-crash-breadcrumb-type");
+            _txtCrashBreadcrumbMessage = _root.Q<TextField>("txt-crash-breadcrumb-message");
+            _btnCrashBreadcrumb = _root.Q<Button>("btn-crash-breadcrumb");
+            _txtCrashExceptionMessage = _root.Q<TextField>("txt-crash-exception-message");
+            _btnCrashException = _root.Q<Button>("btn-crash-exception");
+            _txtCrashCustomKey = _root.Q<TextField>("txt-crash-custom-key");
+            _txtCrashCustomValue = _root.Q<TextField>("txt-crash-custom-value");
+            _btnCrashCustomKey = _root.Q<Button>("btn-crash-custom-key");
+            _txtCrashResponse = _root.Q<TextField>("txt-crash-response");
+
             // Feedback
             _ddFeedbackCategory = _root.Q<DropdownField>("dd-feedback-category");
             _txtFeedbackTitle = _root.Q<TextField>("txt-feedback-title");
@@ -258,6 +286,13 @@ namespace PM.horizOn.Cloud.ExampleUI
             // Gift Code
             _btnGiftCodeValidate.clicked += OnGiftCodeValidateClicked;
             _btnGiftCodeRedeem.clicked += OnGiftCodeRedeemClicked;
+
+            // Crash Reporting
+            _btnCrashStart.clicked += OnCrashStartClicked;
+            _btnCrashStop.clicked += OnCrashStopClicked;
+            _btnCrashBreadcrumb.clicked += OnCrashBreadcrumbClicked;
+            _btnCrashException.clicked += OnCrashExceptionClicked;
+            _btnCrashCustomKey.clicked += OnCrashCustomKeyClicked;
 
             // Feedback
             _btnFeedbackSubmit.clicked += OnFeedbackSubmitClicked;
@@ -344,6 +379,14 @@ namespace PM.horizOn.Cloud.ExampleUI
             _btnUserLogWarn.SetEnabled(requiresAuth);
             _btnUserLogError.SetEnabled(requiresAuth);
             _btnUserLogCreate.SetEnabled(requiresAuth);
+
+            // Crash Reporting buttons
+            bool crashManagerReady = isConnected;
+            _btnCrashStart.SetEnabled(crashManagerReady);
+            _btnCrashStop.SetEnabled(crashManagerReady);
+            _btnCrashBreadcrumb.SetEnabled(crashManagerReady);
+            _btnCrashException.SetEnabled(crashManagerReady);
+            _btnCrashCustomKey.SetEnabled(crashManagerReady);
 
             // Update play mode button text
             if (_btnPlayMode != null)
@@ -1091,6 +1134,70 @@ namespace PM.horizOn.Cloud.ExampleUI
             {
                 _txtFeedbackResponse.value = "Feedback submission failed";
             }
+        }
+
+        // Crash Reporting Handlers
+        private void OnCrashStartClicked()
+        {
+            CrashManager.Instance.StartCapture();
+            _lblCrashStatus.text = "Capture: Active";
+            _txtCrashResponse.value = "Crash capture started.\nUnity errors and exceptions will be reported automatically.";
+        }
+
+        private void OnCrashStopClicked()
+        {
+            CrashManager.Instance.StopCapture();
+            _lblCrashStatus.text = "Capture: Inactive";
+            _txtCrashResponse.value = "Crash capture stopped.";
+        }
+
+        private void OnCrashBreadcrumbClicked()
+        {
+            string type = _txtCrashBreadcrumbType.value;
+            string message = _txtCrashBreadcrumbMessage.value;
+
+            if (string.IsNullOrEmpty(message))
+            {
+                _txtCrashResponse.value = "Error: Breadcrumb message is required";
+                return;
+            }
+
+            CrashManager.Instance.RecordBreadcrumb(
+                string.IsNullOrEmpty(type) ? "custom" : type,
+                message
+            );
+            _txtCrashResponse.value = $"Breadcrumb recorded:\nType: {type}\nMessage: {message}";
+        }
+
+        private void OnCrashExceptionClicked()
+        {
+            string message = _txtCrashExceptionMessage.value;
+
+            if (string.IsNullOrEmpty(message))
+            {
+                _txtCrashResponse.value = "Error: Exception message is required";
+                return;
+            }
+
+            _txtCrashResponse.value = $"Recording exception: {message}";
+            var exception = new Exception(message);
+            CrashManager.Instance.RecordException(exception);
+            _txtCrashResponse.value = $"Exception recorded (NON_FATAL):\n{message}\n\nCheck the horizOn dashboard for the crash report.";
+        }
+
+        private void OnCrashCustomKeyClicked()
+        {
+            string key = _txtCrashCustomKey.value;
+            string value = _txtCrashCustomValue.value;
+
+            if (string.IsNullOrEmpty(key))
+            {
+                _txtCrashResponse.value = "Error: Custom key name is required";
+                return;
+            }
+
+            CrashManager.Instance.SetCustomKey(key, value ?? "");
+            _txtCrashResponse.value = $"Custom key set:\n{key} = {value}";
         }
 
         // User Log Handlers

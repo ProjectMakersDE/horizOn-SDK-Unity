@@ -134,6 +134,34 @@
                 </ui:VisualElement>
             </ui:VisualElement>
 
+            <!-- Crash Reporting Section -->
+            <ui:VisualElement class="section">
+                <ui:Label text="Crash Reporting" class="section-title" />
+                <ui:VisualElement class="section-content">
+                    <ui:VisualElement class="button-row">
+                        <ui:Button text="Start Capture" name="btn-crash-start" class="action-button" />
+                        <ui:Button text="Stop Capture" name="btn-crash-stop" class="action-button" />
+                    </ui:VisualElement>
+                    <ui:Label text="Capture: Inactive" name="lbl-crash-status" class="status-label" />
+
+                    <ui:Label text="Breadcrumbs" class="subsection-title" />
+                    <ui:TextField name="txt-crash-breadcrumb-type" label="Type" value="user" class="input-field" />
+                    <ui:TextField name="txt-crash-breadcrumb-message" label="Message" value="Tapped play button" class="input-field" />
+                    <ui:Button text="Record Breadcrumb" name="btn-crash-breadcrumb" class="secondary-button" />
+
+                    <ui:Label text="Test Exception" class="subsection-title" />
+                    <ui:TextField name="txt-crash-exception-message" label="Exception Message" value="Test NullReferenceException" class="input-field" />
+                    <ui:Button text="Record Exception" name="btn-crash-exception" class="action-button" />
+
+                    <ui:Label text="Custom Keys" class="subsection-title" />
+                    <ui:TextField name="txt-crash-custom-key" label="Key" value="player_level" class="input-field" />
+                    <ui:TextField name="txt-crash-custom-value" label="Value" value="42" class="input-field" />
+                    <ui:Button text="Set Custom Key" name="btn-crash-custom-key" class="secondary-button" />
+
+                    <ui:TextField name="txt-crash-response" multiline="true" readonly="true" class="response-field" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+
             <!-- Feedback Section -->
             <ui:VisualElement class="section">
                 <ui:Label text="Feedback" class="section-title" />
