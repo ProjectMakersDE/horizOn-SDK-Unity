@@ -1,3 +1,11 @@
+# [1.3.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.2.0...v1.3.0) (2026-02-23)
+
+
+### Features
+
+* **crash:** add crash reporting section to Example UI ([b8089a6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/b8089a671b9eb0e4d2adc6552efcad81b1d4b117))
+* **crash:** add crash reporting to Unity SDK ([5e81609](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/5e816094e9ff73baa9edbeecb9b84393b60b1dce))
+
 # [1.2.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.1.0...v1.2.0) (2026-02-20)
 
 

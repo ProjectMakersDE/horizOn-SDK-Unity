@@ -2,7 +2,7 @@
 
 A complete backend solution for Unity games with user authentication, cloud saves, leaderboards, remote configuration, news, gift codes, and feedback.
 
-**SDK Version**: v1.2.0 | **Unity Version**: 2023.3+ (Unity 6) | **Namespace**: `PM.horizOn.Cloud`
+**SDK Version**: v1.3.0 | **Unity Version**: 2023.3+ (Unity 6) | **Namespace**: `PM.horizOn.Cloud`
 
 ---
 

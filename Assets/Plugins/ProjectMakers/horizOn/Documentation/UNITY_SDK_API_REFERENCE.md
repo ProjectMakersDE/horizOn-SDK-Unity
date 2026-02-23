@@ -1320,5 +1320,5 @@ else
 - **Quick Start**: See [QUICKSTART.md](../QUICKSTART.md)
 - **README**: See [README.md](../README.md)
 
-**Version**: 1.2.0
+**Version**: 1.3.0
 **Last Updated**: 2026-02-20
