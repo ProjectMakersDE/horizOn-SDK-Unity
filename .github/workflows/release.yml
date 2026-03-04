@@ -58,6 +58,15 @@ jobs:
             -f event_type=sync-changelog \
             -f 'client_payload[source]=unity-sdk'
 
+      - name: Trigger example project update
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          gh api repos/ProjectMakersDE/horizOn-Example-Unity/dispatches \
+            -f event_type=update-sdk \
+            -f 'client_payload[version]=${{ steps.semantic.outputs.new_release_version }}'
+
   build:
     runs-on: ubuntu-latest
     needs: release
