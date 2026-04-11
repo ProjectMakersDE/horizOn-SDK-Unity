@@ -48,6 +48,11 @@ namespace PM.horizOn.Cloud.Enums
         FeedbackSubmitted = 402,
         LogCreated = 403,
 
+        // Email Sending Events
+        EmailSent = 404,
+        EmailCancelled = 405,
+        EmailStatusReceived = 406,
+
         // Crash Reporting Events
         CrashReported = 410,
         CrashReportFailed = 411,

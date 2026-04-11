@@ -103,6 +103,18 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
+        /// Send a DELETE request to the API.
+        /// </summary>
+        /// <typeparam name="TResponse">The response type</typeparam>
+        /// <param name="endpoint">The API endpoint</param>
+        /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <returns>The deserialized response</returns>
+        public async Task<NetworkResponse<TResponse>> DeleteAsync<TResponse>(string endpoint, bool useSessionToken = false) where TResponse : class
+        {
+            return await SendRequestAsync<TResponse>(endpoint, "DELETE", null, useSessionToken);
+        }
+
+        /// <summary>
         /// Send a POST request with raw binary data.
         /// </summary>
         /// <typeparam name="TResponse">The response type</typeparam>
@@ -622,6 +634,11 @@ namespace PM.horizOn.Cloud.Service
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
+            }
+            else if (method == "DELETE")
+            {
+                request = UnityWebRequest.Delete(url);
+                request.downloadHandler = new DownloadHandlerBuffer();
             }
             else
             {

@@ -25,6 +25,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
 | 💥 **Crash Reporting** | `CrashManager` | Automatic crash capture, exception tracking, breadcrumbs |
+| ✉️ **Email Sending** | `EmailSendingManager` | Transactional emails with templates, scheduling, multi-language |
 
 ## Requirements
 
@@ -284,6 +285,38 @@ When `StartCapture()` is called, the SDK automatically:
 | Breadcrumbs (ring buffer) | 50 |
 | Custom keys | 10 |
 
+### Email Sending
+
+**Email Sending** lets your game send transactional emails to registered players. Create multi-language HTML templates with variable placeholders in the horizOn Dashboard, then trigger immediate or scheduled email delivery from your game using the SDK. Emails are sent through your own SMTP server -- horizOn handles the queue, rendering, and scheduling while you keep full control over branding and deliverability.
+
+```csharp
+// Send immediate email
+var response = await EmailSendingManager.Instance.SendEmail(
+    userId: "user-uuid",
+    templateSlug: "welcome",
+    variables: new Dictionary<string, string> { { "username", "John" } },
+    language: "en"
+);
+Debug.Log($"Email queued: {response.id}");
+
+// Schedule email for tomorrow
+var scheduled = await EmailSendingManager.Instance.SendEmail(
+    userId: "user-uuid",
+    templateSlug: "reminder",
+    variables: new Dictionary<string, string> { { "eventName", "Tournament" } },
+    language: "en",
+    scheduledAt: DateTime.UtcNow.AddDays(1)
+);
+
+// Check status
+var status = await EmailSendingManager.Instance.GetEmailStatus(response.id);
+Debug.Log($"Status: {status.status}");
+
+// Cancel scheduled email
+var cancel = await EmailSendingManager.Instance.CancelEmail(scheduled.id);
+Debug.Log(cancel.message);
+```
+
 ## Events
 
 ```csharp
@@ -306,7 +339,7 @@ void OnUserSignedIn(UserData user)
 | 0-99 | Connection | `ServerConnected`, `ServerDisconnected` |
 | 100-199 | Auth | `UserSignInSuccess`, `UserSignInFailed`, `UserSignedOut` |
 | 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted` |
-| 400-499 | Features | `CrashReported` (410), `CrashReportFailed` (411), `CrashSessionRegistered` (412) |
+| 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410) |
 | 500-599 | Network | `RequestFailed`, `RateLimited` |
 
 ## Configuration Options
