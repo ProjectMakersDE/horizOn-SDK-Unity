@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.3.0...v1.4.0) (2026-04-11)
+
+
+### Features
+
+* add email sending manager with send, cancel, and status methods ([0c87646](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0c8764659dc13db03866977609d79565ace6f8b6))
+
 # [1.3.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.2.0...v1.3.0) (2026-02-23)
 
 
