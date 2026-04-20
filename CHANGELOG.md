@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.4.0...v1.5.0) (2026-04-20)
+
+
+### Features
+
+* **apple-signin:** apple sign-in support in unity sdk ([48ef98a](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/48ef98a35ce513e67ddf57de766b8e58e05cac50))
+
 # [1.4.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.3.0...v1.4.0) (2026-04-11)
 
 
