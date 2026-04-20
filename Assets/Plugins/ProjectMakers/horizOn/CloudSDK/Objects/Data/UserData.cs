@@ -15,6 +15,8 @@ namespace PM.horizOn.Cloud.Objects.Data
         public string AuthType = string.Empty;
         public string AccessToken = string.Empty;
         public string AnonymousToken = string.Empty;
+        public string AppleUserId = string.Empty;
+        public bool IsPrivateRelayEmail = false;
         public bool IsEmailVerified = false;
         public bool IsAnonymous = false;
         public DateTime LastLoginTime = DateTime.UtcNow;
@@ -32,6 +34,8 @@ namespace PM.horizOn.Cloud.Objects.Data
             AuthType = string.Empty;
             AccessToken = string.Empty;
             AnonymousToken = string.Empty;
+            AppleUserId = string.Empty;
+            IsPrivateRelayEmail = false;
             IsEmailVerified = false;
             IsAnonymous = false;
             LastLoginTime = DateTime.UtcNow;

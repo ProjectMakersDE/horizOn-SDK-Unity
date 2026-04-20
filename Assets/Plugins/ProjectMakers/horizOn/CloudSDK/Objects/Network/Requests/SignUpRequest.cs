@@ -16,6 +16,9 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
         public string anonymousToken;
         public string googleAuthorizationCode;
         public string googleRedirectUri;
+        public string appleIdentityToken;
+        public string appleFirstName;
+        public string appleLastName;
 
         public static SignUpRequest CreateAnonymous(string username = null, string anonymousToken = null)
         {
@@ -52,6 +55,19 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
                 type = nameof(AuthType.GOOGLE),
                 googleAuthorizationCode = googleAuthorizationCode,
                 googleRedirectUri = redirectUri,
+                username = username
+            };
+        }
+
+        public static SignUpRequest CreateApple(string identityToken, string firstName = null,
+            string lastName = null, string username = null)
+        {
+            return new SignUpRequest
+            {
+                type = nameof(AuthType.APPLE),
+                appleIdentityToken = identityToken,
+                appleFirstName = firstName,
+                appleLastName = lastName,
                 username = username
             };
         }

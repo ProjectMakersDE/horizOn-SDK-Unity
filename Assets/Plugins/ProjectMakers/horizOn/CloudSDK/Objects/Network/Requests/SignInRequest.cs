@@ -14,5 +14,6 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
         public string anonymousToken;
         public string googleAuthorizationCode;
         public string googleRedirectUri;
+        public string appleIdentityToken;
     }
 }

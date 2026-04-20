@@ -18,6 +18,8 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public bool isVerified;
         public string anonymousToken;
         public string googleId;
+        public string appleUserId;        // Apple `sub` claim. null for non-Apple users.
+        public bool isPrivateRelayEmail;  // true if email is an Apple private relay alias.
         public string createdAt;
     }
 }

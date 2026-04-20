@@ -18,6 +18,11 @@ namespace PM.horizOn.Cloud.Enums
         /// <summary>
         /// Google OAuth authentication
         /// </summary>
-        GOOGLE
+        GOOGLE,
+
+        /// <summary>
+        /// Apple Sign-In authentication
+        /// </summary>
+        APPLE
     }
 }

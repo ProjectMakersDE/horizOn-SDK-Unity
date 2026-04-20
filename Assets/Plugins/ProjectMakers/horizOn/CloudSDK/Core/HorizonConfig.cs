@@ -38,7 +38,14 @@ namespace PM.horizOn.Cloud.Core
 
         [Tooltip("Logging level for SDK messages")]
         [SerializeField] private LogType _logLevel = LogType.INFO;
-        
+
+        [Header("Apple Sign-In")]
+        [Tooltip("Apple Services ID (web client_id) - required for the non-iOS web fallback OAuth flow")]
+        [SerializeField] private string _appleServicesId;
+
+        [Tooltip("OAuth redirect URI registered with Apple - must be reachable by the customer-side handler (deep-link or localhost listener)")]
+        [SerializeField] private string _appleRedirectUri;
+
         // Cached decrypted API key (only in memory, never serialized)
         private string _cachedApiKey;
 
@@ -86,6 +93,32 @@ namespace PM.horizOn.Cloud.Core
         /// Get the logging level.
         /// </summary>
         public LogType LogLevel => _logLevel;
+
+        /// <summary>
+        /// Get the Apple Services ID (used as client_id in the non-iOS web OAuth fallback).
+        /// </summary>
+        public string AppleServicesId => _appleServicesId;
+
+        /// <summary>
+        /// Get the OAuth redirect URI registered with Apple for the web fallback flow.
+        /// </summary>
+        public string AppleRedirectUri => _appleRedirectUri;
+
+        /// <summary>
+        /// Set the Apple Services ID.
+        /// </summary>
+        public void SetAppleServicesId(string servicesId)
+        {
+            _appleServicesId = servicesId;
+        }
+
+        /// <summary>
+        /// Set the Apple OAuth redirect URI.
+        /// </summary>
+        public void SetAppleRedirectUri(string redirectUri)
+        {
+            _appleRedirectUri = redirectUri;
+        }
         
         /// <summary>
         /// Set the API key (will be encrypted for storage).

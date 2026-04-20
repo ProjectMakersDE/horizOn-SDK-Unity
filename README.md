@@ -16,7 +16,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 
 | Feature | Manager | Description |
 |---------|---------|-------------|
-| 🔐 **Authentication** | `UserManager` | Anonymous, email, and Google sign-in |
+| 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
@@ -128,6 +128,42 @@ if (UserManager.Instance.IsSignedIn)
 // Sign out
 UserManager.Instance.SignOut();
 ```
+
+### Sign in with Apple
+
+App-Store-ready authentication that respects user privacy. On iOS the SDK opens the
+native ASAuthorizationController sheet via the bundled AuthenticationServices plugin.
+On Android, Standalone (Windows / Linux / macOS) and the Editor it falls back to a
+system-browser OAuth redirect using the Apple Services ID configured in
+`HorizonConfig`.
+
+```csharp
+// One-call end-to-end flow: native sheet on iOS, web fallback elsewhere.
+// Internally calls SignInApple, falls through to SignUpApple on USER_NOT_FOUND.
+bool signedIn = await UserManager.Instance.SignInWithApple();
+
+// Low-level overloads if your game already has its own Apple plugin and
+// has the identityToken in hand.
+await UserManager.Instance.SignUpApple(identityToken, firstName, lastName);
+await UserManager.Instance.SignInApple(identityToken);
+
+// Listen for results via the event bus, exactly like Google sign-in.
+HorizonApp.Events.Subscribe<UserData>(EventKeys.UserSignInSuccess, user =>
+{
+    Debug.Log($"Apple user {user.UserId} signed in (relay email: {user.IsPrivateRelayEmail})");
+});
+HorizonApp.Events.Subscribe<string>(EventKeys.UserSignInFailed, code =>
+{
+    // Canonical codes: INVALID_APPLE_TOKEN, APPLE_NOT_CONFIGURED,
+    // APPLE_EMAIL_CONFLICT, USER_NOT_FOUND, USER_ALREADY_EXISTS, NETWORK_ERROR.
+    Debug.LogError($"Apple sign-in failed: {code}");
+});
+```
+
+For the non-iOS fallback you must set `AppleServicesId` and `AppleRedirectUri` on
+`HorizonConfig`, register the redirect URI on the Apple Developer Portal, and
+forward the `id_token` from your custom redirect handler back into the SDK via
+`HorizonAppleSignInBridge.DeliverWebToken(identityToken, firstName, lastName)`.
 
 ### Leaderboards
 

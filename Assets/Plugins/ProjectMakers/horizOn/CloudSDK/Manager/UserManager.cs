@@ -19,6 +19,10 @@ namespace PM.horizOn.Cloud.Manager
     {
         private UserData _currentUser;
 
+        // Tracks the most recent server-reported authStatus so SignInWithApple can detect
+        // USER_NOT_FOUND and fall through to SignUpApple.
+        private string _lastAuthStatus;
+
         /// <summary>
         /// Get the current authenticated user.
         /// </summary>
@@ -101,6 +105,28 @@ namespace PM.horizOn.Cloud.Manager
         }
 
         /// <summary>
+        /// Sign up with Apple Sign-In using a pre-obtained identity token.
+        /// Use this overload if the game already integrates an Apple Sign-In plugin of its own
+        /// and has the identityToken in hand.
+        /// </summary>
+        /// <param name="identityToken">JWT returned by Apple after user consent</param>
+        /// <param name="firstName">Optional - Apple first-login-only profile data</param>
+        /// <param name="lastName">Optional - Apple first-login-only profile data</param>
+        /// <param name="username">Optional - SDK-side username override</param>
+        /// <returns>True on AUTHENTICATED; false otherwise (see HorizonApp.Log for details)</returns>
+        public async Task<bool> SignUpApple(string identityToken, string firstName = null, string lastName = null, string username = null)
+        {
+            if (string.IsNullOrEmpty(identityToken))
+            {
+                HorizonApp.Log.Error("Apple identity token is required");
+                HorizonApp.Events.Publish(EventKeys.UserSignUpFailed, "INVALID_APPLE_TOKEN");
+                return false;
+            }
+
+            return await SignUp(SignUpRequest.CreateApple(identityToken, firstName, lastName, username));
+        }
+
+        /// <summary>
         /// Internal signup method.
         /// </summary>
         private async Task<bool> SignUp(SignUpRequest request)
@@ -108,6 +134,7 @@ namespace PM.horizOn.Cloud.Manager
             HorizonApp.Events.Publish(EventKeys.UserSignUpRequested, request);
 
             var response = await HorizonApp.Network.PostAsync<AuthResponse>("/api/v1/app/user-management/signup", request);
+            _lastAuthStatus = response.Data?.authStatus;
 
             if (response.IsSuccess && response.Data != null && !string.IsNullOrEmpty(response.Data.userId))
             {
@@ -121,16 +148,19 @@ namespace PM.horizOn.Cloud.Manager
             }
             else
             {
-                string errorMessage = response.Error ?? response.Data?.message;
+                // For Apple/Google, prefer the server-reported authStatus so consumers can match
+                // canonical error codes (USER_ALREADY_EXISTS, INVALID_APPLE_TOKEN, etc).
+                string errorPayload = response.Data?.authStatus
+                    ?? response.Error
+                    ?? response.Data?.message;
 
-                // Provide more specific error messages based on status code
-                if (response.StatusCode == 409)
+                if (string.IsNullOrEmpty(errorPayload) && response.StatusCode == 409)
                 {
-                    errorMessage = "User already exists. Try signing in instead or use a different email/account.";
+                    errorPayload = "USER_ALREADY_EXISTS";
                 }
 
-                HorizonApp.Log.Error($"Signup failed: {errorMessage}");
-                HorizonApp.Events.Publish(EventKeys.UserSignUpFailed, errorMessage);
+                HorizonApp.Log.Error($"Signup failed: {errorPayload}");
+                HorizonApp.Events.Publish(EventKeys.UserSignUpFailed, errorPayload);
 
                 return false;
             }
@@ -187,6 +217,78 @@ namespace PM.horizOn.Cloud.Manager
         }
 
         /// <summary>
+        /// Sign in an existing Apple-registered user with a pre-obtained identity token.
+        /// </summary>
+        /// <param name="identityToken">JWT returned by Apple after user consent</param>
+        /// <returns>True if signin succeeded, false otherwise</returns>
+        public async Task<bool> SignInApple(string identityToken)
+        {
+            if (string.IsNullOrEmpty(identityToken))
+            {
+                HorizonApp.Log.Error("Apple identity token is required");
+                HorizonApp.Events.Publish(EventKeys.UserSignInFailed, "INVALID_APPLE_TOKEN");
+                return false;
+            }
+
+            var request = new SignInRequest
+            {
+                appleIdentityToken = identityToken,
+                type = AuthType.APPLE.ToString()
+            };
+
+            return await SignIn(request);
+        }
+
+        /// <summary>
+        /// Convenience end-to-end Apple Sign-In flow.
+        /// On iOS opens the native ASAuthorizationController sheet via the AuthenticationServices
+        /// bridge. On other platforms opens a system-browser OAuth redirect using the customer-
+        /// configured Services ID. Harvests the identityToken, attempts SignInApple, and falls
+        /// through to SignUpApple when the server responds USER_NOT_FOUND.
+        /// </summary>
+        /// <returns>True if signin or signup succeeded, false otherwise</returns>
+        public async Task<bool> SignInWithApple()
+        {
+            HorizonApp.Log.Info("Starting Apple Sign-In end-to-end flow...");
+
+            HorizonAppleSignInBridge.AppleAuthResult appleResult;
+            try
+            {
+                appleResult = await HorizonAppleSignInBridge.RequestSignIn();
+            }
+            catch (Exception ex)
+            {
+                HorizonApp.Log.Error($"Apple Sign-In bridge error: {ex.Message}");
+                HorizonApp.Events.Publish(EventKeys.UserSignInFailed, "INVALID_APPLE_TOKEN");
+                return false;
+            }
+
+            if (appleResult == null || !appleResult.Success || string.IsNullOrEmpty(appleResult.IdentityToken))
+            {
+                string code = appleResult?.ErrorCode ?? "INVALID_APPLE_TOKEN";
+                HorizonApp.Log.Error($"Apple Sign-In failed before backend call: {code}");
+                HorizonApp.Events.Publish(EventKeys.UserSignInFailed, code);
+                return false;
+            }
+
+            // Try sign-in first.
+            bool signedIn = await SignInApple(appleResult.IdentityToken);
+            if (signedIn)
+            {
+                return true;
+            }
+
+            // If backend says USER_NOT_FOUND, fall through to sign-up.
+            if (string.Equals(_lastAuthStatus, "USER_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                HorizonApp.Log.Info("No existing Apple user, falling through to SignUpApple");
+                return await SignUpApple(appleResult.IdentityToken, appleResult.FirstName, appleResult.LastName);
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Sign in with anonymous token.
         /// </summary>
         /// <param name="anonymousToken">The anonymous token from previous session</param>
@@ -234,6 +336,7 @@ namespace PM.horizOn.Cloud.Manager
             HorizonApp.Events.Publish(EventKeys.UserSignInRequested, request);
 
             var response = await HorizonApp.Network.PostAsync<AuthResponse>("/api/v1/app/user-management/signin", request);
+            _lastAuthStatus = response.Data?.authStatus;
 
             if (response.IsSuccess && response.Data != null && response.Data.authStatus == "AUTHENTICATED")
             {
@@ -247,8 +350,15 @@ namespace PM.horizOn.Cloud.Manager
             }
             else
             {
-                HorizonApp.Log.Error($"Signin failed: {response.Error ?? response.Data?.message}");
-                HorizonApp.Events.Publish(EventKeys.UserSignInFailed, response.Error ?? response.Data?.message);
+                // Prefer the server-reported authStatus (e.g. USER_NOT_FOUND, INVALID_APPLE_TOKEN)
+                // so consumers receive the canonical error code, not a free-form message.
+                string errorPayload = response.Data?.authStatus
+                    ?? response.Error
+                    ?? response.Data?.message
+                    ?? "NETWORK_ERROR";
+
+                HorizonApp.Log.Error($"Signin failed: {errorPayload}");
+                HorizonApp.Events.Publish(EventKeys.UserSignInFailed, errorPayload);
 
                 return false;
             }
@@ -496,9 +606,15 @@ namespace PM.horizOn.Cloud.Manager
             _currentUser.UserId = response.userId;
             _currentUser.Email = response.email ?? string.Empty;
             _currentUser.DisplayName = response.username ?? string.Empty;
-            _currentUser.AuthType = response.isAnonymous ? "ANONYMOUS" : (!string.IsNullOrEmpty(response.googleId) ? "GOOGLE" : "EMAIL");
+            _currentUser.AuthType = response.isAnonymous
+                ? "ANONYMOUS"
+                : (!string.IsNullOrEmpty(response.appleUserId)
+                    ? "APPLE"
+                    : (!string.IsNullOrEmpty(response.googleId) ? "GOOGLE" : "EMAIL"));
             _currentUser.AccessToken = response.accessToken ?? string.Empty;
             _currentUser.AnonymousToken = response.anonymousToken ?? string.Empty;
+            _currentUser.AppleUserId = response.appleUserId ?? string.Empty;
+            _currentUser.IsPrivateRelayEmail = response.isPrivateRelayEmail;
             _currentUser.IsEmailVerified = response.isVerified;
             _currentUser.IsAnonymous = response.isAnonymous;
             _currentUser.LastLoginTime = DateTime.UtcNow;
