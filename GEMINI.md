@@ -1,0 +1,1 @@
+../.agent-wiki-bootstrap.md
