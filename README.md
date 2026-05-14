@@ -89,6 +89,40 @@ await CloudSaveManager.Instance.SaveObject(new GameData { Level = 5, Coins = 100
 var data = await CloudSaveManager.Instance.LoadObject<GameData>();
 ```
 
+## Hello horizOn
+
+`HelloHorizon` is the smallest end-to-end entry point for the SDK. It initializes,
+connects, signs up an anonymous user, submits a score, and shows the resulting rank.
+
+1. Import the horizOn SDK package.
+2. Set your API key via **Window > horizOn > Config Importer**.
+3. Add the `HelloHorizon` component to an empty GameObject in a scene and press Play.
+
+Script: `Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Examples/HelloHorizon/HelloHorizon.cs`.
+Optionally assign a UI Text element to mirror the result on screen.
+
+## Examples
+
+Per-feature minimal example scripts live in
+`Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Examples/Features/`. Each is a small,
+copy-paste friendly MonoBehaviour with a header comment and try/catch error handling.
+Attach one to an empty GameObject and press Play.
+
+| Feature | Example script |
+|---------|----------------|
+| Authentication | `AuthExample.cs` |
+| Leaderboards | `LeaderboardExample.cs` |
+| Cloud Save | `CloudSaveExample.cs` |
+| Crash Reporting | `CrashReportingExample.cs` |
+| User Logs | `UserLogsExample.cs` |
+| Remote Config | `RemoteConfigExample.cs` |
+| News | `NewsExample.cs` |
+| Email Sending | `EmailSendingExample.cs` |
+| Gift Codes | `GiftCodesExample.cs` |
+| Feedback | `FeedbackExample.cs` |
+
+For a full guided tour of every feature in one window, see the `ExampleUI` folder.
+
 ## API Reference
 
 ### Connection
@@ -101,9 +135,9 @@ HorizonApp.Initialize();
 var server = new HorizonServer();
 await server.Connect();
 
-// Check status
-HorizonApp.IsConnected;    // Returns true if connected
-HorizonApp.ActiveHost;     // Returns current server URL
+// Check status (properties live on the HorizonServer instance)
+server.IsConnected;    // Returns true if connected
+server.ActiveHost;     // Returns current server URL
 ```
 
 ### Authentication
@@ -219,7 +253,7 @@ var configs = await RemoteConfigManager.Instance.GetAllConfigs();
 var news = await NewsManager.Instance.LoadNews(limit: 10);
 foreach (var item in news)
 {
-    Debug.Log($"{item.Title}: {item.Message}");
+    Debug.Log($"{item.title}: {item.message}");
 }
 ```
 
@@ -231,9 +265,9 @@ bool? valid = await GiftCodeManager.Instance.Validate("PROMO2024");
 
 // Redeem
 var result = await GiftCodeManager.Instance.Redeem("PROMO2024");
-if (result?.Success == true)
+if (result?.success == true)
 {
-    // Parse result.GiftData for rewards
+    // Parse result.giftData for rewards
 }
 ```
 
