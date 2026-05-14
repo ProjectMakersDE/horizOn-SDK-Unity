@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.5.0...v1.5.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **sdk:** add per-feature minimal examples and Hello horizOn entry (TASK-217) ([9a22130](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/9a2213023ff3c28192f74ca58a6bb88a86703d2f))
+
 # [1.5.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.4.0...v1.5.0) (2026-04-20)
 
 
