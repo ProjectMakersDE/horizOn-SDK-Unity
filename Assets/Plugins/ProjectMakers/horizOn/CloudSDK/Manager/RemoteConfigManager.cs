@@ -4,6 +4,7 @@ using PM.horizOn.Cloud.Base;
 using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Responses;
+using UnityEngine;
 
 namespace PM.horizOn.Cloud.Manager
 {
@@ -137,6 +138,48 @@ namespace PM.horizOn.Cloud.Manager
                 return result;
             }
             return defaultValue;
+        }
+
+        /// <summary>
+        /// Get a config value as a JSON object.
+        /// </summary>
+        public async Task<T> GetJson<T>(string key, T defaultValue = default(T), bool useCache = true)
+        {
+            var value = await GetConfig(key, useCache);
+            if (string.IsNullOrEmpty(value))
+            {
+                return defaultValue;
+            }
+
+            try
+            {
+                return JsonUtility.FromJson<T>(value);
+            }
+            catch
+            {
+                HorizonApp.Log.Warning($"Failed to parse config '{key}' as JSON");
+                return defaultValue;
+            }
+        }
+
+        /// <summary>
+        /// Check whether a config key exists.
+        /// </summary>
+        public async Task<bool> HasKey(string key, bool useCache = true)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            if (useCache && _configCache.ContainsKey(key))
+            {
+                HorizonApp.Events.Publish(EventKeys.CacheHit, $"Config:{key}");
+                return true;
+            }
+
+            var value = await GetConfig(key, useCache);
+            return value != null;
         }
 
         /// <summary>

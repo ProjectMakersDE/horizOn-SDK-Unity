@@ -11,5 +11,6 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
     {
         public string userId;
         public long score;
+        public string leaderboardKey;
     }
 }

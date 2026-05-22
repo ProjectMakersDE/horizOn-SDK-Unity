@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using PM.horizOn.Cloud.Base;
@@ -16,14 +17,31 @@ namespace PM.horizOn.Cloud.Manager
     {
         private Dictionary<string, List<SimpleLeaderboardEntry>> _leaderboardCache = new Dictionary<string, List<SimpleLeaderboardEntry>>();
 
+        private string BuildEndpoint(string boardKey, string action)
+        {
+            if (string.IsNullOrEmpty(boardKey))
+            {
+                return $"/api/v1/app/leaderboard/{action}";
+            }
+
+            return $"/api/v1/app/leaderboards/{Uri.EscapeDataString(boardKey)}/{action}";
+        }
+
+        private string BuildCacheKey(string boardKey, string action, int value)
+        {
+            var normalizedBoardKey = string.IsNullOrEmpty(boardKey) ? "default" : boardKey;
+            return $"{normalizedBoardKey}:{action}:{value}";
+        }
+
         /// <summary>
         /// Submit a score to a leaderboard.
         /// Score is only updated if it's higher than the previous best.
         /// </summary>
         /// <param name="score">Score value</param>
         /// <param name="metadata">Optional metadata JSON string</param>
+        /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>True if submission succeeded, false otherwise</returns>
-        public async Task<bool> SubmitScore(long score, string metadata = null)
+        public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
             if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
             {
@@ -37,10 +55,11 @@ namespace PM.horizOn.Cloud.Manager
             {
                 userId = user.UserId,
                 score = score,
+                leaderboardKey = string.IsNullOrEmpty(boardKey) ? null : boardKey,
             };
 
             var response = await HorizonApp.Network.PostAsync<SubmitScoreResponse>(
-                "/api/v1/app/leaderboard/submit",
+                BuildEndpoint(boardKey, "submit"),
                 request,
                 useSessionToken: false
             );
@@ -67,8 +86,9 @@ namespace PM.horizOn.Cloud.Manager
         /// </summary>
         /// <param name="limit">Number of entries to retrieve (max 100)</param>
         /// <param name="useCache">Whether to use cached data if available</param>
+        /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>List of leaderboard entries, or null if failed</returns>
-        public async Task<List<SimpleLeaderboardEntry>> GetTop(int limit = 10, bool useCache = true)
+        public async Task<List<SimpleLeaderboardEntry>> GetTop(int limit = 10, bool useCache = true, string boardKey = null)
         {
             if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
             {
@@ -83,7 +103,7 @@ namespace PM.horizOn.Cloud.Manager
             }
 
             // Check cache
-            string cacheKey = $"top{limit}";
+            string cacheKey = BuildCacheKey(boardKey, "top", limit);
             if (useCache && _leaderboardCache.ContainsKey(cacheKey))
             {
                 HorizonApp.Events.Publish(EventKeys.CacheHit, cacheKey);
@@ -93,7 +113,7 @@ namespace PM.horizOn.Cloud.Manager
             string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
 
             var response = await HorizonApp.Network.GetAsync<AppLeaderboardTopResponse>(
-                $"/api/v1/app/leaderboard/top?userId={userId}&limit={limit}",
+                $"{BuildEndpoint(boardKey, "top")}?userId={userId}&limit={limit}",
                 useSessionToken: false
             );
 
@@ -119,8 +139,9 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Get the current user's rank in the leaderboard.
         /// </summary>
+        /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>Rank response, or null if failed</returns>
-        public async Task<AppUserRankResponse> GetRank()
+        public async Task<AppUserRankResponse> GetRank(string boardKey = null)
         {
             if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
             {
@@ -131,7 +152,7 @@ namespace PM.horizOn.Cloud.Manager
             string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
 
             var response = await HorizonApp.Network.GetAsync<AppUserRankResponse>(
-                $"/api/v1/app/leaderboard/rank?userId={userId}",
+                $"{BuildEndpoint(boardKey, "rank")}?userId={userId}",
                 useSessionToken: false
             );
 
@@ -152,8 +173,9 @@ namespace PM.horizOn.Cloud.Manager
         /// </summary>
         /// <param name="range">Number of entries before and after the user (default 10)</param>
         /// <param name="useCache">Whether to use cached data if available</param>
+        /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>List of leaderboard entries, or null if failed</returns>
-        public async Task<List<SimpleLeaderboardEntry>> GetAround(int range = 10, bool useCache = true)
+        public async Task<List<SimpleLeaderboardEntry>> GetAround(int range = 10, bool useCache = true, string boardKey = null)
         {
             if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
             {
@@ -162,7 +184,7 @@ namespace PM.horizOn.Cloud.Manager
             }
 
             // Check cache
-            string cacheKey = $"around{range}";
+            string cacheKey = BuildCacheKey(boardKey, "around", range);
             if (useCache && _leaderboardCache.ContainsKey(cacheKey))
             {
                 HorizonApp.Events.Publish(EventKeys.CacheHit, cacheKey);
@@ -172,7 +194,7 @@ namespace PM.horizOn.Cloud.Manager
             string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
 
             var response = await HorizonApp.Network.GetAsync<AppLeaderboardAroundResponse>(
-                $"/api/v1/app/leaderboard/around?userId={userId}&range={range}",
+                $"{BuildEndpoint(boardKey, "around")}?userId={userId}&range={range}",
                 useSessionToken: false
             );
 
@@ -193,6 +215,26 @@ namespace PM.horizOn.Cloud.Manager
                 HorizonApp.Log.Error($"Failed to get leaderboard entries around user: {response.Error}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// List all active leaderboard boards for this app.
+        /// </summary>
+        /// <returns>List of leaderboard boards, or null if failed</returns>
+        public async Task<List<LeaderboardBoardResponse>> ListBoards()
+        {
+            var response = await HorizonApp.Network.GetAsync<LeaderboardListResponseV2>(
+                "/api/v1/app/leaderboards",
+                useSessionToken: false
+            );
+
+            if (response.IsSuccess && response.Data != null && response.Data.boards != null)
+            {
+                return new List<LeaderboardBoardResponse>(response.Data.boards);
+            }
+
+            HorizonApp.Log.Error($"Failed to list leaderboard boards: {response.Error}");
+            return null;
         }
 
         /// <summary>

@@ -50,4 +50,31 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
     {
         public SimpleLeaderboardEntry[] entries;
     }
+
+    /// <summary>
+    /// Leaderboard board metadata for multi-board leaderboards.
+    /// </summary>
+    [Serializable]
+    public class LeaderboardBoardResponse
+    {
+        public string id;
+        public string apiKeyId;
+        public string key;
+        public string name;
+        public string sortOrder;
+        public bool isActive;
+        public long scoreCount;
+        public string createdAt;
+        public string updatedAt;
+    }
+
+    /// <summary>
+    /// Response containing available leaderboard boards.
+    /// </summary>
+    [Serializable]
+    public class LeaderboardListResponseV2
+    {
+        public LeaderboardBoardResponse[] boards;
+        public long totalElements;
+    }
 }
