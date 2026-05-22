@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.5.1...v1.6.0) (2026-05-22)
+
+
+### Features
+
+* add multi-board leaderboard helpers ([0004e46](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0004e4640744380338faf67cb12193ac41adba49))
+
 ## [1.5.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.5.0...v1.5.1) (2026-05-14)
 
 
