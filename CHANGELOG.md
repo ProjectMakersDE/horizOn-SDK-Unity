@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.6.0...v1.7.0) (2026-06-17)
+
+
+### Features
+
+* distribute SDK as a UPM git-url package + license-free .unitypackage build ([#3](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/3)) ([27b344c](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/27b344c321c90fa1128d8d8b3c85b2807b996835))
+
 # [1.6.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.5.1...v1.6.0) (2026-05-22)
 
 
