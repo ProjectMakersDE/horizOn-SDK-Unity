@@ -79,18 +79,16 @@ jobs:
           ref: master
           lfs: true
 
-      - name: Generate meta file list
-        run: |
-          echo "Assets/Plugins/ProjectMakers/horizOn.meta" > metaList
-          find Assets/Plugins/ProjectMakers/horizOn -name "*.meta" >> metaList
-          echo "=== Files to include ==="
-          cat metaList
-
-      - name: Create Unity Package
-        uses: pCYSl5EDgo/create-unitypackage@master
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          package-path: horizOn-SDK-v${{ needs.release.outputs.version }}.unitypackage
-          include-files: metaList
+          python-version: '3.x'
+
+      - name: Build .unitypackage
+        run: |
+          python3 .github/scripts/build-unitypackage.py \
+            --output "horizOn-SDK-v${{ needs.release.outputs.version }}.unitypackage"
+          ls -la horizOn-SDK-v${{ needs.release.outputs.version }}.unitypackage
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
