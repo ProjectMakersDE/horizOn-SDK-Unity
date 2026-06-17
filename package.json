@@ -1,0 +1,40 @@
+{
+  "name": "com.projectmakers.horizon",
+  "version": "1.5.1",
+  "displayName": "horizOn Cloud SDK",
+  "description": "Official Unity SDK for horizOn, the backend-as-a-service for games. Manager-based API for authentication (anonymous, email, Google, Apple), cloud save, leaderboards, remote config, news, gift codes, feedback, user logs, crash reporting, and email sending. Includes an editor config importer.",
+  "unity": "6000.0",
+  "keywords": [
+    "ProjectMakers",
+    "horizOn",
+    "backend",
+    "baas",
+    "authentication",
+    "leaderboards",
+    "cloud save",
+    "remote config",
+    "crash reporting",
+    "live ops"
+  ],
+  "author": {
+    "name": "ProjectMakers",
+    "email": "info@projectmakers.de",
+    "url": "https://projectmakers.de"
+  },
+  "license": "MIT",
+  "documentationUrl": "https://horizon.pm/docs",
+  "changelogUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/master/CHANGELOG.md",
+  "licensesUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/master/LICENSE.md",
+  "samples": [
+    {
+      "displayName": "Examples",
+      "description": "Per-feature minimal example scripts plus the HelloHorizon end-to-end entry point.",
+      "path": "Samples~/Examples"
+    },
+    {
+      "displayName": "Example UI",
+      "description": "Full guided demo scene and UI Toolkit window covering every SDK feature.",
+      "path": "Samples~/ExampleUI"
+    }
+  ]
+}

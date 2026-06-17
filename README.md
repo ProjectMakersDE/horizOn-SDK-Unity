@@ -6,9 +6,9 @@
 
 # horizOn Cloud SDK for Unity
 
-[![Unity 2023.3+](https://img.shields.io/badge/Unity-2023.3%2B_(Unity_6)-blue?logo=unity&logoColor=white)](https://unity.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange)](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
+[![Unity 6](https://img.shields.io/badge/Unity-6000.0%2B-blue?logo=unity&logoColor=white)](https://unity.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
+[![Version](https://img.shields.io/badge/version-1.5.1-orange)](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
 
 Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https://projectmakers.de).
 
@@ -29,27 +29,40 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 
 ## Requirements
 
-- Unity 2023.3 or later (Unity 6)
+- Unity 6 (6000.0) or later
 - horizOn API key ([Get one at horizon.pm](https://horizon.pm))
 
 ## Installation
 
-### Option 1: Unity Package (Recommended)
+### Option 1: Package Manager via Git URL (Recommended)
+
+1. In Unity, open **Window > Package Manager**
+2. Click the **+** button and choose **Add package from git URL**
+3. Enter `https://github.com/ProjectMakersDE/horizOn-SDK-Unity.git` and click **Add**
+
+To pin a specific release, append the matching tag from the
+[Releases](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases) page, e.g.
+`https://github.com/ProjectMakersDE/horizOn-SDK-Unity.git#vX.Y.Z`.
+
+The optional **Examples** and **Example UI** samples can be imported afterwards from
+**Package Manager > horizOn Cloud SDK > Samples**.
+
+### Option 2: Unity Package (.unitypackage)
 
 1. Download the latest `.unitypackage` from [Releases](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
 2. Import via **Assets > Import Package > Custom Package**
 3. Import all files when prompted
 
-### Option 2: Manual Installation
+### Option 3: Manual Installation
 
-1. Download the latest release from [Releases](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
-2. Copy the `Assets/Plugins/ProjectMakers/horizOn` folder into your project's `Assets/Plugins/` directory
+1. Download or clone this repository
+2. Copy the whole repository into your project's `Packages/` directory, or copy the `CloudSDK` folder into `Assets/`
 
 ## Quick Start
 
 > **[Quickstart Guide on horizon.pm](https://horizon.pm/quickstart#unity)** - Interactive setup guide with step-by-step instructions.
 
-See also **[QUICKSTART.md](Assets/Plugins/ProjectMakers/horizOn/QUICKSTART.md)** for offline setup instructions.
+See also **[QUICKSTART.md](QUICKSTART.md)** for offline setup instructions.
 
 ### 1. Import Configuration
 
@@ -95,16 +108,18 @@ var data = await CloudSaveManager.Instance.LoadObject<GameData>();
 connects, signs up an anonymous user, submits a score, and shows the resulting rank.
 
 1. Import the horizOn SDK package.
-2. Set your API key via **Window > horizOn > Config Importer**.
-3. Add the `HelloHorizon` component to an empty GameObject in a scene and press Play.
+2. Import the **Examples** sample via **Package Manager > horizOn Cloud SDK > Samples**.
+3. Set your API key via **Window > horizOn > Config Importer**.
+4. Add the `HelloHorizon` component to an empty GameObject in a scene and press Play.
 
-Script: `Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Examples/HelloHorizon/HelloHorizon.cs`.
+Script: `HelloHorizon.cs` (under `Assets/Samples/horizOn Cloud SDK/<version>/Examples/HelloHorizon/` after importing the sample).
 Optionally assign a UI Text element to mirror the result on screen.
 
 ## Examples
 
-Per-feature minimal example scripts live in
-`Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Examples/Features/`. Each is a small,
+Per-feature minimal example scripts ship as the **Examples** sample. Import it via
+**Package Manager > horizOn Cloud SDK > Samples**, then find them under
+`Assets/Samples/horizOn Cloud SDK/<version>/Examples/Features/`. Each is a small,
 copy-paste friendly MonoBehaviour with a header comment and try/catch error handling.
 Attach one to an empty GameObject and press Play.
 
@@ -121,7 +136,7 @@ Attach one to an empty GameObject and press Play.
 | Gift Codes | `GiftCodesExample.cs` |
 | Feedback | `FeedbackExample.cs` |
 
-For a full guided tour of every feature in one window, see the `ExampleUI` folder.
+For a full guided tour of every feature in one window, import the **Example UI** sample.
 
 ## API Reference
 
@@ -414,7 +429,7 @@ void OnUserSignedIn(UserData user)
 
 ## Configuration Options
 
-Edit the config asset at `Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/HorizonConfig.asset` or import via **Window > horizOn > Config Importer**:
+Import via **Window > horizOn > Config Importer** (it creates the config asset under `Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/horizOn/HorizonConfig.asset` in your project, so it persists even though the SDK itself is installed read-only via the Package Manager):
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -500,23 +515,27 @@ await server.Connect();
 ## Project Structure
 
 ```
-Assets/Plugins/ProjectMakers/horizOn/
-├── CloudSDK/
-│   ├── Core/        # HorizonApp, HorizonServer, HorizonConfig
-│   ├── Manager/     # Feature managers (incl. CrashManager)
-│   ├── Service/     # EventService, NetworkService, LogService
-│   ├── Objects/     # Data models, requests, responses
-│   └── Resources/   # HorizonConfig.asset
-├── Documentation/   # API reference
-├── QUICKSTART.md    # Setup guide
-└── README.md        # This file
+horizOn-SDK-Unity/        # the package (repo root)
+├── package.json          # UPM manifest
+├── CloudSDK/             # runtime + editor code (assembly definitions)
+│   ├── Core/             # HorizonApp, HorizonServer, HorizonConfig
+│   ├── Manager/          # Feature managers (incl. CrashManager)
+│   ├── Service/          # EventService, NetworkService, LogService
+│   ├── Objects/          # Data models, requests, responses
+│   └── Editor/           # Config Importer, iOS build post-processor
+├── Documentation~/       # API reference (hidden from the Unity importer)
+├── Samples~/             # Examples + Example UI (import via Package Manager)
+├── QUICKSTART.md
+├── CHANGELOG.md
+├── LICENSE.md
+└── README.md             # This file
 ```
 
 ## Documentation
 
 - **[Quickstart Guide](https://horizon.pm/quickstart#unity)** - Interactive setup
-- **[QUICKSTART.md](Assets/Plugins/ProjectMakers/horizOn/QUICKSTART.md)** - Offline setup guide
-- **[API Reference](Assets/Plugins/ProjectMakers/horizOn/Documentation/UNITY_SDK_API_REFERENCE.md)** - Complete API reference
+- **[QUICKSTART.md](QUICKSTART.md)** - Offline setup guide
+- **[API Reference](Documentation~/UNITY_SDK_API_REFERENCE.md)** - Complete API reference
 - **[horizOn Docs](https://horizon.pm/docs)** - Full documentation
 
 ## Troubleshooting
@@ -538,4 +557,4 @@ Assets/Plugins/ProjectMakers/horizOn/
 
 MIT License - Copyright (c) [ProjectMakers](https://projectmakers.de)
 
-See [LICENSE](LICENSE) for details.
+See [LICENSE.md](LICENSE.md) for details.

@@ -8,10 +8,13 @@
 /Temp/
 /UserSettings/
 *.csproj
+*.unitypackage
 
 /CLAUDE.md
+/AGENTS.md
+/GEMINI.md
 /Code_Guidelines.md
 /horizOn SDK.sln.DotSettings
 /horizOn SDK.sln
 /sample_config.json
-/Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/
+/CloudSDK/Resources/
