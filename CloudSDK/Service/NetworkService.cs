@@ -281,6 +281,11 @@ namespace PM.horizOn.Cloud.Service
                         {
                             data = GetAllRemoteConfigResponse.ParseFromJson(responseText) as TResponse;
                         }
+                        // Special handling for LocalizationAllResponse which has a dictionary
+                        else if (typeof(TResponse) == typeof(LocalizationAllResponse))
+                        {
+                            data = LocalizationAllResponse.ParseFromJson(responseText) as TResponse;
+                        }
                         // Special handling for array responses (JsonUtility can't deserialize arrays directly)
                         else if (typeof(TResponse).IsArray)
                         {

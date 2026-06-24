@@ -20,6 +20,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
+| 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
 | 📰 **News** | `NewsManager` | In-game announcements |
 | 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
@@ -131,6 +132,7 @@ Attach one to an empty GameObject and press Play.
 | Crash Reporting | `CrashReportingExample.cs` |
 | User Logs | `UserLogsExample.cs` |
 | Remote Config | `RemoteConfigExample.cs` |
+| Localization | `LocalizationExample.cs` |
 | News | `NewsExample.cs` |
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
@@ -260,6 +262,26 @@ bool eventActive = await RemoteConfigManager.Instance.GetBool("holiday_event", f
 
 // Get all configs at once
 var configs = await RemoteConfigManager.Instance.GetAllConfigs();
+```
+
+### Localization
+
+```csharp
+// Pick a language (one of the 15 supported codes); defaults to the device
+// language, or "en" when that is not supported. Changing it clears the cache.
+LocalizationManager.Instance.SetLanguage("de");
+
+// Single key in the current language; returns null when the key is missing
+string play = await LocalizationManager.Instance.GetLocalization("menu.play");
+
+// Override the language per call
+string playEn = await LocalizationManager.Instance.GetLocalization("menu.play", "en");
+
+// Get every translation for a language at once
+var translations = await LocalizationManager.Instance.GetAllLocalizations();
+
+// List the languages the backend has translations for
+string[] languages = await LocalizationManager.Instance.GetAvailableLanguages();
 ```
 
 ### News

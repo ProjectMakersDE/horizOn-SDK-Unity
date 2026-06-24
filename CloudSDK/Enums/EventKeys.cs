@@ -41,6 +41,7 @@ namespace PM.horizOn.Cloud.Enums
         LeaderboardDataLoaded = 303,
         NewsDataLoaded = 304,
         CloudSaveBytesLoaded = 305,
+        LocalizationDataLoaded = 306,
 
         // Feature Events (400-499)
         GiftCodeRedeemed = 400,
