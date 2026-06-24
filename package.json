@@ -1,6 +1,6 @@
 {
   "name": "com.projectmakers.horizon",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "displayName": "horizOn Cloud SDK",
   "description": "Official Unity SDK for horizOn, the backend-as-a-service for games. Manager-based API for authentication (anonymous, email, Google, Apple), cloud save, leaderboards, remote config, news, gift codes, feedback, user logs, crash reporting, and email sending. Includes an editor config importer.",
   "unity": "6000.0",
