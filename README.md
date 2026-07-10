@@ -8,7 +8,7 @@
 
 [![Unity 6](https://img.shields.io/badge/Unity-6000.0%2B-blue?logo=unity&logoColor=white)](https://unity.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE.md)
-[![Version](https://img.shields.io/badge/version-1.8.0-orange)](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
+[![Version](https://img.shields.io/badge/version-1.8.1-orange)](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
 
 Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https://projectmakers.de).
 
