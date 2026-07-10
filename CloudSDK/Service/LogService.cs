@@ -39,14 +39,14 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
-        /// Initialize the network service with configuration.
+        /// Initialize the log service with configuration.
         /// </summary>
         public void Initialize(HorizonConfig config)
         {
             _config = config;
-            
-            if (config == null || !config.IsValid()) 
-                Error("NetworkService initialized with invalid configuration");
+
+            if (config == null || !config.IsValid())
+                Error("LogService initialized with invalid configuration");
         }
 
         /// <summary>
@@ -56,7 +56,7 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="context">Optional Unity object context</param>
         public void Info(string message, UnityEngine.Object context = null)
         {
-            if(_config.LogLevel > LogType.INFO) return;
+            if(_config != null && _config.LogLevel > LogType.INFO) return;
             
             if (_enableUnityLogging)
             {
@@ -81,7 +81,7 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="context">Optional Unity object context</param>
         public void Warning(string message, UnityEngine.Object context = null)
         {
-            if(_config.LogLevel > LogType.WARN) return;
+            if(_config != null && _config.LogLevel > LogType.WARN) return;
             
             if (_enableUnityLogging)
             {
@@ -106,7 +106,7 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="context">Optional Unity object context</param>
         public void Error(string message, UnityEngine.Object context = null)
         {
-            if(_config.LogLevel > LogType.ERROR) return;
+            if(_config != null && _config.LogLevel > LogType.ERROR) return;
             
             if (_enableUnityLogging)
             {
