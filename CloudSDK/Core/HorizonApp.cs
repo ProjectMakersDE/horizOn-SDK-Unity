@@ -42,6 +42,36 @@ namespace PM.horizOn.Cloud.Core
         public static NetworkService Network => NetworkService.Instance;
 
         /// <summary>
+        /// Reset all static SDK state at the start of every Play session / player run.
+        ///
+        /// Unity 6.6+ enables "Fast Enter Play Mode" (domain reload disabled) by default for
+        /// new projects. With domain reload off, static fields keep their values and static
+        /// event subscribers keep their registrations between Play mode sessions. Without this
+        /// reset the second Play would short-circuit Initialize() (IsInitialized is still true)
+        /// while Instance points at a GameObject destroyed with the previous session, and the
+        /// service singletons would carry stale subscribers/config forward.
+        ///
+        /// SubsystemRegistration runs before the first scene loads on every entry to Play mode,
+        /// regardless of the domain-reload setting, so it is the correct place to null everything
+        /// out. In a player build this is a harmless no-op (state is already default at startup).
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            // Bootstrap state.
+            Instance = null;
+            IsInitialized = false;
+            _sdkGameObject = null;
+
+            // Service singletons are plain C# objects (not UnityEngine.Object), so they never
+            // become a "fake-null" destroyed reference when Play stops. Reset them explicitly so
+            // no stale state or event subscribers leak into the next Play session.
+            EventService.ResetInstance();
+            LogService.ResetInstance();
+            NetworkService.ResetInstance();
+        }
+
+        /// <summary>
         /// Initialize the horizOn SDK.
         /// This should be called at the start of your application.
         /// </summary>

@@ -32,6 +32,21 @@ namespace PM.horizOn.Cloud.Manager
         private static TaskCompletionSource<AppleAuthResult> _pending;
         private static string _pendingNonce;
 
+        /// <summary>
+        /// Reset the static bridge state at the start of every Play session / player run. With
+        /// domain reload disabled (Fast Enter Play Mode, default in Unity 6.6+) a sign-in that was
+        /// still pending when Play stopped would otherwise leave a stale, never-completing
+        /// TaskCompletionSource in _pending, so the next RequestSignIn() would return that dead
+        /// task to callers instead of starting a fresh flow.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            _instance = null;
+            _pending = null;
+            _pendingNonce = null;
+        }
+
 #if UNITY_IOS && !UNITY_EDITOR
         [DllImport("__Internal")]
         private static extern void _HorizonAppleSignIn_Present(string nonce);
