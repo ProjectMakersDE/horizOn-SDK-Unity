@@ -1,3 +1,11 @@
+## [1.8.2](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.1...v1.8.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* **config:** decouple API key obfuscation from the importing machine ([6c4a149](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/6c4a1494f8efd548efce72dba4f293c5afd05f2c))
+* **user:** keep the anonymous recovery token across sign-in ([ffcefa6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/ffcefa692c621f13a87e6cdd28c1b45b096bf16d))
+
 ## [1.8.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.0...v1.8.1) (2026-07-10)
 
 
