@@ -138,7 +138,7 @@ namespace PM.horizOn.Cloud.Manager
 
             if (response.IsSuccess && response.Data != null && !string.IsNullOrEmpty(response.Data.userId))
             {
-                UpdateCurrentUser(response.Data);
+                UpdateCurrentUser(response.Data, request.anonymousToken);
                 CacheSession();
 
                 HorizonApp.Log.Info($"User signed up successfully: {response.Data.userId}");
@@ -340,7 +340,7 @@ namespace PM.horizOn.Cloud.Manager
 
             if (response.IsSuccess && response.Data != null && response.Data.authStatus == "AUTHENTICATED")
             {
-                UpdateCurrentUser(response.Data);
+                UpdateCurrentUser(response.Data, request.anonymousToken);
                 CacheSession();
 
                 HorizonApp.Log.Info($"User signed in successfully: {response.Data.userId}");
@@ -595,8 +595,14 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Update current user data from auth response.
         /// </summary>
-        private void UpdateCurrentUser(AuthResponse response)
+        /// <param name="response">The auth response from signup/signin</param>
+        /// <param name="sentAnonymousToken">The anonymous token this client sent with the request, if any.
+        /// The signin response does not echo the token back, so it must be taken from the request -
+        /// otherwise every session restore wipes it (TASK-451).</param>
+        private void UpdateCurrentUser(AuthResponse response, string sentAnonymousToken = null)
         {
+            string anonymousToken = ResolveAnonymousToken(response.isAnonymous, response.anonymousToken, sentAnonymousToken);
+
             // Ensure _currentUser is initialized
             if (_currentUser == null)
             {
@@ -612,7 +618,7 @@ namespace PM.horizOn.Cloud.Manager
                     ? "APPLE"
                     : (!string.IsNullOrEmpty(response.googleId) ? "GOOGLE" : "EMAIL"));
             _currentUser.AccessToken = response.accessToken ?? string.Empty;
-            _currentUser.AnonymousToken = response.anonymousToken ?? string.Empty;
+            _currentUser.AnonymousToken = anonymousToken;
             _currentUser.AppleUserId = response.appleUserId ?? string.Empty;
             _currentUser.IsPrivateRelayEmail = response.isPrivateRelayEmail;
             _currentUser.IsEmailVerified = response.isVerified;
@@ -625,13 +631,30 @@ namespace PM.horizOn.Cloud.Manager
                 NetworkService.Instance.SetSessionToken(response.accessToken);
             }
 
-            // Save anonymous token separately for future sign-in
-            if (response.isAnonymous && !string.IsNullOrEmpty(response.anonymousToken))
+            // Save anonymous token separately for future sign-in. Must also run for
+            // sign-in (not just signup), so a recovery token used on a new device
+            // survives past the first session (TASK-451).
+            if (response.isAnonymous && !string.IsNullOrEmpty(anonymousToken))
             {
-                SaveAnonymousToken(response.anonymousToken);
+                SaveAnonymousToken(anonymousToken);
             }
 
             HorizonApp.Events.Publish(EventKeys.UserDataChanged, _currentUser);
+        }
+
+        /// <summary>
+        /// Pick the anonymous token to keep for an authenticated user: prefer the one
+        /// the server echoes (signup), fall back to the one this client sent (signin).
+        /// </summary>
+        internal static string ResolveAnonymousToken(bool isAnonymous, string responseToken, string sentToken)
+        {
+            if (!isAnonymous)
+                return string.Empty;
+
+            if (!string.IsNullOrEmpty(responseToken))
+                return responseToken;
+
+            return sentToken ?? string.Empty;
         }
 
         /// <summary>

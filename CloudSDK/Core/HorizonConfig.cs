@@ -15,6 +15,16 @@ namespace PM.horizOn.Cloud.Core
     {
         private const string RESOURCE_PATH = "horizOn/HorizonConfig";
 
+        // Marks the portable (machine-independent) key format. Legacy values
+        // are plain Base64 and can never contain ':', so the prefix is unambiguous.
+        private const string KEY_FORMAT_PREFIX = "hzn1:";
+
+        // Static obfuscation key. MUST NOT contain anything machine- or
+        // device-specific: the asset is encrypted in the editor on the developer
+        // machine and decrypted at runtime on the player device (TASK-451).
+        // This is obfuscation, not security - the key ships inside the build either way.
+        private const string OBFUSCATION_KEY = "horizOn.CloudSDK.ApiKey.v1";
+
         [Header("API Configuration")]
         [Tooltip("Your horizOn API key (encrypted in builds)")]
         [SerializeField] private string _encryptedApiKey;
@@ -160,6 +170,13 @@ namespace PM.horizOn.Cloud.Core
                 return false;
             }
 
+            if (string.IsNullOrEmpty(ApiKey))
+            {
+                // DecryptApiKey already logged the specific reason.
+                Debug.LogError("[HorizonConfig] API key could not be decrypted");
+                return false;
+            }
+
             if (_hosts == null || _hosts.Length == 0)
             {
                 Debug.LogError("[HorizonConfig] No hosts configured");
@@ -199,55 +216,120 @@ namespace PM.horizOn.Cloud.Core
         }
 
         /// <summary>
-        /// Simple encryption for API key (XOR with a key).
-        /// Note: This is obfuscation, not true security. For production, consider using Unity's built-in encryption.
+        /// Simple encryption for API key (XOR with a static key).
+        /// Note: This is obfuscation, not true security. The key material must stay
+        /// machine-independent so assets encrypted in the editor decrypt on player devices.
         /// </summary>
         private string EncryptApiKey(string plainText)
         {
             if (string.IsNullOrEmpty(plainText))
                 return string.Empty;
 
-            // Simple XOR encryption with a key derived from SystemInfo
-            string key = $"{SystemInfo.deviceUniqueIdentifier}{Application.productName}";
             byte[] plainBytes = System.Text.Encoding.UTF8.GetBytes(plainText);
-            byte[] keyBytes = System.Text.Encoding.UTF8.GetBytes(key);
-            byte[] encryptedBytes = new byte[plainBytes.Length];
-
-            for (int i = 0; i < plainBytes.Length; i++)
-            {
-                encryptedBytes[i] = (byte)(plainBytes[i] ^ keyBytes[i % keyBytes.Length]);
-            }
-
-            return Convert.ToBase64String(encryptedBytes);
+            return KEY_FORMAT_PREFIX + Convert.ToBase64String(XorWithKey(plainBytes, OBFUSCATION_KEY));
         }
 
         /// <summary>
         /// Simple decryption for API key (XOR with the same key).
+        /// Values without the format prefix fall back to the legacy device-bound scheme.
         /// </summary>
         private string DecryptApiKey(string encryptedText)
         {
             if (string.IsNullOrEmpty(encryptedText))
                 return string.Empty;
 
+            if (!encryptedText.StartsWith(KEY_FORMAT_PREFIX, StringComparison.Ordinal))
+            {
+                return DecryptLegacyApiKey(encryptedText);
+            }
+
             try
             {
-                string key = $"{SystemInfo.deviceUniqueIdentifier}{Application.productName}";
-                byte[] encryptedBytes = Convert.FromBase64String(encryptedText);
-                byte[] keyBytes = System.Text.Encoding.UTF8.GetBytes(key);
-                byte[] decryptedBytes = new byte[encryptedBytes.Length];
-
-                for (int i = 0; i < encryptedBytes.Length; i++)
-                {
-                    decryptedBytes[i] = (byte)(encryptedBytes[i] ^ keyBytes[i % keyBytes.Length]);
-                }
-
-                return System.Text.Encoding.UTF8.GetString(decryptedBytes);
+                byte[] encryptedBytes = Convert.FromBase64String(encryptedText.Substring(KEY_FORMAT_PREFIX.Length));
+                return System.Text.Encoding.UTF8.GetString(XorWithKey(encryptedBytes, OBFUSCATION_KEY));
             }
             catch (Exception e)
             {
                 Debug.LogError($"[HorizonConfig] Failed to decrypt API key: {e.Message}");
                 return string.Empty;
             }
+        }
+
+        /// <summary>
+        /// Decrypt a pre-hzn1 value. Those were XORed with the importing machine's
+        /// deviceUniqueIdentifier, so they only decrypt on that machine - in a shipped
+        /// build the result is garbage and every request gets 401 (TASK-451).
+        /// </summary>
+        private string DecryptLegacyApiKey(string encryptedText)
+        {
+            string decrypted;
+            try
+            {
+                string legacyKey = $"{SystemInfo.deviceUniqueIdentifier}{Application.productName}";
+                decrypted = System.Text.Encoding.UTF8.GetString(
+                    XorWithKey(Convert.FromBase64String(encryptedText), legacyKey));
+            }
+            catch (Exception)
+            {
+                decrypted = null;
+            }
+
+            if (!LooksLikeApiKey(decrypted))
+            {
+                Debug.LogError(
+                    "[HorizonConfig] The stored API key uses the legacy device-bound format " +
+                    "and was encrypted on a different machine, so it cannot be decrypted here. " +
+                    "Re-import horizOn_config.ini via Window > horizOn > Config Importer, " +
+                    "or inject the key at runtime with HorizonConfig.SetApiKey().");
+                return string.Empty;
+            }
+
+#if UNITY_EDITOR
+            _encryptedApiKey = EncryptApiKey(decrypted);
+            UnityEditor.EditorUtility.SetDirty(this);
+            Debug.LogWarning(
+                "[HorizonConfig] Migrated legacy device-bound API key to the portable format. " +
+                "Save the project (or re-import the config) to persist the migration before building.");
+#else
+            Debug.LogWarning(
+                "[HorizonConfig] The stored API key uses the legacy device-bound format. " +
+                "It decrypts on this device only because it was encrypted here - it will fail " +
+                "on every other device. Re-import the config with an updated SDK and rebuild.");
+#endif
+
+            return decrypted;
+        }
+
+        private static byte[] XorWithKey(byte[] data, string key)
+        {
+            byte[] keyBytes = System.Text.Encoding.UTF8.GetBytes(key);
+            byte[] result = new byte[data.Length];
+
+            for (int i = 0; i < data.Length; i++)
+            {
+                result[i] = (byte)(data[i] ^ keyBytes[i % keyBytes.Length]);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// XOR with the wrong key almost surely yields bytes outside printable ASCII,
+        /// while real API keys are printable ASCII. Used to tell a legacy value
+        /// encrypted on this machine apart from one encrypted elsewhere.
+        /// </summary>
+        private static bool LooksLikeApiKey(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return false;
+
+            foreach (char c in value)
+            {
+                if (c < 0x20 || c > 0x7E)
+                    return false;
+            }
+
+            return true;
         }
 
         #if UNITY_EDITOR
