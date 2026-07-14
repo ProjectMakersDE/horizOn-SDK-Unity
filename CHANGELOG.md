@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.2...v1.8.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* **changelog:** restore v1.0.5 and v1.0.6 history ([51791fd](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/51791fdda52e11a3886c8f218a40946d4e3b0018))
+
 ## [1.8.2](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.1...v1.8.2) (2026-07-13)
 
 
