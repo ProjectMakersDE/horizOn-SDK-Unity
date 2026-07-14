@@ -84,6 +84,20 @@
 
 * add semantic-release CI/CD with changelog and sync workflow ([b78e26a](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/b78e26a0a2ee6343e68ad27a38c3bf92cc879106))
 
+## [1.0.6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.0.5...v1.0.6) (2025-12-07)
+
+
+### Bug Fixes
+
+* change public field names to camelCase in user-related classes ([8e544d7](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/8e544d79ecd26d92bef8f96c4658e2558c2efac2))
+
+## [1.0.5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.0.4...v1.0.5) (2025-12-07)
+
+
+### Bug Fixes
+
+* add permissions for release creation ([aa865ba](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/aa865ba9b6975c9d8233440a158e5f6439ccbf68))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
