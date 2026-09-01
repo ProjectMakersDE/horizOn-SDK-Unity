@@ -61,7 +61,7 @@ namespace PM.horizOn.Cloud.Manager
             var response = await HorizonApp.Network.PostAsync<SubmitScoreResponse>(
                 BuildEndpoint(boardKey, "submit"),
                 request,
-                useSessionToken: false
+                useSessionToken: true
             );
 
             if (response.IsSuccess)
