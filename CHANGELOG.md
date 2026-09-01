@@ -1,3 +1,10 @@
+## [1.8.4](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.3...v1.8.4) (2026-09-01)
+
+
+### Bug Fixes
+
+* **security:** attach sessions to leaderboard submits ([9fc9610](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/9fc96108982f5ee104da9fdedaa6d88822f6fae8))
+
 ## [1.8.3](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.2...v1.8.3) (2026-07-14)
 
 
