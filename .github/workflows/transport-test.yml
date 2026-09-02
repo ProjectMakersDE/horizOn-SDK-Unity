@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [develop]
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
-  transport-test:
+  shared-transport-contract:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -22,3 +26,35 @@ jobs:
 
       - name: Run leaderboard transport contract
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
+
+  unity-editor-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Run actual Unity Editor transport tests
+        id: unity-tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: Tests/UnityProject
+          unityVersion: 6000.5.0f1
+          testMode: EditMode
+          coverageEnabled: false
+          artifactsPath: unity-editor-test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          checkName: Unity Editor Transport Tests
+
+      - name: Upload Unity Editor test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-editor-test-results
+          path: ${{ steps.unity-tests.outputs.artifactsPath }}
