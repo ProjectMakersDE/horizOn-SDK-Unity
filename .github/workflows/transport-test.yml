@@ -47,6 +47,7 @@ jobs:
           projectPath: .unity-ci-project
           unityVersion: 6000.5.0f1
           testMode: EditMode
+          customParameters: -testFilter PM.horizOn.Cloud.Tests.LeaderboardTransportTests
           artifactsPath: unity-editor-test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           checkName: Unity Editor Transport Tests
