@@ -47,7 +47,6 @@ jobs:
           projectPath: Tests/UnityProject
           unityVersion: 6000.5.0f1
           testMode: EditMode
-          coverageEnabled: false
           artifactsPath: unity-editor-test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           checkName: Unity Editor Transport Tests

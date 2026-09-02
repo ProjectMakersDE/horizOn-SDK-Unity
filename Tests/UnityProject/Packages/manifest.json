@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.projectmakers.horizon": "file:../..",
+    "com.projectmakers.horizon": "file:../../..",
     "com.unity.test-framework": "1.6.0"
   },
   "testables": [
