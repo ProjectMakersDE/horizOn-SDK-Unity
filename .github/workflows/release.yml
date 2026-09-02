@@ -44,7 +44,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: Tests~/UnityProject
+          projectPath: .unity-ci-project
           unityVersion: 6000.5.0f1
           testMode: EditMode
           artifactsPath: unity-editor-test-results
