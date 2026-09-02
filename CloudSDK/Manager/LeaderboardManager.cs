@@ -6,6 +6,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Objects.Network.Responses;
+using PM.horizOn.Cloud.Transport;
 
 namespace PM.horizOn.Cloud.Manager
 {
@@ -43,25 +44,22 @@ namespace PM.horizOn.Cloud.Manager
         /// <returns>True if submission succeeded, false otherwise</returns>
         public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            var user = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser;
+            if (!LeaderboardTransportContract.TryCreateSubmitPlan(
+                    user,
+                    HorizonApp.Network.GetSessionToken(),
+                    score,
+                    boardKey,
+                    out var plan))
             {
                 HorizonApp.Log.Error("User must be signed in to submit score");
                 return false;
             }
 
-            var user = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser;
-
-            var request = new SubmitScoreRequest
-            {
-                userId = user.UserId,
-                score = score,
-                leaderboardKey = string.IsNullOrEmpty(boardKey) ? null : boardKey,
-            };
-
             var response = await HorizonApp.Network.PostAsync<SubmitScoreResponse>(
-                BuildEndpoint(boardKey, "submit"),
-                request,
-                useSessionToken: true
+                plan.Endpoint,
+                plan.Request,
+                useSessionToken: plan.UseSessionToken
             );
 
             if (response.IsSuccess)

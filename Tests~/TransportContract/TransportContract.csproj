@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../CloudSDK/Objects/Data/UserData.cs" Link="Production/UserData.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/LeaderboardRequests.cs" Link="Production/LeaderboardRequests.cs" />
+    <Compile Include="../../CloudSDK/Transport/LeaderboardTransportContract.cs" Link="Production/LeaderboardTransportContract.cs" />
+  </ItemGroup>
+</Project>
