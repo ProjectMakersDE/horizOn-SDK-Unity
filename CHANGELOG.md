@@ -1,3 +1,18 @@
+## [1.8.5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.4...v1.8.5) (2026-09-28)
+
+
+### Bug Fixes
+
+* **ci:** isolate Unity leaderboard editor test ([cf2cad2](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/cf2cad29c64e2e27510675520f5d87ab0a868cca))
+* **ci:** isolate Unity test project dependencies ([82fede6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/82fede66522d0a5985441b66c335697dea9495ca))
+* **ci:** resolve Unity package for editor tests ([efe6490](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/efe6490086e2cdb9750c6b77f9ed4783a9826301))
+* **ci:** restore Unity project assets directory ([fcc50be](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/fcc50bed727fa33b565ffa3a63ab6da7a435610a))
+* **ci:** run actual Unity editor transport tests ([d512ecf](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/d512ecf75c3a89c8f45985d44f3c1081f60d6843))
+* **ci:** run transport tests on develop ([8bcbabd](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/8bcbabdd47f6d9fc33d2702d96e6e84d4c999ba4))
+* **ci:** use hidden Unity editor project path ([876baa5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/876baa579e9929a65b0fa6602b14b9aceb83dcf6))
+* **samples:** add missing UnityDefaultRuntimeTheme.tss and document HorizonConfig gitignore ([0a53c8f](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0a53c8f5d2fdac6b718d1438f969b47ffe5506fb))
+* **security:** test signed leaderboard transport ([6d95ffa](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/6d95ffad8dec2111914d092e6881c90270d35c39))
+
 ## [1.8.4](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.3...v1.8.4) (2026-09-01)
 
 
