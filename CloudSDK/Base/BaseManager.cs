@@ -29,7 +29,10 @@ namespace PM.horizOn.Cloud.Base
                     {
                         GameObject managerObj = new GameObject($"[{typeof(T).Name}]");
                         _instance = managerObj.AddComponent<T>();
-                        DontDestroyOnLoad(managerObj);
+                        if (Application.isPlaying)
+                        {
+                            DontDestroyOnLoad(managerObj);
+                        }
 
                         // Initialize the manager
                         _instance.Init();

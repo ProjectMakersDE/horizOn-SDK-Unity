@@ -10,6 +10,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Helper;
 using PM.horizOn.Cloud.Objects.Network.Responses;
+using PM.horizOn.Cloud.Transport;
 
 namespace PM.horizOn.Cloud.Service
 {
@@ -663,17 +664,13 @@ namespace PM.horizOn.Cloud.Service
             {
                 LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
             }
-            request.SetRequestHeader("X-API-Key", apiKey);
-
-            // Set session token if needed
+            foreach (var header in HorizonRequestHeaders.Create(apiKey, _sessionToken, useSessionToken))
+            {
+                request.SetRequestHeader(header.Key, header.Value);
+            }
             if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
             {
-                request.SetRequestHeader("Authorization", $"Bearer {_sessionToken}");
                 LogService.Instance.Info("Authorization header added (session token)");
-            }
-            else
-            {
-                LogService.Instance.Info("No Authorization header (useSessionToken: " + useSessionToken + ")");
             }
 
             return request;

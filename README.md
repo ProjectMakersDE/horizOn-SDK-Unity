@@ -462,6 +462,16 @@ Import via **Window > horizOn > Config Importer** (it creates the config asset u
 | Retry Delay | 1.0 | Delay between retries in seconds |
 | Log Level | INFO | DEBUG, INFO, WARNING, ERROR, NONE |
 
+### Keep Your API Key Out of Version Control
+
+The generated config asset contains your API key (obfuscated, not encrypted). Add it to your project's `.gitignore` and let every team member import their own config via the Config Importer:
+
+```gitignore
+# horizOn SDK config (contains your API key)
+Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/horizOn/HorizonConfig.asset
+Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/horizOn/HorizonConfig.asset.meta
+```
+
 ## Rate Limiting
 
 **Limit**: 10 requests per minute per client.
