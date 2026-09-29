@@ -120,6 +120,7 @@ namespace PM.horizOn.Cloud.Tests
 
             Assert.That(ValidatedActionsErrorCodes.Resolve(404, null), Is.EqualTo(ValidatedActionsErrorCodes.NotSupported));
             Assert.That(ValidatedActionsErrorCodes.Resolve(404, "PLAYER_NOT_FOUND"), Is.EqualTo("PLAYER_NOT_FOUND"));
+            Assert.That(ValidatedActionsErrorCodes.Resolve(404, "NOT_FOUND"), Is.EqualTo(ValidatedActionsErrorCodes.NotSupported));
             Assert.That(ValidatedActionsErrorCodes.Resolve(0, null), Is.EqualTo(ValidatedActionsErrorCodes.NetworkError));
             Assert.That(NetworkService.IsNonRetryableRateLimitCode(ValidatedActionsErrorCodes.RunRateLimited), Is.True);
             Assert.That(NetworkService.IsNonRetryableRateLimitCode(ValidatedActionsErrorCodes.RunCapacityReached), Is.True);

@@ -205,6 +205,7 @@ Require(!ValidatedActionsTransportContract.EndsRun(429, "RUN_RATE_LIMITED"), "ra
 Require(!ValidatedActionsTransportContract.EndsRun(503, "VALIDATED_ACTIONS_UNAVAILABLE"), "unavailable keeps the run");
 Require(ValidatedActionsErrorCodes.Resolve(404, null) == ValidatedActionsErrorCodes.NotSupported, "404 without code means not supported");
 Require(ValidatedActionsErrorCodes.Resolve(404, "PLAYER_NOT_FOUND") == "PLAYER_NOT_FOUND", "server code wins");
+Require(ValidatedActionsErrorCodes.Resolve(404, "NOT_FOUND") == ValidatedActionsErrorCodes.NotSupported, "simpleServer unknown route means not supported");
 Require(new PlayerState { values = new[] { new PlayerStateValue { key = "gold", balance = 1250 } } }.GetBalance("gold") == 1250, "state balance helper");
 Require(new PlayerState().GetBalance("gold") == 0, "state balance of a missing key");
 

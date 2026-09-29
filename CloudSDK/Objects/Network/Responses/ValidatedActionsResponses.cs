@@ -609,14 +609,16 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <summary>
         /// Error code of a failed validated actions call: the server code when present, otherwise
         /// <see cref="NotSupported"/> for a 404 (the endpoint does not exist, for example on a
-        /// simpleServer) and <see cref="FromHttpStatus"/> for everything else.
+        /// simpleServer) and <see cref="FromHttpStatus"/> for everything else. A 404 with the
+        /// generic code <c>NOT_FOUND</c> (the simpleServer's unknown route answer) also counts as
+        /// <see cref="NotSupported"/>.
         /// </summary>
         /// <param name="httpStatus">HTTP status, 0 when there was none</param>
         /// <param name="serverCode">The <c>code</c> of the JSON error body, or null</param>
         public static string Resolve(long httpStatus, string serverCode)
         {
+            if (httpStatus == 404 && (string.IsNullOrEmpty(serverCode) || serverCode == NotFound)) return NotSupported;
             if (!string.IsNullOrEmpty(serverCode)) return serverCode;
-            if (httpStatus == 404) return NotSupported;
             return FromHttpStatus(httpStatus);
         }
     }
