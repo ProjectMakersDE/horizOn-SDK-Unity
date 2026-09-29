@@ -25,7 +25,7 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Run leaderboard transport contract
+      - name: Run shared transport contract
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
   unity-editor-transport:
@@ -48,7 +48,8 @@ jobs:
           projectPath: .unity-ci-project
           unityVersion: 6000.5.0f1
           testMode: EditMode
-          customParameters: -testFilter PM.horizOn.Cloud.Tests.LeaderboardTransportTests
+          # Same scope as transport-test.yml: every Transport category suite (see comment there).
+          customParameters: -testCategory Transport
           artifactsPath: unity-editor-test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           checkName: Unity Editor Transport Tests
