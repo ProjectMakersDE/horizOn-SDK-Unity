@@ -201,11 +201,24 @@ namespace PM.horizOn.Cloud.Service
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                            if (attemptCount < maxAttempts)
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
 
-                            // Wait and retry
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = method,
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
                         }
 
                         // Server errors (5xx) or timeout - retry
@@ -376,9 +389,24 @@ namespace PM.horizOn.Cloud.Service
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            if (attemptCount < maxAttempts)
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
+
+                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = method,
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -504,9 +532,24 @@ namespace PM.horizOn.Cloud.Service
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            if (attemptCount < maxAttempts)
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
+
+                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = "GET",
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: GET {url} - {rateLimitError}");
+                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -674,6 +717,20 @@ namespace PM.horizOn.Cloud.Service
             }
 
             return request;
+        }
+
+        /// <summary>
+        /// Error message for a request that is still rate limited (HTTP 429) after the last retry.
+        /// </summary>
+        /// <param name="retryAfterSeconds">Seconds from the Retry-After header (0 if unknown)</param>
+        /// <returns>Human-readable error message</returns>
+        internal static string BuildRateLimitMessage(float retryAfterSeconds)
+        {
+            if (retryAfterSeconds > 0f)
+            {
+                return $"Rate limit exceeded (HTTP 429). Try again in {(int)Math.Ceiling(retryAfterSeconds)} seconds.";
+            }
+            return "Rate limit exceeded (HTTP 429). Try again later.";
         }
 
         /// <summary>
