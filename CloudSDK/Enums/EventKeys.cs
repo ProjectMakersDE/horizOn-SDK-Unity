@@ -33,6 +33,7 @@ namespace PM.horizOn.Cloud.Enums
         CloudSaveDataChanged = 201,
         ConfigDataChanged = 202,
         LeaderboardDataChanged = 203,
+        PlayerProfileChanged = 204,
 
         // Data Load Events (300-399) - Distribute loaded data
         UserDataLoaded = 300,
@@ -42,6 +43,7 @@ namespace PM.horizOn.Cloud.Enums
         NewsDataLoaded = 304,
         CloudSaveBytesLoaded = 305,
         LocalizationDataLoaded = 306,
+        PlayerProfileLoaded = 307,
 
         // Feature Events (400-499)
         GiftCodeRedeemed = 400,

@@ -39,11 +39,18 @@ namespace PM.horizOn.Cloud.Manager
         /// Score is only updated if it's higher than the previous best.
         /// </summary>
         /// <param name="score">Score value</param>
-        /// <param name="metadata">Optional metadata JSON string</param>
+        /// <param name="metadata">Deprecated and ignored. The server never stored score metadata, so the
+        /// SDK does not send it. Kept only for source compatibility; it will be removed in the next
+        /// major version. Pass the board key as a named argument: <c>SubmitScore(score, boardKey: "weekly")</c>.</param>
         /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>True if submission succeeded, false otherwise</returns>
         public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
+            if (!string.IsNullOrEmpty(metadata))
+            {
+                HorizonApp.Log.Warning("SubmitScore: the metadata parameter is deprecated and ignored, it is not sent to the server");
+            }
+
             var user = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser;
             if (!LeaderboardTransportContract.TryCreateSubmitPlan(
                     user,

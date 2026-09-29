@@ -19,8 +19,9 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 7. [News](#news)
 8. [Cloud Save](#cloud-save)
 9. [Leaderboard](#leaderboard)
-10. [Data Models](#data-models)
-11. [Error Handling](#error-handling)
+10. [Player Profile](#player-profile)
+11. [Data Models](#data-models)
+12. [Error Handling](#error-handling)
 
 ---
 
@@ -435,16 +436,23 @@ current session automatically. The server only redeems for the player who owns t
 {
   "success": "boolean",
   "message": "string",
-  "giftData": "string (JSON with rewards)"
+  "giftData": "string (JSON with rewards)",
+  "grantedUnlocks": ["string (cosmetic ID)"]
 }
 ```
+
+`grantedUnlocks` lists the cosmetic IDs from the code's `grants` that the player owns after
+this redemption (newly unlocked or owned before), `[]` when the code grants nothing. See
+[Player Profile](#player-profile). When it is not empty, the SDK drops the cached
+`PlayerProfileManager.CurrentProfile`, so the next `GetProfile()` shows the unlock.
 
 **Example giftData**:
 ```json
 {
   "gold": 100,
   "crystals": 50,
-  "items": ["sword", "shield"]
+  "items": ["sword", "shield"],
+  "grants": ["badge.supporter"]
 }
 ```
 
@@ -455,6 +463,7 @@ current session automatically. The server only redeems for the player who owns t
 | 401 | Session missing, invalid or expired (sign in again) |
 | 403 | Code doesn't belong to API key, or the session belongs to another player |
 | 404 | Code not found |
+| 409 | `UNLOCK_LIMIT_REACHED`: the player would hold more than 25 unlocks; the code is not used up |
 
 #### Unity SDK Usage
 
@@ -470,28 +479,32 @@ if (!UserManager.Instance.IsSignedIn)
 
 var result = await GiftCodeManager.Instance.Redeem("SUMMER2024");
 
-if (result != null && result.Success)
+if (result != null && result.success)
 {
     Debug.Log("Code redeemed successfully!");
 
     // Parse rewards from giftData (JSON string)
-    if (!string.IsNullOrEmpty(result.GiftData))
+    if (!string.IsNullOrEmpty(result.giftData))
     {
         // Parse JSON and grant rewards
-        var rewards = JsonUtility.FromJson<RewardsData>(result.GiftData);
+        var rewards = JsonUtility.FromJson<RewardsData>(result.giftData);
         GrantRewards(rewards);
+    }
+
+    // Cosmetics unlocked by the code (player profile)
+    foreach (var cosmeticId in result.grantedUnlocks)
+    {
+        Debug.Log($"Unlocked: {cosmeticId}");
     }
 }
 else
 {
-    // Handle specific errors
-    string message = result?.Message ?? "Unknown error";
-    Debug.Log($"Redemption failed: {message}");
-
-    // Common messages:
+    // Redeem returns null on failure; details are in the SDK log.
+    // Common causes:
     // - "Code already redeemed"
     // - "Code expired"
     // - "Code not found"
+    Debug.Log("Redemption failed");
 }
 ```
 
@@ -992,6 +1005,8 @@ Base path: `/api/v1/app/leaderboard`
 
 **Description**: Submit score (only updates if higher than previous).
 
+**Headers**: `X-API-Key` and `Authorization: Bearer <accessToken>` of the signed-in player (sent by the SDK).
+
 **Request Body**:
 ```json
 {
@@ -999,6 +1014,11 @@ Base path: `/api/v1/app/leaderboard`
   "score": "long (>= 0)"
 }
 ```
+
+There is no `metadata` field: the server never stored score metadata. The `metadata`
+parameter of `SubmitScore(long score, string metadata = null, string boardKey = null)` is
+deprecated, ignored and not sent. It stays only for source compatibility and will be removed
+in the next major version. Pass a board key as a named argument: `SubmitScore(12500, boardKey: "weekly")`.
 
 **Response**: 200 OK on success
 
@@ -1027,11 +1047,8 @@ else
     Debug.Log("Score submission failed");
 }
 
-// Optionally include metadata
-bool submitted = await LeaderboardManager.Instance.SubmitScore(
-    score: 12500,
-    metadata: "Level5-HardMode"  // optional extra data
-);
+// Submit to a named board of a multi-board leaderboard
+bool weekly = await LeaderboardManager.Instance.SubmitScore(12500, boardKey: "weekly");
 ```
 
 ---
@@ -1051,11 +1068,15 @@ bool submitted = await LeaderboardManager.Instance.SubmitScore(
     {
       "position": 1,
       "username": "string",
-      "score": 1000
+      "score": 1000,
+      "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": ["badge.supporter"] }
     }
   ]
 }
 ```
+
+Every entry carries the player's `profile` (see [Player Profile](#player-profile)). In Unity
+`entry.profile` is never null; JSON `null` IDs read as `""`, check `HasAvatar` / `HasFrame`.
 
 #### Unity SDK Usage
 
@@ -1069,7 +1090,11 @@ if (topPlayers != null)
 {
     foreach (var entry in topPlayers)
     {
-        Debug.Log($"#{entry.Position} {entry.Username}: {entry.Score}");
+        Debug.Log($"#{entry.position} {entry.username}: {entry.score}");
+        if (entry.profile.HasAvatar)
+        {
+            // Map entry.profile.avatarId to your sprite; unknown IDs count as "not set"
+        }
     }
 }
 
@@ -1091,7 +1116,8 @@ var topPlayers = await LeaderboardManager.Instance.GetTop(10, useCache: false);
 {
   "position": 42,
   "username": "string",
-  "score": 1000
+  "score": 1000,
+  "profile": { "avatarId": null, "frameId": null, "badges": [] }
 }
 ```
 
@@ -1106,9 +1132,10 @@ var myRank = await LeaderboardManager.Instance.GetRank();
 
 if (myRank != null)
 {
-    Debug.Log($"Your rank: #{myRank.Position}");
-    Debug.Log($"Your score: {myRank.Score}");
-    Debug.Log($"Username: {myRank.Username}");
+    Debug.Log($"Your rank: #{myRank.position}");
+    Debug.Log($"Your score: {myRank.score}");
+    Debug.Log($"Username: {myRank.username}");
+    Debug.Log($"Avatar: {(myRank.profile.HasAvatar ? myRank.profile.avatarId : "(none)")}");
 }
 else
 {
@@ -1130,9 +1157,9 @@ else
 ```json
 {
   "entries": [
-    { "position": 8, "username": "Player8", "score": 950 },
-    { "position": 9, "username": "CurrentUser", "score": 920 },
-    { "position": 10, "username": "Player10", "score": 900 }
+    { "position": 8, "username": "Player8", "score": 950, "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": [] } },
+    { "position": 9, "username": "CurrentUser", "score": 920, "profile": { "avatarId": null, "frameId": null, "badges": [] } },
+    { "position": 10, "username": "Player10", "score": 900, "profile": { "avatarId": null, "frameId": "frame.gold", "badges": ["badge.supporter"] } }
   ]
 }
 ```
@@ -1149,9 +1176,9 @@ if (nearby != null)
 {
     foreach (var entry in nearby)
     {
-        string marker = entry.Username == UserManager.Instance.CurrentUser.DisplayName
+        string marker = entry.username == UserManager.Instance.CurrentUser.DisplayName
             ? " <-- YOU" : "";
-        Debug.Log($"#{entry.Position} {entry.Username}: {entry.Score}{marker}");
+        Debug.Log($"#{entry.position} {entry.username}: {entry.score}{marker}");
     }
 }
 else
@@ -1162,6 +1189,180 @@ else
 // Force fresh fetch
 var nearby = await LeaderboardManager.Instance.GetAround(5, useCache: false);
 ```
+
+---
+
+## Player Profile
+
+Base path: `/api/v1/app/player-profile`
+**Manager**: `PlayerProfileManager`
+
+Leaderboards show an avatar, an optional frame and up to 3 badges next to name and score.
+Each API key has a cosmetics catalog, maintained in the horizOn Dashboard: every entry has an
+ID, a type (`avatar`, `frame`, `badge`) and `locked`. Free entries can be selected by every
+player, locked entries only after an unlock (gift code with `grants`, or the Dashboard). The
+server stores IDs only; the game maps them to its own assets and treats unknown IDs as "not set".
+
+**Headers** (both endpoints): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
+signed-in player. The SDK sends the current session automatically. Without a signed-in player
+both methods fail locally (no request) with `LastErrorCode = "SESSION_REQUIRED"`.
+
+**Cosmetic ID format**: 1 to 32 characters, `^[a-z0-9][a-z0-9._-]{0,31}$`.
+
+### 21. Get Player Profile
+
+**Endpoint**: `GET /api/v1/app/player-profile?userId={uuid}`
+
+**Description**: Profile, unlocks and the full catalog of the API key with an `available`
+flag per entry, so a game builds its picker from one call.
+
+**Response (200 OK)**:
+```json
+{
+  "userId": "0d7e...",
+  "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": ["badge.supporter"] },
+  "unlocks": ["badge.supporter"],
+  "cosmetics": [
+    { "id": "avatar.zombie_07", "type": "avatar", "locked": false, "available": true },
+    { "id": "badge.supporter", "type": "badge", "locked": true, "available": true },
+    { "id": "frame.gold", "type": "frame", "locked": true, "available": false }
+  ],
+  "limits": { "maxBadges": 3, "maxUnlocks": 25 }
+}
+```
+
+`cosmetics` is sorted by `id`, `available = !locked || id in unlocks`. `unlocks` may contain
+IDs that were deleted from the catalog.
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 401 `SESSION_REQUIRED` | Session missing, invalid or expired |
+| 401 (no code) | Invalid API key |
+| 403 `SESSION_FORBIDDEN` | Session of another player |
+| 404 `PLAYER_NOT_FOUND` | Player missing, deleted, inactive or of another API key |
+| 429 | Rate limit; the SDK retries after `Retry-After` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Responses;
+
+PlayerProfileResponse profile = await PlayerProfileManager.Instance.GetProfile();
+if (profile == null)
+{
+    Debug.Log($"Loading failed: {PlayerProfileManager.Instance.LastErrorCode}");
+    return;
+}
+
+// Build the pickers from the catalog
+foreach (PlayerCosmetic avatar in profile.GetCosmetics("avatar"))
+{
+    Debug.Log($"{avatar.id} locked={avatar.locked} available={avatar.available}");
+}
+
+bool canUseGoldFrame = profile.IsAvailable("frame.gold");
+```
+
+`GetProfile()` has no time based cache: every call asks the server, so new unlocks show up
+right away. The last result stays in `PlayerProfileManager.Instance.CurrentProfile`.
+
+**Event**: `EventKeys.PlayerProfileLoaded` (307) with the `PlayerProfileResponse`.
+
+---
+
+### 22. Set Player Profile
+
+**Endpoint**: `PUT /api/v1/app/player-profile`
+
+**Description**: Replace the whole visible profile. Returns the same body as GET.
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "avatarId": "string or null",
+  "frameId": "string or null",
+  "badges": ["string"]
+}
+```
+
+A missing, `null` or empty `avatarId` / `frameId` clears the slot; missing or `[]` badges clear
+all badges. At most 3 distinct badges, order kept. The server checks, in this order: badge count
+and duplicates (`INVALID_BADGES`), then per ID the format (`INVALID_COSMETIC_ID`), the catalog
+(`COSMETIC_NOT_FOUND`), the type (`COSMETIC_TYPE_MISMATCH`) and the unlock (`COSMETIC_LOCKED`).
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 400 `INVALID_BADGES` | More than 3 badges, or a badge listed twice |
+| 400 `INVALID_COSMETIC_ID` | ID does not match the format |
+| 400 `COSMETIC_NOT_FOUND` | ID is not in the catalog of the API key |
+| 400 `COSMETIC_TYPE_MISMATCH` | ID exists with another type than the slot |
+| 401 `SESSION_REQUIRED` | Session missing, invalid or expired |
+| 403 `COSMETIC_LOCKED` | Locked cosmetic and the player has no unlock |
+| 403 `SESSION_FORBIDDEN` | Session of another player |
+| 404 `PLAYER_NOT_FOUND` | See GET |
+| 429 | Rate limit; the SDK retries after `Retry-After` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Responses;
+
+var current = PlayerProfileManager.Instance.CurrentProfile
+              ?? await PlayerProfileManager.Instance.GetProfile();
+
+// PUT replaces everything: pass the current frame to keep it.
+// null or "" clears a slot, null or an empty list clears the badges.
+PlayerProfileResponse updated = await PlayerProfileManager.Instance.SetProfile(
+    "avatar.zombie_07",
+    current?.profile.frameId,
+    new[] { "badge.supporter" });
+
+if (updated == null)
+{
+    switch (PlayerProfileManager.Instance.LastErrorCode)
+    {
+        case PlayerProfileErrorCodes.CosmeticLocked:
+            Debug.Log("Unlock this cosmetic first");
+            break;
+        case PlayerProfileErrorCodes.SessionRequired:
+            Debug.Log("Sign in first");
+            break;
+        default:
+            Debug.Log($"Saving failed: {PlayerProfileManager.Instance.LastErrorCode}");
+            break;
+    }
+}
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), more than 3 or duplicate badges (`INVALID_BADGES`) and the ID format
+(`INVALID_COSMETIC_ID`). IDs are trimmed like on the server.
+
+On success the SDK also clears the `LeaderboardManager` cache, so the next `GetTop()` /
+`GetAround()` shows the new profile (other pods may serve the old one for up to 10 minutes).
+
+**Event**: `EventKeys.PlayerProfileChanged` (204) with the `PlayerProfileResponse`.
+
+### PlayerProfileManager members
+
+| Member | Description |
+|--------|-------------|
+| `Task<PlayerProfileResponse> GetProfile()` | Load profile, unlocks and catalog; `null` on failure |
+| `Task<PlayerProfileResponse> SetProfile(string avatarId, string frameId, IList<string> badges)` | Replace the profile; `null` on failure |
+| `PlayerProfileResponse CurrentProfile` | Last result; `null` before the first call, after `ClearCache()`, after sign-out and when another player signed in |
+| `string LastErrorCode` | Code of the last failure (see below); `null` after a success |
+| `void ClearCache()` | Drop `CurrentProfile` (called by `GiftCodeManager.Redeem` when `grantedUnlocks` is not empty) |
+
+`LastErrorCode` holds the server `code` of the error body. Without one it falls back to an
+HTTP based code: `BAD_REQUEST` (400), `UNAUTHORIZED` (401, for example an invalid API key),
+`FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409), `RATE_LIMITED` (429 after the retries),
+`SERVER_ERROR` (5xx), `NETWORK_ERROR` (no response), `INVALID_RESPONSE` (unreadable 2xx body).
+All codes are constants in `PlayerProfileErrorCodes`.
 
 ---
 
@@ -1201,6 +1402,45 @@ ERROR
 | position | long | Rank (1-indexed) |
 | username | string | Display name |
 | score | long | Score value |
+| profile | HorizonPlayerProfile | Visible profile of the player, never null |
+
+`AppUserRankResponse` (from `GetRank()`) has the same four fields.
+
+### HorizonPlayerProfile
+| Field | Type | Description |
+|-------|------|-------------|
+| avatarId | string | Selected avatar, empty when not set |
+| frameId | string | Selected frame, empty when not set |
+| badges | string[] | Displayed badges (0 to 3), order kept |
+| HasAvatar | bool (property) | `avatarId` is not empty |
+| HasFrame | bool (property) | `frameId` is not empty |
+
+### PlayerProfileResponse
+| Field | Type | Description |
+|-------|------|-------------|
+| userId | string | The player |
+| profile | HorizonPlayerProfile | Current selection |
+| unlocks | string[] | Owned locked cosmetics (may contain deleted IDs) |
+| cosmetics | PlayerCosmetic[] | Catalog of the API key, sorted by `id` |
+| limits | PlayerProfileLimits | `maxBadges` (3), `maxUnlocks` (25) |
+
+Helpers: `List<PlayerCosmetic> GetCosmetics(string type)` and `bool IsAvailable(string id)`.
+
+### PlayerCosmetic
+| Field | Type | Description |
+|-------|------|-------------|
+| id | string | Cosmetic ID |
+| type | string | `avatar`, `frame` or `badge` |
+| locked | bool | Needs an unlock |
+| available | bool | The player may select it now |
+
+### RedeemGiftCodeResponse
+| Field | Type | Description |
+|-------|------|-------------|
+| success | bool | Redemption succeeded |
+| message | string | Server message |
+| giftData | string | JSON string with the rewards |
+| grantedUnlocks | string[] | Cosmetic IDs the code unlocked (owned after this redemption), empty when none |
 
 ### UserNewsResponse
 | Field | Type | Description |
@@ -1226,7 +1466,12 @@ ERROR
 | 401 | Unauthorized | Invalid API key, re-authenticate |
 | 403 | Forbidden | Tier limit, wrong user, check permissions |
 | 404 | Not Found | Resource doesn't exist |
+| 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` on a gift code with grants |
 | 429 | Rate Limited | Wait and retry with backoff |
+
+Player profile errors carry a stable `code` in the JSON body (`COSMETIC_LOCKED`, ...). The
+Unity SDK exposes it as `PlayerProfileManager.Instance.LastErrorCode`; switch on the code,
+never on the message.
 | 500 | Server Error | Retry with exponential backoff |
 
 ### Rate Limit Handling
@@ -1313,8 +1558,10 @@ else
 | 18 | Get Top | `/leaderboard/top` | GET | `GetTop()` |
 | 19 | Get Rank | `/leaderboard/rank` | GET | `GetRank()` |
 | 20 | Get Around | `/leaderboard/around` | GET | `GetAround()` |
+| 21 | Get Player Profile | `/player-profile?userId=` | GET | `PlayerProfileManager.GetProfile()` |
+| 22 | Set Player Profile | `/player-profile` | PUT | `PlayerProfileManager.SetProfile()` |
 
-**Total Endpoints**: 20
+**Total Endpoints**: 22
 
 ---
 
@@ -1325,4 +1572,4 @@ else
 - **README**: See [README.md](../README.md)
 
 **Version**: 1.8.5
-**Last Updated**: 2026-02-20
+**Last Updated**: 2026-09-29

@@ -22,7 +22,8 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
 | 📰 **News** | `NewsManager` | In-game announcements |
-| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption |
+| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
+| 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
 | 💥 **Crash Reporting** | `CrashManager` | Automatic crash capture, exception tracking, breadcrumbs |
@@ -136,6 +137,7 @@ Attach one to an empty GameObject and press Play.
 | News | `NewsExample.cs` |
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
+| Player Profile | `PlayerProfileExample.cs` |
 | Feedback | `FeedbackExample.cs` |
 
 For a full guided tour of every feature in one window, import the **Example UI** sample.
@@ -230,7 +232,18 @@ var rank = await LeaderboardManager.Instance.GetRank();
 
 // Get players around your rank
 var around = await LeaderboardManager.Instance.GetAround(5);
+
+// Every entry (and the rank) carries the player's profile, never null
+foreach (var entry in top)
+{
+    if (entry.profile.HasAvatar) { /* show entry.profile.avatarId */ }
+}
 ```
+
+Use `boardKey:` as a named argument for multi-board leaderboards:
+`SubmitScore(12500, boardKey: "weekly")`. The `metadata` parameter of `SubmitScore`
+is deprecated and ignored: the server never stored score metadata, so the SDK does
+not send it. It will be removed in the next major version.
 
 ### Cloud Saves
 
@@ -305,8 +318,39 @@ var result = await GiftCodeManager.Instance.Redeem("PROMO2024");
 if (result?.success == true)
 {
     // Parse result.giftData for rewards
+    // result.grantedUnlocks lists cosmetics the code unlocked (see Player Profile)
 }
 ```
+
+### Player Profile
+
+Leaderboards show an avatar, an optional frame and up to 3 badges next to name and
+score. You maintain a cosmetics catalog per API key in the horizOn Dashboard (ID,
+type `avatar` / `frame` / `badge`, `locked`). Free entries can be picked by every
+player, locked ones only after an unlock (gift code with `grants`, or the Dashboard).
+The server stores IDs only; your game maps them to its own sprites. Both calls need a
+signed-in player.
+
+```csharp
+// Profile, unlocks and the full catalog in one call
+var profile = await PlayerProfileManager.Instance.GetProfile();
+var avatars = profile.GetCosmetics("avatar");        // build your picker
+bool canUse = profile.IsAvailable("frame.gold");     // free or unlocked
+
+// PUT replaces the whole profile: pass the current values for slots you keep.
+// null or "" clears a slot, null or an empty list clears the badges (max 3).
+var updated = await PlayerProfileManager.Instance.SetProfile(
+    "avatar.zombie_07", profile.profile.frameId, new[] { "badge.supporter" });
+if (updated == null)
+{
+    // SESSION_REQUIRED, COSMETIC_LOCKED, COSMETIC_NOT_FOUND, INVALID_BADGES, ...
+    Debug.Log(PlayerProfileManager.Instance.LastErrorCode);
+}
+```
+
+`CurrentProfile` holds the last result (null after sign-out). After a gift code redemption
+with a non-empty `grantedUnlocks`, the SDK drops it so the next `GetProfile()` shows the
+unlock. Error codes are listed in `PlayerProfileErrorCodes`.
 
 ### Feedback
 
@@ -445,7 +489,7 @@ void OnUserSignedIn(UserData user)
 |-------|----------|------------|
 | 0-99 | Connection | `ServerConnected`, `ServerDisconnected` |
 | 100-199 | Auth | `UserSignInSuccess`, `UserSignInFailed`, `UserSignedOut` |
-| 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted` |
+| 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted`, `PlayerProfileChanged` (204), `PlayerProfileLoaded` (307) |
 | 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410) |
 | 500-599 | Network | `RequestFailed`, `RateLimited` |
 
@@ -527,7 +571,11 @@ if (data == null)
 | 400 | Bad Request | Check parameters |
 | 401 | Unauthorized | Re-authenticate |
 | 403 | Forbidden | Check tier/permissions |
+| 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` (gift code grants) |
 | 429 | Rate Limited | Wait and retry |
+
+Player profile calls return `null` on failure and set `PlayerProfileManager.Instance.LastErrorCode`
+to the server's stable `code` (constants in `PlayerProfileErrorCodes`).
 
 ## Self-Hosted Option
 

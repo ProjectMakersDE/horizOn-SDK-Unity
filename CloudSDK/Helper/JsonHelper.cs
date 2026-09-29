@@ -92,6 +92,13 @@ namespace PM.horizOn.Cloud.Helper
                     {
                         sb.Append(value.ToString());
                     }
+                    else if (value is IEnumerable<string> stringValues)
+                    {
+                        // JsonUtility cannot serialize a bare array or list, so string
+                        // collections (for example profile badges) are written by hand.
+                        // An empty collection stays in the body as [].
+                        AppendStringArray(sb, stringValues);
+                    }
                     else
                     {
                         // For complex types, use JsonUtility
@@ -107,6 +114,33 @@ namespace PM.horizOn.Cloud.Helper
                 Debug.LogError($"[JsonHelper] ToJsonExcludeEmpty failed: {e.Message}");
                 return "{}";
             }
+        }
+
+        /// <summary>
+        /// Append a JSON array of strings. Null entries are written as null.
+        /// </summary>
+        private static void AppendStringArray(StringBuilder sb, IEnumerable<string> values)
+        {
+            sb.Append("[");
+            bool firstItem = true;
+            foreach (var item in values)
+            {
+                if (!firstItem)
+                    sb.Append(",");
+                firstItem = false;
+
+                if (item == null)
+                {
+                    sb.Append("null");
+                }
+                else
+                {
+                    sb.Append("\"");
+                    sb.Append(EscapeJsonString(item));
+                    sb.Append("\"");
+                }
+            }
+            sb.Append("]");
         }
 
         /// <summary>

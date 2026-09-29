@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using PM.horizOn.Cloud.Objects.Data;
+using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Transport;
 
 const string host = "http://127.0.0.1:18722/";
@@ -66,7 +67,73 @@ Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
 Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
     user, "session-token-720", "", out _), "redeem empty code gate");
 
-Console.WriteLine("Unity SDK leaderboard and gift code transport contract passed");
+// Player profile (TASK-881): GET and PUT carry the session; PUT sends the whole profile.
+if (!PlayerProfileTransportContract.TryCreateGetPlan(user, "session-token-720", out var profileGetPlan))
+{
+    throw new InvalidOperationException("signed user did not produce a profile get plan");
+}
+Require(profileGetPlan.Endpoint == "/api/v1/app/player-profile?userId=user-720", "profile get endpoint");
+Require(profileGetPlan.UseSessionToken, "profile get uses the session token");
+Require(!PlayerProfileTransportContract.TryCreateGetPlan(new UserData(), "session-token-720", out _), "profile get missing user session gate");
+Require(!PlayerProfileTransportContract.TryCreateGetPlan(user, "stale-token", out _), "profile get current transport session gate");
+
+if (!PlayerProfileTransportContract.TryCreateSetPlan(
+        user, "session-token-720", " avatar.zombie_07 ", "", new[] { "badge.supporter", "badge.early-bird" },
+        out var profileSetPlan, out var profileSetError))
+{
+    throw new InvalidOperationException($"signed user did not produce a profile set plan: {profileSetError}");
+}
+Require(profileSetError == null, "profile set error code is null on success");
+Require(profileSetPlan.UseSessionToken, "profile set uses the session token");
+
+using var profileMessage = new HttpRequestMessage(HttpMethod.Put, PlayerProfileSetPlan.Endpoint.TrimStart('/'));
+foreach (var header in HorizonRequestHeaders.Create("project-key-720", "session-token-720", profileSetPlan.UseSessionToken))
+{
+    profileMessage.Headers.TryAddWithoutValidation(header.Key, header.Value);
+}
+profileMessage.Content = JsonContent.Create(profileSetPlan.Request, options: new JsonSerializerOptions { IncludeFields = true });
+
+Task<HttpListenerContext> profileIncoming = listener.GetContextAsync();
+Task<HttpResponseMessage> profileOutgoing = client.SendAsync(profileMessage);
+HttpListenerContext profileContext = await profileIncoming.WaitAsync(TimeSpan.FromSeconds(5));
+using var profileReader = new StreamReader(profileContext.Request.InputStream);
+string profileBody = await profileReader.ReadToEndAsync();
+
+Require(profileContext.Request.HttpMethod == "PUT", "profile set method");
+Require(profileContext.Request.RawUrl == "/api/v1/app/player-profile", "profile set endpoint");
+Require(profileContext.Request.Headers["X-API-Key"] == "project-key-720", "profile set project key");
+Require(profileContext.Request.Headers["Authorization"] == "Bearer session-token-720", "profile set authorization");
+Require(profileBody.Contains("\"userId\":\"user-720\""), "profile set userId body field");
+Require(profileBody.Contains("\"avatarId\":\"avatar.zombie_07\""), "profile set trimmed avatarId body field");
+Require(profileBody.Contains("\"frameId\":null"), "profile set cleared frame slot");
+Require(profileBody.Contains("\"badges\":[\"badge.supporter\",\"badge.early-bird\"]"), "profile set badges in order");
+
+profileContext.Response.StatusCode = 200;
+profileContext.Response.Close();
+(await profileOutgoing).EnsureSuccessStatusCode();
+
+Require(PlayerProfileTransportContract.TryCreateSetPlan(user, "session-token-720", null, null, null, out var clearPlan, out _) &&
+    clearPlan.Request.avatarId == null && clearPlan.Request.frameId == null && clearPlan.Request.badges.Length == 0,
+    "profile set clears every slot");
+RequireSetError(new UserData(), "session-token-720", "avatar.a", null, null, PlayerProfileErrorCodes.SessionRequired, "profile set missing user session gate");
+RequireSetError(user, "stale-token", "avatar.a", null, null, PlayerProfileErrorCodes.SessionRequired, "profile set current transport session gate");
+RequireSetError(user, "session-token-720", null, null, new[] { "b.1", "b.2", "b.3", "b.4" }, PlayerProfileErrorCodes.InvalidBadges, "profile set more than 3 badges");
+RequireSetError(user, "session-token-720", null, null, new[] { "b.1", "b.1" }, PlayerProfileErrorCodes.InvalidBadges, "profile set duplicate badge");
+RequireSetError(user, "session-token-720", "Avatar.Upper", null, null, PlayerProfileErrorCodes.InvalidCosmeticId, "profile set uppercase id");
+RequireSetError(user, "session-token-720", null, "-frame", null, PlayerProfileErrorCodes.InvalidCosmeticId, "profile set id starting with a dash");
+RequireSetError(user, "session-token-720", null, null, new[] { new string('a', 33) }, PlayerProfileErrorCodes.InvalidCosmeticId, "profile set id longer than 32");
+Require(PlayerProfileTransportContract.IsValidCosmeticId(new string('a', 32)), "profile id of 32 characters is valid");
+Require(!PlayerProfileTransportContract.IsValidCosmeticId("avatar.a\n"), "profile id with a trailing newline is invalid");
+Require(PlayerProfileErrorCodes.FromHttpStatus(429) == PlayerProfileErrorCodes.RateLimited, "profile 429 fallback code");
+Require(PlayerProfileErrorCodes.FromHttpStatus(0) == PlayerProfileErrorCodes.NetworkError, "profile network fallback code");
+
+Console.WriteLine("Unity SDK leaderboard, gift code and player profile transport contract passed");
+
+void RequireSetError(UserData setUser, string token, string avatarId, string frameId, string[] badges, string expectedCode, string name)
+{
+    Require(!PlayerProfileTransportContract.TryCreateSetPlan(setUser, token, avatarId, frameId, badges, out var rejectedPlan, out var code) &&
+        rejectedPlan == null && code == expectedCode, name);
+}
 
 static void Require(bool condition, string name)
 {

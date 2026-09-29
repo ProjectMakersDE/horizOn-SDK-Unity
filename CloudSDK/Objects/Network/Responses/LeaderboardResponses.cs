@@ -11,6 +11,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public long position;
         public string username;
         public long score;
+
+        /// <summary>
+        /// Visible profile of the player (avatar, frame, badges). Never null; check
+        /// <see cref="HorizonPlayerProfile.HasAvatar"/> and treat unknown IDs as "not set".
+        /// </summary>
+        public HorizonPlayerProfile profile = new HorizonPlayerProfile();
     }
 
     /// <summary>
@@ -40,6 +46,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public long position;
         public string username;
         public long score;
+
+        /// <summary>
+        /// Visible profile of the player (avatar, frame, badges). Never null; check
+        /// <see cref="HorizonPlayerProfile.HasAvatar"/> and treat unknown IDs as "not set".
+        /// </summary>
+        public HorizonPlayerProfile profile = new HorizonPlayerProfile();
     }
 
     /// <summary>

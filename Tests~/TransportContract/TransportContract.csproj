@@ -11,5 +11,8 @@
     <Compile Include="../../CloudSDK/Transport/LeaderboardTransportContract.cs" Link="Production/LeaderboardTransportContract.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/GiftCodeRequests.cs" Link="Production/GiftCodeRequests.cs" />
     <Compile Include="../../CloudSDK/Transport/GiftCodeTransportContract.cs" Link="Production/GiftCodeTransportContract.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/PlayerProfileRequests.cs" Link="Production/PlayerProfileRequests.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/PlayerProfileResponses.cs" Link="Production/PlayerProfileResponses.cs" />
+    <Compile Include="../../CloudSDK/Transport/PlayerProfileTransportContract.cs" Link="Production/PlayerProfileTransportContract.cs" />
   </ItemGroup>
 </Project>

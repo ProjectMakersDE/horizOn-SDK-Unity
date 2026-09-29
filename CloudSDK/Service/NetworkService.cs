@@ -104,6 +104,20 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
+        /// Send a PUT request to the API.
+        /// Same headers, JSON serialization, retries and error handling as <see cref="PostAsync{TResponse}"/>.
+        /// </summary>
+        /// <typeparam name="TResponse">The response type</typeparam>
+        /// <param name="endpoint">The API endpoint</param>
+        /// <param name="requestData">The request data to serialize as JSON</param>
+        /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <returns>The deserialized response</returns>
+        public async Task<NetworkResponse<TResponse>> PutAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+        {
+            return await SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken);
+        }
+
+        /// <summary>
         /// Send a DELETE request to the API.
         /// </summary>
         /// <typeparam name="TResponse">The response type</typeparam>
@@ -251,7 +265,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode);
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
                     }
 
                     // Success
@@ -437,7 +451,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode);
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
                     }
 
                     string responseText = request.downloadHandler.text;
@@ -673,13 +687,13 @@ namespace PM.horizOn.Cloud.Service
             {
                 request = UnityWebRequest.Get(url);
             }
-            else if (method == "POST")
+            else if (method == "POST" || method == "PUT")
             {
                 // Use ToJsonExcludeEmpty to avoid sending empty strings that fail API validation
                 string jsonData = requestData != null ? JsonHelper.ToJsonExcludeEmpty(requestData) : "{}";
                 LogService.Instance.Info($"Request JSON: {jsonData}");
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
-                request = new UnityWebRequest(url, "POST");
+                request = new UnityWebRequest(url, method);
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
@@ -758,6 +772,33 @@ namespace PM.horizOn.Cloud.Service
             // Fallback to Unity error message
             return !string.IsNullOrEmpty(request.error) ? request.error : $"HTTP {request.responseCode}";
         }
+
+        /// <summary>
+        /// Parse the stable error <c>code</c> from a JSON error body
+        /// (for example <c>{"code": "COSMETIC_LOCKED", ...}</c>).
+        /// </summary>
+        /// <returns>The server code, or null when the body has none</returns>
+        private string ParseErrorCode(UnityWebRequest request)
+        {
+            try
+            {
+                string text = request.downloadHandler?.text;
+                if (!string.IsNullOrEmpty(text) && text.TrimStart().StartsWith("{"))
+                {
+                    var errorResponse = JsonUtility.FromJson<ErrorResponse>(text);
+                    if (errorResponse != null && !string.IsNullOrEmpty(errorResponse.code))
+                    {
+                        return errorResponse.code;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore JSON parse errors
+            }
+
+            return null;
+        }
     }
 
     /// <summary>
@@ -770,6 +811,12 @@ namespace PM.horizOn.Cloud.Service
         public string Error { get; private set; }
         public long StatusCode { get; private set; }
 
+        /// <summary>
+        /// Stable error code from the JSON error body (for example <c>COSMETIC_LOCKED</c>),
+        /// or null when the server sent none. Only set on failures.
+        /// </summary>
+        public string ErrorCode { get; private set; }
+
         public static NetworkResponse<T> Success(T data, long statusCode = 200)
         {
             return new NetworkResponse<T>
@@ -780,13 +827,14 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static NetworkResponse<T> Failure(string error, long statusCode = 0)
+        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null)
         {
             return new NetworkResponse<T>
             {
                 IsSuccess = false,
                 Error = error,
-                StatusCode = statusCode
+                StatusCode = statusCode,
+                ErrorCode = errorCode
             };
         }
     }

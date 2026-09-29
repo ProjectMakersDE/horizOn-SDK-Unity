@@ -17,9 +17,11 @@ namespace PM.horizOn.Cloud.Manager
         /// Redeem a gift code for rewards.
         /// The request carries the signed-in player's session, the server only redeems
         /// codes for the player who owns that session.
+        /// When the code granted cosmetics (<c>grantedUnlocks</c> not empty), the cached player
+        /// profile is dropped so the next <see cref="PlayerProfileManager.GetProfile"/> shows the unlock.
         /// </summary>
         /// <param name="code">The gift code to redeem</param>
-        /// <returns>Redeem response with giftData JSON string, or null if failed</returns>
+        /// <returns>Redeem response with giftData JSON string and grantedUnlocks, or null if failed</returns>
         public async Task<RedeemGiftCodeResponse> Redeem(string code)
         {
             if (string.IsNullOrEmpty(code))
@@ -47,6 +49,10 @@ namespace PM.horizOn.Cloud.Manager
             if (response.IsSuccess && response.Data != null && response.Data.success)
             {
                 HorizonApp.Log.Info($"Gift code redeemed: {code}");
+                if (response.Data.grantedUnlocks != null && response.Data.grantedUnlocks.Length > 0)
+                {
+                    PlayerProfileManager.Instance.ClearCache();
+                }
                 HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed, response.Data);
                 return response.Data;
             }
