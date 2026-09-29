@@ -44,6 +44,7 @@ namespace PM.horizOn.Cloud.Enums
         CloudSaveBytesLoaded = 305,
         LocalizationDataLoaded = 306,
         PlayerProfileLoaded = 307,
+        ValidatedStateLoaded = 308,
 
         // Feature Events (400-499)
         GiftCodeRedeemed = 400,

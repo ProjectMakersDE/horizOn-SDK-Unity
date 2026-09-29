@@ -1382,10 +1382,11 @@ plays deterministically with that seed while it records the input log, and submi
 with the SHA-256 of the log. The server checks the ticket and every rule of the API key
 (score limits, minimum duration measured by the server, score per second, stage rules) before
 anything is written. Rule values never appear in responses or error messages; only the `code`
-tells which rule rejected a run. Cloud only: without the endpoints (simpleServer) the SDK
-reports `NOT_SUPPORTED`.
+tells which rule rejected a run. Runs may also earn or spend server-owned values (currency,
+loot) defined in the rules; only the server writes them (see 25). Cloud only: without the
+endpoints (simpleServer) the SDK reports `NOT_SUPPORTED`.
 
-**Headers** (both endpoints): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
+**Headers** (every endpoint): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
 signed-in player, sent by the SDK. Without a signed-in player every method fails locally (no
 request) with `LastErrorCode = "SESSION_REQUIRED"`.
 
@@ -1462,7 +1463,9 @@ The run becomes `CurrentRun`; a new `StartRun` replaces it.
 ```
 `stage`, `leaderboardKey` and `earned` are left out when empty. Without `leaderboardKey` the
 board of the ticket is used; for a run without a board the server ignores `score`. `earned`
-(Part 2) is accepted and ignored by Part 1 servers.
+(Part 2, at most 64 entries) lists values the run earned (positive) or spent (negative); every
+key must be defined under `values` in the rules, so send it only when the game uses server-owned
+values.
 
 **Response** (200):
 ```json
@@ -1475,10 +1478,19 @@ board of the ticket is used; for a run without a board the server ignores `score
   "isNewHighScore": false,
   "rank": 17,
   "durationSeconds": 734,
-  "state": null,
+  "state": {
+    "day": "2026-09-29",
+    "values": [
+      { "key": "chest.gold", "balance": 1, "earnedToday": 0, "dailyCap": null, "requested": -1, "credited": -1 },
+      { "key": "gold", "balance": 1500, "earnedToday": 500, "dailyCap": 500, "requested": 400, "credited": 250 }
+    ]
+  },
   "evidence": null
 }
 ```
+`state` lists every value of the rules; values the run touched carry `requested` and `credited`.
+It is `null` when the rules define no values (the SDK keeps an empty `PlayerState`, `HasData`
+false, and leaves `CurrentState` unchanged).
 
 **Error Responses**:
 | Code | Cause | Run |
@@ -1490,6 +1502,7 @@ board of the ticket is used; for a run without a board the server ignores `score
 | 422 | `TICKET_INVALID`, `TICKET_EXPIRED`, `TICKET_FOREIGN`, `TICKET_CONSUMED` | dropped |
 | 422 | `LEADERBOARD_MISMATCH` (checked before the ticket is used) | kept |
 | 422 | Rule codes: `STAGE_REQUIRED`, `STAGE_UNKNOWN`, `SCORE_ABOVE_MAX`, `SCORE_BELOW_MIN`, `STAGE_SCORE_ABOVE_MAX`, `STAGE_SCORE_BELOW_MIN`, `DURATION_TOO_SHORT`, `SCORE_RATE_TOO_HIGH` | dropped |
+| 422 | Value codes: `UNKNOWN_VALUE_KEY`, `DUPLICATE_VALUE_KEY`, `EARNED_ABOVE_MAX`, `EARNED_BELOW_MIN`, `INSUFFICIENT_BALANCE` | dropped |
 | 429 | Account request limit (empty body, retried by the SDK) | kept |
 | 503 | `VALIDATED_ACTIONS_UNAVAILABLE` | kept |
 
@@ -1519,7 +1532,58 @@ decides. After an accepted run with a board the `LeaderboardManager` cache is cl
 
 **Events**: `EventKeys.ValidatedRunSubmitted` (421) with the `ValidatedSubmitResult`;
 `EventKeys.ValidatedRunRejected` (422) on a 422 or 403 with a `ValidatedRunRejection`
-(`code`, `runId`, `httpStatus`, `runCleared`).
+(`code`, `runId`, `httpStatus`, `runCleared`). When the result carries a state,
+`EventKeys.ValidatedStateLoaded` (308) is published first with the new `CurrentState`.
+
+---
+
+### 25. Get Player State
+
+**Endpoint**: `GET /api/v1/app/validated-actions/state?userId={userId}`
+
+The signed-in player's server-owned values. Read only: values change only through `earned` of an
+accepted validated run; support corrects them in the dashboard.
+
+**Response** (200):
+```json
+{
+  "userId": "0d7e...",
+  "day": "2026-09-29",
+  "values": [
+    { "key": "chest.gold", "balance": 2, "earnedToday": 0, "dailyCap": null },
+    { "key": "gold", "balance": 1250, "earnedToday": 250, "dailyCap": 5000 }
+  ]
+}
+```
+Every key defined under `values` in the rules is listed, sorted by key (balance 0 when never
+earned); `values` is empty when the rules define none. `day` is the current UTC day,
+`earnedToday` the positive credit on that day, `dailyCap` `null` without a cap (the SDK reads 0).
+
+**Error Responses**: 401 `SESSION_REQUIRED`, 403 `SESSION_FORBIDDEN`, 404 `PLAYER_NOT_FOUND`
+(404 without a code: `NOT_SUPPORTED`), 429 (empty body, retried by the SDK).
+
+#### Unity SDK Usage
+
+```csharp
+PlayerState state = await ValidatedActionsManager.Instance.GetState();
+if (state == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);   // SESSION_REQUIRED, NOT_SUPPORTED, ...
+    return;
+}
+PlayerStateValue gold = state.GetValue("gold");
+Debug.Log($"{gold.balance} gold, {gold.earnedToday} / {gold.dailyCap} today");
+```
+
+The state becomes `CurrentState`. **Event**: `EventKeys.ValidatedStateLoaded` (308) with the
+`PlayerState`.
+
+**Cloud save as a mirror.** The cloud save stays a client-written blob. Keep server-owned values
+there only as a copy: copy `CurrentState` (or `result.state`) into the save after each accepted
+run, call `GetState()` on start and overwrite the copy with it (never the other way round), never
+send a value from the save back as a balance, and send values earned offline as `earned` of the
+next validated run (the per-run and daily limits apply as always). `PlayerState` is
+`[Serializable]`, so it can be a field of the object you pass to `CloudSaveManager.SaveObject`.
 
 ### ValidatedActionsManager members
 
@@ -1534,6 +1598,8 @@ decides. After an accepted run with a board the `LeaderboardManager` cache is cl
 | `string LastErrorCode` | Code of the last failure; `null` after a success |
 | `void DiscardRun()` | Drop the current run without submitting |
 | `bool AutoUploadEvidence` | Default `true`; used by the evidence upload of Part 3 |
+| `Task<PlayerState> GetState()` | Load the server-owned values; `null` on failure |
+| `PlayerState CurrentState` | Last known state (from `GetState` or the last accepted submit with a state), `requested` and `credited` always 0; `null` before the first load, after sign-out and when another player signed in |
 
 `LastErrorCode` holds the server `code` of the error body, a local code (`SESSION_REQUIRED`,
 `NO_ACTIVE_RUN`, `INVALID_INPUT_LOG_HASH`) or an HTTP fallback: `NOT_SUPPORTED` (404 without a
@@ -1643,14 +1709,36 @@ Helpers: `HasLeaderboard`, `ExpiresAtUtc`, `IsExpired` (device clock, informatio
 | isNewHighScore | bool | New best score |
 | rank | long | 1-based rank (0 without a board) |
 | durationSeconds | long | Server-measured duration |
-| state | PlayerState | Part 2, never null, empty in Part 1 (`day`, `values`, `GetBalance(key)`) |
+| state | PlayerState | Never null; `HasData` false when the server sent no state |
 | evidence | EvidenceRequest | Part 3, never null, `required` false in Part 1 (`runId`, `uploadBefore`, `maxBytes`) |
 
 ### EarnedValue
 | Field | Type | Description |
 |-------|------|-------------|
 | key | string | Value key, `^[a-z0-9][a-z0-9._-]{0,23}$` |
-| amount | long | Earned (positive) or spent (negative); Part 2 |
+| amount | long | Earned (positive) or spent (negative) |
+
+### PlayerState
+| Field | Type | Description |
+|-------|------|-------------|
+| day | string | UTC day of `earnedToday`, empty when the server sent no state |
+| values | PlayerStateValue[] | One entry per value key, sorted by key, never null |
+
+Helpers: `GetValue(key)` (null when missing), `GetBalance(key)` (0 when missing), `IsEmpty`,
+`HasData`, `WithoutRunDetails()` (copy with `requested` and `credited` set to 0).
+
+### PlayerStateValue
+| Field | Type | Description |
+|-------|------|-------------|
+| key | string | Value key |
+| balance | long | Current balance |
+| earnedToday | long | Positive credit on `day` |
+| dailyCap | long | Daily cap, 0 when none (JSON `null`) |
+| requested | long | Amount the run sent (submit results only, touched values; 0 otherwise) |
+| credited | long | Amount applied (submit results only, touched values; 0 otherwise) |
+
+Helpers: `HasDailyCap`, `RemainingToday` (`long.MaxValue` without a cap), `IsFullyCredited`
+(`credited == requested`; grant a purchase paid with a spend only when true).
 
 ### UserNewsResponse
 | Field | Type | Description |
@@ -1772,8 +1860,9 @@ else
 | 22 | Set Player Profile | `/player-profile` | PUT | `PlayerProfileManager.SetProfile()` |
 | 23 | Start Validated Run | `/validated-actions/runs` | POST | `ValidatedActionsManager.StartRun()` |
 | 24 | Submit Validated Run | `/validated-actions/submit` | POST | `ValidatedActionsManager.SubmitValidated()`, `SubmitValidatedWithHash()` |
+| 25 | Get Player State | `/validated-actions/state?userId=` | GET | `ValidatedActionsManager.GetState()` |
 
-**Total Endpoints**: 24
+**Total Endpoints**: 25
 
 ---
 

@@ -45,9 +45,10 @@ namespace PM.horizOn.Cloud.Transport
 
     /// <summary>
     /// Request plans and run lifecycle rules of Validated Actions, free of UnityEngine so the
-    /// .NET transport contract can compile them.
+    /// .NET transport contract can compile them. Partial: the player state plan (Part 2) lives in
+    /// <c>ValidatedActionsStateTransportContract.cs</c>.
     /// </summary>
-    internal static class ValidatedActionsTransportContract
+    internal static partial class ValidatedActionsTransportContract
     {
         internal const string BasePath = "/api/v1/app/validated-actions";
         internal const string RunsEndpoint = BasePath + "/runs";

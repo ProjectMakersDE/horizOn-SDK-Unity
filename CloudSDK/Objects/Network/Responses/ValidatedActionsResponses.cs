@@ -108,8 +108,11 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public long durationSeconds;
 
         /// <summary>
-        /// Server-owned player state after the run (Part 2). Never null; empty
-        /// (<see cref="PlayerState.IsEmpty"/>) while the server does not send one.
+        /// Server-owned player state after the run (Part 2). Never null. Every value of the rules
+        /// is listed; the values the run touched (every key in <c>earned</c>) carry
+        /// <see cref="PlayerStateValue.requested"/> and <see cref="PlayerStateValue.credited"/>.
+        /// Empty (<see cref="PlayerState.HasData"/> false) when the rules define no values, on a
+        /// Part 1 server, or when the server could not write the state.
         /// </summary>
         public PlayerState state = new PlayerState();
 
@@ -129,14 +132,18 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         {
             if (leaderboardKey == null) leaderboardKey = string.Empty;
             if (state == null) state = new PlayerState();
-            if (state.values == null) state.values = new PlayerStateValue[0];
-            if (state.day == null) state.day = string.Empty;
+            state.Normalize();
             if (evidence == null) evidence = new EvidenceRequest();
         }
     }
 
     /// <summary>
-    /// Server-owned values of the player (Part 2, TASK-887). Empty in Part 1.
+    /// Server-owned values of the player (Part 2, TASK-887): currency or loot counters that only
+    /// the server writes. Read with <c>ValidatedActionsManager.GetState()</c>, changed only through
+    /// <c>earned</c> of an accepted validated run. Response of
+    /// GET /api/v1/app/validated-actions/state and the <c>state</c> of a submit result.
+    /// [Serializable], so <c>JsonUtility.ToJson</c> can copy it into a cloud save as a mirror
+    /// (never send that copy back as a balance).
     /// </summary>
     [Serializable]
     public class PlayerState
@@ -144,11 +151,42 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <summary>UTC day the daily counters belong to, for example "2026-09-29". Empty when unset.</summary>
         public string day = string.Empty;
 
-        /// <summary>One entry per value key, sorted by key. Never null.</summary>
+        /// <summary>
+        /// One entry per value key of the rules, sorted by key (balance 0 when never earned).
+        /// Never null.
+        /// </summary>
         public PlayerStateValue[] values = new PlayerStateValue[0];
 
         /// <summary>True when the state carries no values.</summary>
         public bool IsEmpty => values == null || values.Length == 0;
+
+        /// <summary>
+        /// True when the server sent this state (it always sets <see cref="day"/>). False for the
+        /// empty state of a submit whose <c>state</c> was null.
+        /// </summary>
+        public bool HasData => !string.IsNullOrEmpty(day);
+
+        /// <summary>
+        /// The entry of one value key.
+        /// </summary>
+        /// <param name="key">Value key, for example "gold"</param>
+        /// <returns>The entry, or null when the key is not listed</returns>
+        public PlayerStateValue GetValue(string key)
+        {
+            if (string.IsNullOrEmpty(key) || values == null)
+            {
+                return null;
+            }
+
+            foreach (var value in values)
+            {
+                if (value != null && string.Equals(value.key, key, StringComparison.Ordinal))
+                {
+                    return value;
+                }
+            }
+            return null;
+        }
 
         /// <summary>
         /// Balance of one value key.
@@ -157,19 +195,57 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <returns>The balance, 0 when the key is not listed</returns>
         public long GetBalance(string key)
         {
-            if (string.IsNullOrEmpty(key) || values == null)
+            PlayerStateValue value = GetValue(key);
+            return value != null ? value.balance : 0;
+        }
+
+        /// <summary>
+        /// Copy of this state without the per-run fields: <see cref="PlayerStateValue.requested"/>
+        /// and <see cref="PlayerStateValue.credited"/> are 0, like in a GET response. Null entries
+        /// are skipped.
+        /// </summary>
+        public PlayerState WithoutRunDetails()
+        {
+            var copy = new PlayerState { day = day ?? string.Empty };
+            if (values == null)
             {
-                return 0;
+                return copy;
             }
 
+            var list = new System.Collections.Generic.List<PlayerStateValue>(values.Length);
             foreach (var value in values)
             {
-                if (value != null && string.Equals(value.key, key, StringComparison.Ordinal))
+                if (value == null)
                 {
-                    return value.balance;
+                    continue;
                 }
+                list.Add(new PlayerStateValue
+                {
+                    key = value.key ?? string.Empty,
+                    balance = value.balance,
+                    earnedToday = value.earnedToday,
+                    dailyCap = value.dailyCap
+                });
             }
-            return 0;
+            copy.values = list.ToArray();
+            return copy;
+        }
+
+        /// <summary>
+        /// Replaces JSON null values with empty defaults (null day, null values, null keys).
+        /// </summary>
+        internal void Normalize()
+        {
+            if (day == null) day = string.Empty;
+            if (values == null)
+            {
+                values = new PlayerStateValue[0];
+                return;
+            }
+            foreach (var value in values)
+            {
+                if (value != null && value.key == null) value.key = string.Empty;
+            }
         }
     }
 
@@ -188,14 +264,37 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <summary>Amount earned on <see cref="PlayerState.day"/>.</summary>
         public long earnedToday;
 
-        /// <summary>Daily cap, 0 when there is none.</summary>
+        /// <summary>Daily cap of positive credit per UTC day, 0 when there is none (JSON null).</summary>
         public long dailyCap;
 
-        /// <summary>Amount the run asked for (only in submit results, 0 otherwise).</summary>
+        /// <summary>
+        /// Amount the run sent in <c>earned</c> (only for values the run touched in a submit
+        /// result, 0 otherwise). Negative for a spend.
+        /// </summary>
         public long requested;
 
-        /// <summary>Amount actually credited after the caps (only in submit results, 0 otherwise).</summary>
+        /// <summary>
+        /// Amount actually applied (only for values the run touched in a submit result, 0
+        /// otherwise). Lower than <see cref="requested"/> when the daily cap or the maximum balance
+        /// clamped a positive amount. A spend is either fully applied or 0 (a concurrent run of the
+        /// same player used the balance first).
+        /// </summary>
         public long credited;
+
+        /// <summary>True when the value has a daily cap.</summary>
+        public bool HasDailyCap => dailyCap > 0;
+
+        /// <summary>
+        /// Positive credit still possible today, <c>long.MaxValue</c> without a daily cap.
+        /// For display only ("250 / 5000 today"); the server clamps anyway.
+        /// </summary>
+        public long RemainingToday => HasDailyCap ? Math.Max(0, dailyCap - earnedToday) : long.MaxValue;
+
+        /// <summary>
+        /// True when the run got the full amount it asked for (<c>credited == requested</c>).
+        /// Grant a purchase paid with a spend only when this is true.
+        /// </summary>
+        public bool IsFullyCredited => credited == requested;
     }
 
     /// <summary>
@@ -309,6 +408,23 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
 
         /// <summary>Score per measured second above the maximum (422, rule rejection).</summary>
         public const string ScoreRateTooHigh = "SCORE_RATE_TOO_HIGH";
+
+        // Server-owned values (Part 2): rejections of earned, the ticket is used up.
+
+        /// <summary>An earned key is not defined in the values of the rules, also when the rules define no values (422). The run is dropped.</summary>
+        public const string UnknownValueKey = "UNKNOWN_VALUE_KEY";
+
+        /// <summary>A key appears twice in earned (422). The run is dropped.</summary>
+        public const string DuplicateValueKey = "DUPLICATE_VALUE_KEY";
+
+        /// <summary>An earned amount is above the maximum per run (422). The run is dropped.</summary>
+        public const string EarnedAboveMax = "EARNED_ABOVE_MAX";
+
+        /// <summary>An earned amount is below the minimum per run, for example a spend where none is allowed (422). The run is dropped.</summary>
+        public const string EarnedBelowMin = "EARNED_BELOW_MIN";
+
+        /// <summary>A spend (negative amount) is larger than the balance (422). The run is dropped.</summary>
+        public const string InsufficientBalance = "INSUFFICIENT_BALANCE";
 
         /// <summary>The score rows of the API key are full (403). The ticket is used up.</summary>
         public const string ScoreLimitReached = "SCORE_LIMIT_REACHED";

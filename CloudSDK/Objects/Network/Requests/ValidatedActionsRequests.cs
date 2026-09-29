@@ -32,8 +32,9 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
     }
 
     /// <summary>
-    /// A value the run earned (positive amount) or spent (negative amount).
-    /// Part 1 servers accept and ignore it; server-owned values arrive with Part 2.
+    /// A server-owned value the run earned (positive amount) or spent (negative amount).
+    /// The key must be defined under <c>values</c> in the rules of the API key, otherwise the run
+    /// is rejected with UNKNOWN_VALUE_KEY. At most 64 entries, each key once.
     /// Key format: <c>^[a-z0-9][a-z0-9._-]{0,23}$</c>.
     /// </summary>
     [Serializable]

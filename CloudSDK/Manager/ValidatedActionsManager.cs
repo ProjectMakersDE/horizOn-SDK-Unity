@@ -123,7 +123,7 @@ namespace PM.horizOn.Cloud.Manager
         /// <param name="inputLog">Raw input log bytes of the run</param>
         /// <param name="stage">Optional stage key for stage rules</param>
         /// <param name="leaderboardKey">Optional target board; null uses the board of the ticket</param>
-        /// <param name="earned">Optional earned (positive) or spent (negative) values; ignored by Part 1 servers</param>
+        /// <param name="earned">Optional earned (positive) or spent (negative) server-owned values; every key must be defined in the rules (see <c>GetState</c>)</param>
         /// <returns>The result, or null on failure (then <see cref="LastErrorCode"/> is set)</returns>
         public Task<ValidatedSubmitResult> SubmitValidated(
             long score,
@@ -143,7 +143,7 @@ namespace PM.horizOn.Cloud.Manager
         /// <param name="inputLogHash">SHA-256 of the input log as 64 hex characters</param>
         /// <param name="stage">Optional stage key for stage rules</param>
         /// <param name="leaderboardKey">Optional target board; null uses the board of the ticket</param>
-        /// <param name="earned">Optional earned (positive) or spent (negative) values; ignored by Part 1 servers</param>
+        /// <param name="earned">Optional earned (positive) or spent (negative) server-owned values; every key must be defined in the rules (see <c>GetState</c>)</param>
         /// <returns>The result, or null on failure (then <see cref="LastErrorCode"/> is set)</returns>
         public Task<ValidatedSubmitResult> SubmitValidatedWithHash(
             long score,

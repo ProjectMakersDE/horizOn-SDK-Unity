@@ -208,7 +208,80 @@ Require(ValidatedActionsErrorCodes.Resolve(404, "PLAYER_NOT_FOUND") == "PLAYER_N
 Require(new PlayerState { values = new[] { new PlayerStateValue { key = "gold", balance = 1250 } } }.GetBalance("gold") == 1250, "state balance helper");
 Require(new PlayerState().GetBalance("gold") == 0, "state balance of a missing key");
 
-Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions transport contract passed");
+// Validated Actions Part 2 (TASK-887): GET state carries the session and the player's userId,
+// value rejections use up the ticket, a submit without state keeps the cached state.
+if (!ValidatedActionsTransportContract.TryCreateGetStatePlan(user, "session-token-720", out var statePlan, out var stateError))
+{
+    throw new InvalidOperationException($"signed user did not produce a state plan: {stateError}");
+}
+Require(statePlan.Endpoint == "/api/v1/app/validated-actions/state?userId=user-720", "state endpoint with userId");
+Require(statePlan.UseSessionToken, "state uses the session token");
+Require(statePlan.UserId == "user-720", "state plan remembers the player");
+Require(!ValidatedActionsTransportContract.TryCreateGetStatePlan(new UserData(), "session-token-720", out var noStatePlan, out var noStateCode) &&
+    noStatePlan == null && noStateCode == ValidatedActionsErrorCodes.SessionRequired, "state missing user session gate");
+Require(!ValidatedActionsTransportContract.TryCreateGetStatePlan(user, "stale-token", out _, out var staleStateCode) &&
+    staleStateCode == ValidatedActionsErrorCodes.SessionRequired, "state current transport session gate");
+Require(ValidatedActionsTransportContract.TryCreateGetStatePlan(
+        new UserData { UserId = "user 720/x", AccessToken = "t" }, "t", out var escapedPlan, out _) &&
+    escapedPlan.Endpoint == "/api/v1/app/validated-actions/state?userId=user%20720%2Fx", "state userId is escaped");
+
+using var stateMessage = new HttpRequestMessage(HttpMethod.Get, statePlan.Endpoint.TrimStart('/'));
+foreach (var header in HorizonRequestHeaders.Create("project-key-720", "session-token-720", statePlan.UseSessionToken))
+{
+    stateMessage.Headers.TryAddWithoutValidation(header.Key, header.Value);
+}
+Task<HttpListenerContext> stateIncoming = listener.GetContextAsync();
+Task<HttpResponseMessage> stateOutgoing = client.SendAsync(stateMessage);
+HttpListenerContext stateContext = await stateIncoming.WaitAsync(TimeSpan.FromSeconds(5));
+Require(stateContext.Request.HttpMethod == "GET", "state method");
+Require(stateContext.Request.RawUrl == "/api/v1/app/validated-actions/state?userId=user-720", "state raw url");
+Require(stateContext.Request.Headers["X-API-Key"] == "project-key-720", "state api key");
+Require(stateContext.Request.Headers["Authorization"] == "Bearer session-token-720", "state authorization");
+stateContext.Response.StatusCode = 200;
+stateContext.Response.Close();
+(await stateOutgoing).EnsureSuccessStatusCode();
+
+foreach (string valueCode in new[]
+         {
+             ValidatedActionsErrorCodes.UnknownValueKey, ValidatedActionsErrorCodes.DuplicateValueKey,
+             ValidatedActionsErrorCodes.EarnedAboveMax, ValidatedActionsErrorCodes.EarnedBelowMin,
+             ValidatedActionsErrorCodes.InsufficientBalance
+         })
+{
+    Require(ValidatedActionsTransportContract.EndsRun(422, valueCode), $"{valueCode} ends the run");
+}
+Require(ValidatedActionsErrorCodes.InsufficientBalance == "INSUFFICIENT_BALANCE" &&
+    ValidatedActionsErrorCodes.UnknownValueKey == "UNKNOWN_VALUE_KEY" &&
+    ValidatedActionsErrorCodes.DuplicateValueKey == "DUPLICATE_VALUE_KEY" &&
+    ValidatedActionsErrorCodes.EarnedAboveMax == "EARNED_ABOVE_MAX" &&
+    ValidatedActionsErrorCodes.EarnedBelowMin == "EARNED_BELOW_MIN", "value code strings");
+
+var submitState = new PlayerState
+{
+    day = "2026-09-29",
+    values = new[]
+    {
+        new PlayerStateValue { key = "chest.gold", balance = 1, requested = -1, credited = -1 },
+        null,
+        new PlayerStateValue { key = "gold", balance = 9007199254740991, earnedToday = 500, dailyCap = 500, requested = 400, credited = 250 }
+    }
+};
+Require(submitState.GetValue("gold").credited == 250 && !submitState.GetValue("gold").IsFullyCredited, "clamped credit is not full");
+Require(submitState.GetValue("chest.gold").IsFullyCredited, "applied spend is full");
+Require(submitState.GetValue("gold").RemainingToday == 0 && submitState.GetValue("gold").HasDailyCap, "daily cap reached");
+Require(submitState.GetValue("chest.gold").RemainingToday == long.MaxValue, "no daily cap means no daily limit");
+Require(submitState.GetValue("gems") == null && submitState.GetValue(null) == null, "missing state value");
+PlayerState cachedState = ValidatedActionsTransportContract.StateToCache(submitState);
+Require(cachedState != null && !ReferenceEquals(cachedState, submitState), "submit state is copied into the cache");
+Require(cachedState.values.Length == 2 && cachedState.day == "2026-09-29", "cached state skips null entries");
+Require(cachedState.GetBalance("gold") == 9007199254740991 && cachedState.GetValue("gold").dailyCap == 500, "cached state keeps balances as long");
+Require(cachedState.GetValue("gold").requested == 0 && cachedState.GetValue("gold").credited == 0, "cached state has no per-run fields");
+Require(ValidatedActionsTransportContract.StateToCache(null) == null, "no submit state keeps the cache");
+Require(ValidatedActionsTransportContract.StateToCache(new PlayerState()) == null, "empty submit state keeps the cache");
+Require(ValidatedActionsTransportContract.StateToCache(new PlayerState { day = "2026-09-29" }) != null,
+    "a state without values (rules define none) still replaces the cache");
+
+Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs and state) transport contract passed");
 
 void RequireSubmitError(UserData submitUser, string token, ValidatedRun run, string hash, string expectedCode, string name)
 {

@@ -24,7 +24,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 📰 **News** | `NewsManager` | In-game announcements |
 | 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
-| 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written |
+| 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
 | 💥 **Crash Reporting** | `CrashManager` | Automatic crash capture, exception tracking, breadcrumbs |
@@ -139,7 +139,7 @@ Attach one to an empty GameObject and press Play.
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
 | Player Profile | `PlayerProfileExample.cs` |
-| Validated Actions | `ValidatedActionsExample.cs` |
+| Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
 For a full guided tour of every feature in one window, import the **Example UI** sample.
@@ -399,6 +399,43 @@ hash)` when you hash the log yourself (`ValidatedActionsManager.ComputeInputLogH
 and `DiscardRun()` when the player quits. Error codes are listed in
 `ValidatedActionsErrorCodes`.
 
+#### Server-owned values (player state)
+
+Currency and loot counters defined under `values` in the rules of the API key are written only
+by the server. A run reports what it earned (positive amount) or spent (negative amount) with
+`earned`; the server checks the per-run limits and the balance, then credits with the daily cap
+and the maximum balance applied. There is no method that writes the state.
+
+```csharp
+// Read on start (every key of the rules, sorted, balance 0 when never earned)
+PlayerState state = await ValidatedActionsManager.Instance.GetState();
+long gold = state?.GetBalance("gold") ?? 0;
+
+// Earn or spend inside a validated run
+var result = await ValidatedActionsManager.Instance.SubmitValidated(score, inputLog,
+    earned: new[] { new EarnedValue("gold", 250), new EarnedValue("chest.gold", -1) });
+if (result != null)
+{
+    PlayerStateValue credit = result.state.GetValue("gold");
+    Debug.Log($"+{credit.credited} of {credit.requested}, balance {credit.balance}");
+    bool chestPaid = result.state.GetValue("chest.gold").IsFullyCredited; // grant only when true
+}
+```
+
+`CurrentState` holds the last known state (from `GetState` or the last accepted submit that
+carried a state; `null` after sign-out); both publish `EventKeys.ValidatedStateLoaded` (308).
+`credited` lower than `requested` means a cap clamped a credit; a spend is either fully applied or
+0, so grant a purchase only when `IsFullyCredited`. Value rejections (`UNKNOWN_VALUE_KEY`,
+`DUPLICATE_VALUE_KEY`, `EARNED_ABOVE_MAX`, `EARNED_BELOW_MIN`, `INSUFFICIENT_BALANCE`) are 422
+and use up the ticket. Send `earned` only when the rules define values: an unknown key rejects
+the run.
+
+**Cloud save as a mirror.** `PlayerState` is `[Serializable]`, so you may keep a copy in your
+cloud save for display and offline start. Copy `CurrentState` into the save after each accepted
+run, overwrite the copy with `GetState()` on start (never the other way round), never send a
+value from the save back as a balance, and send values earned offline as `earned` of the next
+validated run. See `ValidatedStateExample.cs`.
+
 ### Feedback
 
 ```csharp
@@ -536,7 +573,7 @@ void OnUserSignedIn(UserData user)
 |-------|----------|------------|
 | 0-99 | Connection | `ServerConnected`, `ServerDisconnected` |
 | 100-199 | Auth | `UserSignInSuccess`, `UserSignInFailed`, `UserSignedOut` |
-| 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted`, `PlayerProfileChanged` (204), `PlayerProfileLoaded` (307) |
+| 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted`, `PlayerProfileChanged` (204), `PlayerProfileLoaded` (307), `ValidatedStateLoaded` (308) |
 | 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410), `ValidatedRunStarted` (420), `ValidatedRunSubmitted` (421), `ValidatedRunRejected` (422) |
 | 500-599 | Network | `RequestFailed`, `RateLimited` |
 
@@ -639,8 +676,8 @@ var server = new HorizonServer("https://your-server.example.com");
 await server.Connect();
 ```
 
-Validated Actions is cloud only: Simple Server has no such endpoints, so `StartRun` and
-`SubmitValidated` fail with `LastErrorCode = "NOT_SUPPORTED"` there.
+Validated Actions is cloud only: Simple Server has no such endpoints, so `StartRun`,
+`SubmitValidated` and `GetState` fail with `LastErrorCode = "NOT_SUPPORTED"` there.
 
 > **Note:** Simple Server is a starting point, not a full replacement. For the complete experience with dashboard, user authentication, multi-region deployment, and more, use [horizOn BaaS](https://horizon.pm).
 
