@@ -7,6 +7,15 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../CloudSDK/Objects/Data/UserData.cs" Link="Production/UserData.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/SignUpRequest.cs" Link="Production/SignUpRequest.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/SignInRequest.cs" Link="Production/SignInRequest.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/UserManagementRequests.cs" Link="Production/UserManagementRequests.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/AuthResponse.cs" Link="Production/AuthResponse.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/UserManagementResponses.cs" Link="Production/UserManagementResponses.cs" />
+    <Compile Include="../../CloudSDK/Enums/AuthType.cs" Link="Production/AuthType.cs" />
+    <Compile Include="../../CloudSDK/Enums/EventKeys.cs" Link="Production/EventKeys.cs" />
+    <Compile Include="../../CloudSDK/Manager/UserManager.cs" Link="Production/UserManager.cs" />
+    <Compile Include="../../CloudSDK/Helper/JsonHelper.cs" Link="Production/JsonHelper.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/LeaderboardRequests.cs" Link="Production/LeaderboardRequests.cs" />
     <Compile Include="../../CloudSDK/Transport/LeaderboardTransportContract.cs" Link="Production/LeaderboardTransportContract.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/GiftCodeRequests.cs" Link="Production/GiftCodeRequests.cs" />

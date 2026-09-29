@@ -48,8 +48,8 @@ namespace PM.horizOn.Cloud.Manager
         /// Sign up with anonymous authentication.
         /// </summary>
         /// <param name="displayName">Optional display name</param>
-        /// <param name="anonymousToken">Optional anonymous token. If not provided, a new unique token will be generated.</param>
-        /// <returns>True if signup succeeded, false otherwise</returns>
+        /// <param name="anonymousToken">Retained for source compatibility; the server now issues the token.</param>
+        /// <returns>True once signup and anonymous signin establish a session</returns>
         public async Task<bool> SignUpAnonymous(string displayName = null, string anonymousToken = null)
         {
             // Check if already signed in
@@ -59,13 +59,20 @@ namespace PM.horizOn.Cloud.Manager
                 return false;
             }
 
-            // If no token provided, generate a new unique one (max 32 chars per API spec)
-            if (string.IsNullOrEmpty(anonymousToken))
+            if (!string.IsNullOrEmpty(anonymousToken))
+                HorizonApp.Log.Warning("Client-supplied anonymous token ignored; the server issues it.");
+
+            if (!await SignUp(SignUpRequest.CreateAnonymous(displayName)))
+                return false;
+
+            string issuedToken = _currentUser?.AnonymousToken;
+            if (string.IsNullOrEmpty(issuedToken))
             {
-                anonymousToken = System.Guid.NewGuid().ToString("N");
+                HorizonApp.Log.Error("Anonymous signup did not return a token.");
+                return false;
             }
 
-            return await SignUp(SignUpRequest.CreateAnonymous(displayName, anonymousToken));
+            return await SignInAnonymous(issuedToken);
         }
 
         /// <summary>
@@ -378,13 +385,20 @@ namespace PM.horizOn.Cloud.Manager
                 return false;
             }
 
+            string checkedUserId = _currentUser.UserId;
+            string checkedToken = _currentUser.AccessToken;
             var request = new CheckAuthRequest
             {
-                userId = _currentUser.UserId,
-                sessionToken = _currentUser.AccessToken
+                userId = checkedUserId,
+                sessionToken = checkedToken
             };
 
             var response = await HorizonApp.Network.PostAsync<CheckAuthResponse>("/api/v1/app/user-management/check-auth", request);
+
+            // A cached-session check may finish after a fresh sign-in replaces its token.
+            // Its result must not publish events or sign out the newer session.
+            if (_currentUser == null || _currentUser.UserId != checkedUserId || _currentUser.AccessToken != checkedToken)
+                return false;
 
             if (response.IsSuccess && response.Data != null && response.Data.isAuthenticated)
             {
@@ -601,7 +615,10 @@ namespace PM.horizOn.Cloud.Manager
         /// otherwise every session restore wipes it (TASK-451).</param>
         private void UpdateCurrentUser(AuthResponse response, string sentAnonymousToken = null)
         {
-            string anonymousToken = ResolveAnonymousToken(response.isAnonymous, response.anonymousToken, sentAnonymousToken);
+            // Signin responses omit isAnonymous; the anonymous signin request
+            // carries the token that identifies the auth type.
+            bool isAnonymous = response.isAnonymous || !string.IsNullOrEmpty(sentAnonymousToken);
+            string anonymousToken = ResolveAnonymousToken(isAnonymous, response.anonymousToken, sentAnonymousToken);
 
             // Ensure _currentUser is initialized
             if (_currentUser == null)
@@ -612,7 +629,7 @@ namespace PM.horizOn.Cloud.Manager
             _currentUser.UserId = response.userId;
             _currentUser.Email = response.email ?? string.Empty;
             _currentUser.DisplayName = response.username ?? string.Empty;
-            _currentUser.AuthType = response.isAnonymous
+            _currentUser.AuthType = isAnonymous
                 ? "ANONYMOUS"
                 : (!string.IsNullOrEmpty(response.appleUserId)
                     ? "APPLE"
@@ -622,7 +639,7 @@ namespace PM.horizOn.Cloud.Manager
             _currentUser.AppleUserId = response.appleUserId ?? string.Empty;
             _currentUser.IsPrivateRelayEmail = response.isPrivateRelayEmail;
             _currentUser.IsEmailVerified = response.isVerified;
-            _currentUser.IsAnonymous = response.isAnonymous;
+            _currentUser.IsAnonymous = isAnonymous;
             _currentUser.LastLoginTime = DateTime.UtcNow;
 
             // Set session token in network service
@@ -634,7 +651,7 @@ namespace PM.horizOn.Cloud.Manager
             // Save anonymous token separately for future sign-in. Must also run for
             // sign-in (not just signup), so a recovery token used on a new device
             // survives past the first session (TASK-451).
-            if (response.isAnonymous && !string.IsNullOrEmpty(anonymousToken))
+            if (isAnonymous && !string.IsNullOrEmpty(anonymousToken))
             {
                 SaveAnonymousToken(anonymousToken);
             }

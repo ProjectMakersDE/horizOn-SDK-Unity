@@ -22,18 +22,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
 
         public static SignUpRequest CreateAnonymous(string username = null, string anonymousToken = null)
         {
-            // Generate a unique anonymous token if not provided (max 32 chars per API spec)
-            if (string.IsNullOrEmpty(anonymousToken))
-            {
-                // Remove dashes from GUID to fit within 32 char limit
-                anonymousToken = System.Guid.NewGuid().ToString("N");
-            }
-
+            // Keep the optional argument for source compatibility. The server is
+            // the sole issuer, so the request must omit anonymousToken.
             return new SignUpRequest
             {
                 type = nameof(AuthType.ANONYMOUS),
-                username = username,
-                anonymousToken = anonymousToken
+                username = username
             };
         }
 

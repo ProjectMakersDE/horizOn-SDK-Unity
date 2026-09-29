@@ -1,3 +1,11 @@
+## [1.8.6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.5...v1.8.6) (2026-09-28)
+
+
+### Bug Fixes
+
+* align anonymous signup and restore with server tokens ([#6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/6)) ([b3319a8](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/b3319a8b4da43aa68cdc96d641da6c12e86f2c60))
+* **ci:** allow manual SDK release workflow runs ([#8](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/8)) ([45af670](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/45af670264af4f09f8b4e2730c88a7ec5706cb17))
+
 ## [1.8.5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.4...v1.8.5) (2026-09-28)
 
 
