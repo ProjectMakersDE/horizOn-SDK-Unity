@@ -419,6 +419,9 @@ Base path: `/api/v1/app/gift-codes`
 
 **Description**: Redeem a promotional code for rewards.
 
+**Headers**: `X-API-Key` and `Authorization: Bearer <accessToken>` of the signed-in player. The SDK sends the
+current session automatically. The server only redeems for the player who owns that session.
+
 **Request Body**:
 ```json
 {
@@ -449,7 +452,8 @@ Base path: `/api/v1/app/gift-codes`
 | Code | Cause |
 |------|-------|
 | 400 | Invalid/expired/already redeemed |
-| 403 | Code doesn't belong to API key |
+| 401 | Session missing, invalid or expired (sign in again) |
+| 403 | Code doesn't belong to API key, or the session belongs to another player |
 | 404 | Code not found |
 
 #### Unity SDK Usage

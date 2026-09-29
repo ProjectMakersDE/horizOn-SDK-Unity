@@ -47,7 +47,26 @@ Require(!LeaderboardTransportContract.TryCreateSubmitPlan(
 Require(!LeaderboardTransportContract.TryCreateSubmitPlan(
     user, "stale-token", 99, "season one", out _), "current transport session gate");
 
-Console.WriteLine("Unity SDK leaderboard transport contract passed");
+// Gift code redeem (TASK-886): the plan carries the session, and no plan exists without a matching session.
+if (!GiftCodeTransportContract.TryCreateRedeemPlan(user, "session-token-720", "SUMMER2026", out var redeemPlan))
+{
+    throw new InvalidOperationException("signed user did not produce a redeem plan");
+}
+Require(GiftCodeRedeemPlan.Endpoint == "/api/v1/app/gift-codes/redeem", "redeem endpoint");
+Require(redeemPlan.UseSessionToken, "redeem uses the session token");
+Require(redeemPlan.Request.userId == "user-720", "redeem userId body field");
+Require(redeemPlan.Request.code == "SUMMER2026", "redeem code body field");
+var redeemHeaders = HorizonRequestHeaders.Create("project-key-720", "session-token-720", redeemPlan.UseSessionToken);
+Require(redeemHeaders.TryGetValue("Authorization", out var redeemAuthorization) &&
+    redeemAuthorization == "Bearer session-token-720", "redeem authorization");
+Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
+    new UserData(), "session-token-720", "SUMMER2026", out _), "redeem missing user session gate");
+Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
+    user, "stale-token", "SUMMER2026", out _), "redeem current transport session gate");
+Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
+    user, "session-token-720", "", out _), "redeem empty code gate");
+
+Console.WriteLine("Unity SDK leaderboard and gift code transport contract passed");
 
 static void Require(bool condition, string name)
 {
