@@ -21,7 +21,8 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Error code of the last failed <see cref="SubmitScore"/>: the server <c>code</c> (for example
         /// <c>VALIDATED_SUBMIT_REQUIRED</c> when the board only accepts validated runs, see
-        /// <see cref="ValidatedActionsManager"/>), <c>SESSION_REQUIRED</c> when no player is signed in,
+        /// <see cref="ValidatedActionsManager"/>, or <c>PLAYER_BANNED</c> when the player is banned from the
+        /// board), <c>SESSION_REQUIRED</c> when no player is signed in,
         /// or an HTTP fallback code (see <see cref="ValidatedActionsErrorCodes.FromHttpStatus"/>).
         /// Null after a successful submit.
         /// </summary>
@@ -53,7 +54,8 @@ namespace PM.horizOn.Cloud.Manager
         /// major version. Pass the board key as a named argument: <c>SubmitScore(score, boardKey: "weekly")</c>.</param>
         /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
         /// <returns>True if submission succeeded, false otherwise (then <see cref="LastErrorCode"/> is set;
-        /// <c>VALIDATED_SUBMIT_REQUIRED</c> means the board only accepts validated runs and is not retried)</returns>
+        /// <c>VALIDATED_SUBMIT_REQUIRED</c> means the board only accepts validated runs, <c>PLAYER_BANNED</c> that the
+        /// player is banned from the board; neither is retried)</returns>
         public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
             if (!string.IsNullOrEmpty(metadata))
@@ -99,6 +101,10 @@ namespace PM.horizOn.Cloud.Manager
                 if (LastErrorCode == ValidatedActionsErrorCodes.ValidatedSubmitRequired)
                 {
                     HorizonApp.Log.Error("Score submission refused: this board only accepts validated runs (use ValidatedActionsManager.SubmitValidated)");
+                }
+                else if (LastErrorCode == ValidatedActionsErrorCodes.PlayerBanned)
+                {
+                    HorizonApp.Log.Error("Score submission refused: the player is banned from this leaderboard");
                 }
                 else
                 {

@@ -134,6 +134,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
             if (state == null) state = new PlayerState();
             state.Normalize();
             if (evidence == null) evidence = new EvidenceRequest();
+            evidence.Normalize();
         }
     }
 
@@ -313,8 +314,79 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <summary>Deadline of the upload, ISO 8601 UTC.</summary>
         public string uploadBefore;
 
-        /// <summary>Maximum size of the log in bytes.</summary>
+        /// <summary>Maximum size of the log in bytes (0 when unknown).</summary>
         public int maxBytes;
+
+        /// <summary>
+        /// Upload deadline as UTC time, or null when <see cref="uploadBefore"/> cannot be read.
+        /// </summary>
+        public DateTime? UploadBeforeUtc
+        {
+            get
+            {
+                if (DateTime.TryParse(
+                        uploadBefore,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out DateTime value))
+                {
+                    return value;
+                }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Replaces JSON null values with empty strings.
+        /// </summary>
+        internal void Normalize()
+        {
+            if (runId == null) runId = string.Empty;
+            if (uploadBefore == null) uploadBefore = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Answer to an evidence upload (Part 3, TASK-888) and the data of
+    /// <c>EventKeys.ValidatedEvidenceUploaded</c> (423).
+    /// </summary>
+    [Serializable]
+    public class EvidenceUploadResult
+    {
+        /// <summary>The run whose log was stored.</summary>
+        public string runId;
+
+        /// <summary>Always "UPLOADED".</summary>
+        public string status;
+
+        /// <summary>Size of the stored log in bytes.</summary>
+        public int bytes;
+    }
+
+    /// <summary>
+    /// Data of <c>EventKeys.ValidatedEvidenceUploadFailed</c> (424): why an evidence upload failed.
+    /// A failed upload never changes the submit result; the run stays accepted.
+    /// </summary>
+    [Serializable]
+    public class ValidatedEvidenceFailure
+    {
+        /// <summary>The run whose log was sent.</summary>
+        public string runId;
+
+        /// <summary>Error code, for example "EVIDENCE_HASH_MISMATCH" (see <see cref="ValidatedActionsErrorCodes"/>).</summary>
+        public string code;
+
+        /// <summary>HTTP status, 0 for a local failure or a network error.</summary>
+        public long httpStatus;
+
+        /// <summary>
+        /// True when calling <c>UploadEvidence</c> again can succeed: after
+        /// <c>EVIDENCE_HASH_MISMATCH</c> (with the correct bytes) and after <c>NETWORK_ERROR</c>.
+        /// </summary>
+        public bool retryable;
+
+        /// <summary>True for the automatic upload after a submit, false for a manual <c>UploadEvidence</c> call.</summary>
+        public bool automatic;
     }
 
     /// <summary>
@@ -352,6 +424,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
 
         /// <summary>The input log hash is not 64 hex characters (local, no request).</summary>
         public const string InvalidInputLogHash = "INVALID_INPUT_LOG_HASH";
+
+        /// <summary>UploadEvidence without a run ID (local, no request).</summary>
+        public const string InvalidRunId = "INVALID_RUN_ID";
+
+        /// <summary>UploadEvidence with a null or empty input log (local, no request; the server needs a log).</summary>
+        public const string EmptyInputLog = "EMPTY_INPUT_LOG";
 
         // Server codes
 
@@ -431,6 +509,40 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
 
         /// <summary>Plain SubmitScore to a "validated only" board (403). Use SubmitValidated instead.</summary>
         public const string ValidatedSubmitRequired = "VALIDATED_SUBMIT_REQUIRED";
+
+        /// <summary>
+        /// The player is banned from this board (403, Part 3). Answered to a plain SubmitScore and to a
+        /// validated submit. The validated check runs before the ticket is used, so the run is kept
+        /// (it can still be submitted without a board or after an unban); submitting again to the
+        /// same board fails the same way, so call DiscardRun unless the game waits for an unban.
+        /// </summary>
+        public const string PlayerBanned = "PLAYER_BANNED";
+
+        // Evidence upload (Part 3). Only EVIDENCE_HASH_MISMATCH and NETWORK_ERROR may be retried.
+
+        /// <summary>The log is not valid standard base64 (400). Final.</summary>
+        public const string EvidenceInvalidEncoding = "EVIDENCE_INVALID_ENCODING";
+
+        /// <summary>No evidence request for this run and player (404), for example a replaced or deleted request. Final.</summary>
+        public const string EvidenceNotRequested = "EVIDENCE_NOT_REQUESTED";
+
+        /// <summary>The log of this run was already stored (409). Final.</summary>
+        public const string EvidenceAlreadyUploaded = "EVIDENCE_ALREADY_UPLOADED";
+
+        /// <summary>The upload window (24 h, see <c>EvidenceRequest.uploadBefore</c>) has passed (410). Final.</summary>
+        public const string EvidenceExpired = "EVIDENCE_EXPIRED";
+
+        /// <summary>
+        /// The log is larger than <c>EvidenceRequest.maxBytes</c> (413, or local without a request when the
+        /// limit is known from the submit result). Final.
+        /// </summary>
+        public const string EvidenceTooLarge = "EVIDENCE_TOO_LARGE";
+
+        /// <summary>
+        /// SHA-256 of the log differs from the run's inputLogHash (422). The request stays open until
+        /// the window ends: upload the exact bytes that were hashed.
+        /// </summary>
+        public const string EvidenceHashMismatch = "EVIDENCE_HASH_MISMATCH";
 
         /// <summary>The player's hourly run limit is reached (429). Not retried automatically.</summary>
         public const string RunRateLimited = "RUN_RATE_LIMITED";

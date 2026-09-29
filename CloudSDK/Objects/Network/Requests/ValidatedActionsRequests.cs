@@ -32,6 +32,18 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
     }
 
     /// <summary>
+    /// Body of PUT /api/v1/app/validated-actions/runs/{runId}/evidence (Part 3, TASK-888).
+    /// <c>log</c> is the raw input log as standard base64 with padding; decoded, its SHA-256 must
+    /// equal the <c>inputLogHash</c> sent with the run.
+    /// </summary>
+    [Serializable]
+    public class UploadEvidenceRequest
+    {
+        public string userId;
+        public string log;
+    }
+
+    /// <summary>
     /// A server-owned value the run earned (positive amount) or spent (negative amount).
     /// The key must be defined under <c>values</c> in the rules of the API key, otherwise the run
     /// is rejected with UNKNOWN_VALUE_KEY. At most 64 entries, each key once.

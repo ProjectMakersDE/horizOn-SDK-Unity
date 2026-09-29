@@ -24,7 +24,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 📰 **News** | `NewsManager` | In-game announcements |
 | 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
-| 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot |
+| 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot, input log evidence |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
 | 💥 **Crash Reporting** | `CrashManager` | Automatic crash capture, exception tracking, breadcrumbs |
@@ -397,7 +397,41 @@ or 5xx the run stays and you may call `SubmitValidated` again. `RUN_RATE_LIMITED
 `RUN_CAPACITY_REACHED` are not retried automatically. Use `SubmitValidatedWithHash(score,
 hash)` when you hash the log yourself (`ValidatedActionsManager.ComputeInputLogHash(bytes)`),
 and `DiscardRun()` when the player quits. Error codes are listed in
-`ValidatedActionsErrorCodes`.
+`ValidatedActionsErrorCodes`. A player banned from the board gets `PLAYER_BANNED` (403) from
+`SubmitValidated` and from `LeaderboardManager.SubmitScore`; the validated run is kept (the ban
+is checked before the ticket is used), but the same board refuses it again, so call
+`DiscardRun()`.
+
+#### Evidence (input log upload)
+
+When a run becomes a new top entry (the board's "Evidence top N") or carries a soft flag, the
+server asks for its input log: `result.evidence.required` is true, with `runId`, `uploadBefore`
+(24 h) and `maxBytes` (32,768). After `SubmitValidated` the SDK uploads the raw log on its own in
+the background (`AutoUploadEvidence`, default true). After `SubmitValidatedWithHash`, or with
+auto upload off, upload the exact bytes you hashed yourself:
+
+```csharp
+if (result.evidence.required)
+{
+    bool stored = await ValidatedActionsManager.Instance.UploadEvidence(result.evidence.runId, inputLog);
+    if (!stored && ValidatedActionsManager.IsEvidenceRetryable(ValidatedActionsManager.Instance.LastErrorCode))
+    {
+        // EVIDENCE_HASH_MISMATCH (send the right bytes) or NETWORK_ERROR: try again later
+    }
+}
+
+HorizonApp.Events.Subscribe<ValidatedEvidenceFailure>(EventKeys.ValidatedEvidenceUploadFailed,
+    failure => Debug.Log($"{failure.code}, retryable {failure.retryable}"));
+```
+
+The upload never changes the submit result: the run stays accepted. Outcomes arrive as
+`EventKeys.ValidatedEvidenceUploaded` (423) and `EventKeys.ValidatedEvidenceUploadFailed` (424);
+`LastEvidenceErrorCode` holds the code of the last failed upload. The automatic upload never
+sets `LastErrorCode`. Codes: `EVIDENCE_HASH_MISMATCH` (422, the request stays open, retry with the
+exact bytes), `EVIDENCE_INVALID_ENCODING` (400), `EVIDENCE_NOT_REQUESTED` (404),
+`EVIDENCE_ALREADY_UPLOADED` (409), `EVIDENCE_EXPIRED` (410), `EVIDENCE_TOO_LARGE` (413, or local
+when the log exceeds `maxBytes`); only the hash mismatch and `NETWORK_ERROR` are worth a retry.
+Local codes: `SESSION_REQUIRED`, `INVALID_RUN_ID`, `EMPTY_INPUT_LOG`.
 
 #### Server-owned values (player state)
 
@@ -574,7 +608,7 @@ void OnUserSignedIn(UserData user)
 | 0-99 | Connection | `ServerConnected`, `ServerDisconnected` |
 | 100-199 | Auth | `UserSignInSuccess`, `UserSignInFailed`, `UserSignedOut` |
 | 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted`, `PlayerProfileChanged` (204), `PlayerProfileLoaded` (307), `ValidatedStateLoaded` (308) |
-| 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410), `ValidatedRunStarted` (420), `ValidatedRunSubmitted` (421), `ValidatedRunRejected` (422) |
+| 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410), `ValidatedRunStarted` (420), `ValidatedRunSubmitted` (421), `ValidatedRunRejected` (422), `ValidatedEvidenceUploaded` (423), `ValidatedEvidenceUploadFailed` (424) |
 | 500-599 | Network | `RequestFailed`, `RateLimited` |
 
 ## Configuration Options

@@ -18,5 +18,6 @@
     <Compile Include="../../CloudSDK/Objects/Network/Responses/ValidatedActionsResponses.cs" Link="Production/ValidatedActionsResponses.cs" />
     <Compile Include="../../CloudSDK/Transport/ValidatedActionsTransportContract.cs" Link="Production/ValidatedActionsTransportContract.cs" />
     <Compile Include="../../CloudSDK/Transport/ValidatedActionsStateTransportContract.cs" Link="Production/ValidatedActionsStateTransportContract.cs" />
+    <Compile Include="../../CloudSDK/Transport/ValidatedActionsEvidenceTransportContract.cs" Link="Production/ValidatedActionsEvidenceTransportContract.cs" />
   </ItemGroup>
 </Project>

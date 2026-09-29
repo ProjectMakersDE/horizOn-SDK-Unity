@@ -281,11 +281,93 @@ Require(ValidatedActionsTransportContract.StateToCache(new PlayerState()) == nul
 Require(ValidatedActionsTransportContract.StateToCache(new PlayerState { day = "2026-09-29" }) != null,
     "a state without values (rules define none) still replaces the cache");
 
-Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs and state) transport contract passed");
+// Validated Actions Part 3 (TASK-888): the evidence upload is a PUT with the session, the userId and
+// the raw log as standard base64; only a hash mismatch and a network error may be retried;
+// PLAYER_BANNED keeps the run (checked before the ticket is used).
+byte[] evidenceLog = { 0, 1, 2, 3 };
+if (!ValidatedActionsTransportContract.TryCreateEvidencePlan(
+        user, "session-token-720", " run-720 ", evidenceLog, 32768, out var evidencePlan, out var evidenceError))
+{
+    throw new InvalidOperationException($"signed user did not produce an evidence plan: {evidenceError}");
+}
+Require(evidencePlan.Endpoint == "/api/v1/app/validated-actions/runs/run-720/evidence", "evidence endpoint with trimmed run ID");
+Require(evidencePlan.RunId == "run-720" && evidencePlan.LogBytes == 4, "evidence plan remembers run and size");
+Require(evidencePlan.UseSessionToken, "evidence uses the session token");
+Require(evidencePlan.Request.userId == "user-720" && evidencePlan.Request.log == "AAECAw==", "evidence body is userId plus padded base64");
+evidenceLog[0] = 9;
+Require(evidencePlan.Request.log == "AAECAw==", "the log is encoded when the plan is built");
+Require(ValidatedActionsTransportContract.EvidenceEndpoint("run 1/x") == "/api/v1/app/validated-actions/runs/run%201%2Fx/evidence", "evidence run ID is escaped");
+
+using var evidenceMessage = new HttpRequestMessage(HttpMethod.Put, evidencePlan.Endpoint.TrimStart('/'));
+foreach (var header in HorizonRequestHeaders.Create("project-key-720", "session-token-720", evidencePlan.UseSessionToken))
+{
+    evidenceMessage.Headers.TryAddWithoutValidation(header.Key, header.Value);
+}
+evidenceMessage.Content = JsonContent.Create(evidencePlan.Request, options: new JsonSerializerOptions { IncludeFields = true });
+Task<HttpListenerContext> evidenceIncoming = listener.GetContextAsync();
+Task<HttpResponseMessage> evidenceOutgoing = client.SendAsync(evidenceMessage);
+HttpListenerContext evidenceContext = await evidenceIncoming.WaitAsync(TimeSpan.FromSeconds(5));
+using var evidenceReader = new StreamReader(evidenceContext.Request.InputStream);
+string evidenceBody = await evidenceReader.ReadToEndAsync();
+Require(evidenceContext.Request.HttpMethod == "PUT", "evidence method");
+Require(evidenceContext.Request.RawUrl == "/api/v1/app/validated-actions/runs/run-720/evidence", "evidence raw url");
+Require(evidenceContext.Request.Headers["Authorization"] == "Bearer session-token-720", "evidence authorization");
+Require(evidenceBody.Contains("\"userId\":\"user-720\""), "evidence userId body field");
+Require(evidenceBody.Contains("\"log\":\"AAECAw==\""), "evidence log body field");
+evidenceContext.Response.StatusCode = 200;
+evidenceContext.Response.Close();
+(await evidenceOutgoing).EnsureSuccessStatusCode();
+
+RequireEvidenceError(new UserData(), "session-token-720", "run-720", evidenceLog, 0, ValidatedActionsErrorCodes.SessionRequired, "evidence missing user session gate");
+RequireEvidenceError(user, "stale-token", "run-720", evidenceLog, 0, ValidatedActionsErrorCodes.SessionRequired, "evidence current transport session gate");
+RequireEvidenceError(user, "session-token-720", " ", evidenceLog, 0, ValidatedActionsErrorCodes.InvalidRunId, "evidence without run ID");
+RequireEvidenceError(user, "session-token-720", "run-720", null, 0, ValidatedActionsErrorCodes.EmptyInputLog, "evidence without log");
+RequireEvidenceError(user, "session-token-720", "run-720", new byte[0], 0, ValidatedActionsErrorCodes.EmptyInputLog, "evidence with empty log");
+RequireEvidenceError(user, "session-token-720", "run-720", evidenceLog, 3, ValidatedActionsErrorCodes.EvidenceTooLarge, "evidence above the known limit");
+Require(ValidatedActionsTransportContract.TryCreateEvidencePlan(user, "session-token-720", "run-720", evidenceLog, 4, out _, out _), "evidence at the limit");
+
+Require(ValidatedActionsTransportContract.IsEvidenceRetryable(ValidatedActionsErrorCodes.EvidenceHashMismatch), "hash mismatch may be retried");
+Require(ValidatedActionsTransportContract.IsEvidenceRetryable(ValidatedActionsErrorCodes.NetworkError), "network error may be retried");
+foreach (string finalCode in new[]
+         {
+             ValidatedActionsErrorCodes.EvidenceInvalidEncoding, ValidatedActionsErrorCodes.EvidenceNotRequested,
+             ValidatedActionsErrorCodes.EvidenceAlreadyUploaded, ValidatedActionsErrorCodes.EvidenceExpired,
+             ValidatedActionsErrorCodes.EvidenceTooLarge
+         })
+{
+    Require(!ValidatedActionsTransportContract.IsEvidenceRetryable(finalCode), $"{finalCode} is final");
+}
+Require(ValidatedActionsErrorCodes.EvidenceInvalidEncoding == "EVIDENCE_INVALID_ENCODING" &&
+    ValidatedActionsErrorCodes.EvidenceNotRequested == "EVIDENCE_NOT_REQUESTED" &&
+    ValidatedActionsErrorCodes.EvidenceAlreadyUploaded == "EVIDENCE_ALREADY_UPLOADED" &&
+    ValidatedActionsErrorCodes.EvidenceExpired == "EVIDENCE_EXPIRED" &&
+    ValidatedActionsErrorCodes.EvidenceTooLarge == "EVIDENCE_TOO_LARGE" &&
+    ValidatedActionsErrorCodes.EvidenceHashMismatch == "EVIDENCE_HASH_MISMATCH" &&
+    ValidatedActionsErrorCodes.PlayerBanned == "PLAYER_BANNED", "evidence and moderation code strings");
+Require(!ValidatedActionsTransportContract.EndsRun(403, ValidatedActionsErrorCodes.PlayerBanned), "a ban keeps the run");
+
+var evidenceRequest = new EvidenceRequest { required = true, runId = "run-720", maxBytes = 32768 };
+Require(ValidatedActionsTransportContract.ShouldAutoUploadEvidence(true, evidenceRequest, evidenceLog), "auto upload with the raw log");
+Require(!ValidatedActionsTransportContract.ShouldAutoUploadEvidence(false, evidenceRequest, evidenceLog), "auto upload switched off");
+Require(!ValidatedActionsTransportContract.ShouldAutoUploadEvidence(true, evidenceRequest, null), "no auto upload after a hash submit");
+Require(!ValidatedActionsTransportContract.ShouldAutoUploadEvidence(true, new EvidenceRequest(), evidenceLog), "no auto upload without a request");
+var acceptedWithoutEvidence = new ValidatedSubmitResult { runId = "run-720", evidence = null };
+acceptedWithoutEvidence.Normalize();
+Require(acceptedWithoutEvidence.evidence != null && !acceptedWithoutEvidence.evidence.required &&
+    acceptedWithoutEvidence.evidence.runId == "", "null evidence reads as an empty request");
+Require(ValidatedActionsTransportContract.EvidenceRunId(acceptedWithoutEvidence) == "run-720", "evidence run ID falls back to the result");
+
+Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs, state and evidence) transport contract passed");
 
 void RequireSubmitError(UserData submitUser, string token, ValidatedRun run, string hash, string expectedCode, string name)
 {
     Require(!ValidatedActionsTransportContract.TryCreateSubmitPlan(submitUser, token, run, 1, hash, null, null, null, out var rejectedPlan, out var code) &&
+        rejectedPlan == null && code == expectedCode, name);
+}
+
+void RequireEvidenceError(UserData evidenceUser, string token, string runId, byte[] log, int maxBytes, string expectedCode, string name)
+{
+    Require(!ValidatedActionsTransportContract.TryCreateEvidencePlan(evidenceUser, token, runId, log, maxBytes, out var rejectedPlan, out var code) &&
         rejectedPlan == null && code == expectedCode, name);
 }
 

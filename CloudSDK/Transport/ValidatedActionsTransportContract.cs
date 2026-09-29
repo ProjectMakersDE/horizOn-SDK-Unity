@@ -46,7 +46,8 @@ namespace PM.horizOn.Cloud.Transport
     /// <summary>
     /// Request plans and run lifecycle rules of Validated Actions, free of UnityEngine so the
     /// .NET transport contract can compile them. Partial: the player state plan (Part 2) lives in
-    /// <c>ValidatedActionsStateTransportContract.cs</c>.
+    /// <c>ValidatedActionsStateTransportContract.cs</c>, the evidence plan (Part 3) in
+    /// <c>ValidatedActionsEvidenceTransportContract.cs</c>.
     /// </summary>
     internal static partial class ValidatedActionsTransportContract
     {
@@ -194,7 +195,9 @@ namespace PM.horizOn.Cloud.Transport
         /// a success, any 422 except LEADERBOARD_MISMATCH (ticket checks and rule rejections), and
         /// 403 SCORE_LIMIT_REACHED. On network errors, 400, 401, other 403, 404, 429 and 5xx the run
         /// stays and the game may retry with the same ticket. LEADERBOARD_MISMATCH is checked before
-        /// the ticket is consumed, so the game may resubmit with the ticket's board.
+        /// the ticket is consumed, so the game may resubmit with the ticket's board. 403 PLAYER_BANNED
+        /// (Part 3) is checked before the ticket is used as well, so the run stays; the same board
+        /// refuses it again until an unban.
         /// </summary>
         /// <param name="httpStatus">HTTP status, 0 when there was none</param>
         /// <param name="errorCode">Server code of the error body, or null</param>

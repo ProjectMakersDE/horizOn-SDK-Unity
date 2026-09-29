@@ -1029,9 +1029,10 @@ in the next major version. Pass a board key as a named argument: `SubmitScore(12
 | 400 | Invalid request |
 | 403 | Entry limit exceeded |
 | 403 | `VALIDATED_SUBMIT_REQUIRED`: the board only accepts validated runs (see [Validated Actions](#validated-actions)); nothing is written |
+| 403 | `PLAYER_BANNED`: the player is banned from this board; nothing is written, not retried |
 
 On failure `LeaderboardManager.Instance.LastErrorCode` holds the server `code` (for example
-`VALIDATED_SUBMIT_REQUIRED`), `SESSION_REQUIRED` without a signed-in player, or an HTTP
+`VALIDATED_SUBMIT_REQUIRED` or `PLAYER_BANNED`), `SESSION_REQUIRED` without a signed-in player, or an HTTP
 fallback code. `ListBoards()` returns `validatedOnly` (bool) for every board.
 
 #### Unity SDK Usage
@@ -1383,7 +1384,8 @@ with the SHA-256 of the log. The server checks the ticket and every rule of the 
 (score limits, minimum duration measured by the server, score per second, stage rules) before
 anything is written. Rule values never appear in responses or error messages; only the `code`
 tells which rule rejected a run. Runs may also earn or spend server-owned values (currency,
-loot) defined in the rules; only the server writes them (see 25). Cloud only: without the
+loot) defined in the rules; only the server writes them (see 25). The server may ask for the
+input log of an accepted run as evidence (see 26). Cloud only: without the
 endpoints (simpleServer) the SDK reports `NOT_SUPPORTED`.
 
 **Headers** (every endpoint): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
@@ -1498,6 +1500,7 @@ false, and leaves `CurrentState` unchanged).
 | 400 | Validation, `SCORE_REQUIRED`, `PLAYER_NAME_REQUIRED` | kept |
 | 401 / 403 | `SESSION_REQUIRED` / `SESSION_FORBIDDEN` | kept |
 | 403 | `SCORE_LIMIT_REACHED` (ticket used up) | dropped |
+| 403 | `PLAYER_BANNED` (banned from the target board, checked before the ticket is used) | kept; the same board refuses it again, call `DiscardRun()` |
 | 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` | kept |
 | 422 | `TICKET_INVALID`, `TICKET_EXPIRED`, `TICKET_FOREIGN`, `TICKET_CONSUMED` | dropped |
 | 422 | `LEADERBOARD_MISMATCH` (checked before the ticket is used) | kept |
@@ -1534,6 +1537,9 @@ decides. After an accepted run with a board the `LeaderboardManager` cache is cl
 `EventKeys.ValidatedRunRejected` (422) on a 422 or 403 with a `ValidatedRunRejection`
 (`code`, `runId`, `httpStatus`, `runCleared`). When the result carries a state,
 `EventKeys.ValidatedStateLoaded` (308) is published first with the new `CurrentState`.
+When `result.evidence.required` is true and the submit had the raw log, the SDK starts the
+evidence upload (see 26) before it publishes `ValidatedRunSubmitted`; the upload finishes in
+the background.
 
 ---
 
@@ -1585,6 +1591,73 @@ send a value from the save back as a balance, and send values earned offline as 
 next validated run (the per-run and daily limits apply as always). `PlayerState` is
 `[Serializable]`, so it can be a field of the object you pass to `CloudSaveManager.SaveObject`.
 
+---
+
+### 26. Upload Evidence
+
+**Endpoint**: `PUT /api/v1/app/validated-actions/runs/{runId}/evidence`
+
+Only after a submit answered with `evidence` (`required: true`), before `evidence.uploadBefore`
+(24 hours). The server asks for the log when the run became the player's new entry on the board
+and either carries a soft flag or lands within the board's "Evidence top N"; when the account's
+evidence storage is full it asks for nothing (the run still counts).
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "log": "AAECAw=="
+}
+```
+`log` is the raw input log as standard base64 with padding, decoded at most `evidence.maxBytes`
+(32,768) bytes. Its SHA-256 must equal the `inputLogHash` sent with the run.
+
+**Response** (200):
+```json
+{ "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11", "status": "UPLOADED", "bytes": 18234 }
+```
+
+**Error Responses**:
+| Code | Cause | Retry |
+|------|-------|-------|
+| 400 | `EVIDENCE_INVALID_ENCODING`: `log` is not standard base64 | no |
+| 401 / 403 | `SESSION_REQUIRED` / `SESSION_FORBIDDEN` | after a new sign-in |
+| 404 | `EVIDENCE_NOT_REQUESTED`: no request for this run and player (never asked, replaced by a better run, deleted) | no |
+| 409 | `EVIDENCE_ALREADY_UPLOADED` | no |
+| 410 | `EVIDENCE_EXPIRED`: the 24 h window passed | no |
+| 413 | `EVIDENCE_TOO_LARGE`: decoded log above `maxBytes` | no |
+| 422 | `EVIDENCE_HASH_MISMATCH`: the bytes differ from the hashed log; the request stays open | yes, with the exact bytes |
+| 429 | Account request limit (empty body, retried by the SDK) | |
+
+#### Unity SDK Usage
+
+```csharp
+// Automatic: SubmitValidated knows the raw log and uploads it in the background.
+ValidatedSubmitResult result = await ValidatedActionsManager.Instance.SubmitValidated(score, inputLog);
+
+// Manual: after SubmitValidatedWithHash, or with AutoUploadEvidence = false.
+if (result != null && result.evidence.required)
+{
+    bool stored = await ValidatedActionsManager.Instance.UploadEvidence(result.evidence.runId, inputLog);
+    if (!stored)
+    {
+        string code = ValidatedActionsManager.Instance.LastErrorCode;   // e.g. EVIDENCE_EXPIRED
+        bool retry = ValidatedActionsManager.IsEvidenceRetryable(code);  // hash mismatch or network error
+    }
+}
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), a run ID (`INVALID_RUN_ID`), a non-empty log (`EMPTY_INPUT_LOG`) and, for the
+automatic upload, `evidence.maxBytes` (`EVIDENCE_TOO_LARGE`). Server errors and timeouts are
+retried by the network layer; the SDK does not retry an upload on its own beyond that. An upload
+never changes the submit result. `UploadEvidence` sets `LastErrorCode` and `LastEvidenceErrorCode`;
+the automatic upload sets only `LastEvidenceErrorCode`.
+
+**Events**: `EventKeys.ValidatedEvidenceUploaded` (423) with the `EvidenceUploadResult`;
+`EventKeys.ValidatedEvidenceUploadFailed` (424) with a `ValidatedEvidenceFailure` (`runId`,
+`code`, `httpStatus` (0 for local and network failures), `retryable`, `automatic`).
+
 ### ValidatedActionsManager members
 
 | Member | Description |
@@ -1597,12 +1670,15 @@ next validated run (the per-run and daily limits apply as always). `PlayerState`
 | `bool HasActiveRun` | `CurrentRun != null` |
 | `string LastErrorCode` | Code of the last failure; `null` after a success |
 | `void DiscardRun()` | Drop the current run without submitting |
-| `bool AutoUploadEvidence` | Default `true`; used by the evidence upload of Part 3 |
+| `bool AutoUploadEvidence` | Default `true`: upload the raw log in the background when an accepted `SubmitValidated` asks for evidence |
+| `Task<bool> UploadEvidence(string runId, byte[] inputLog)` | Upload the input log of a run whose submit asked for evidence; `false` on failure |
+| `string LastEvidenceErrorCode` | Code of the last failed evidence upload (automatic or manual); `null` after a successful upload |
+| `static bool IsEvidenceRetryable(string errorCode)` | `true` for `EVIDENCE_HASH_MISMATCH` and `NETWORK_ERROR` |
 | `Task<PlayerState> GetState()` | Load the server-owned values; `null` on failure |
 | `PlayerState CurrentState` | Last known state (from `GetState` or the last accepted submit with a state), `requested` and `credited` always 0; `null` before the first load, after sign-out and when another player signed in |
 
 `LastErrorCode` holds the server `code` of the error body, a local code (`SESSION_REQUIRED`,
-`NO_ACTIVE_RUN`, `INVALID_INPUT_LOG_HASH`) or an HTTP fallback: `NOT_SUPPORTED` (404 without a
+`NO_ACTIVE_RUN`, `INVALID_INPUT_LOG_HASH`, `INVALID_RUN_ID`, `EMPTY_INPUT_LOG`) or an HTTP fallback: `NOT_SUPPORTED` (404 without a
 code, for example a simpleServer), `BAD_REQUEST` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403),
 `UNPROCESSABLE_ENTITY` (422), `RATE_LIMITED` (429 after the retries), `SERVER_ERROR` (5xx),
 `NETWORK_ERROR` (no response), `INVALID_RESPONSE` (unreadable 2xx body). All codes are constants
@@ -1710,7 +1786,24 @@ Helpers: `HasLeaderboard`, `ExpiresAtUtc`, `IsExpired` (device clock, informatio
 | rank | long | 1-based rank (0 without a board) |
 | durationSeconds | long | Server-measured duration |
 | state | PlayerState | Never null; `HasData` false when the server sent no state |
-| evidence | EvidenceRequest | Part 3, never null, `required` false in Part 1 (`runId`, `uploadBefore`, `maxBytes`) |
+| evidence | EvidenceRequest | Never null; `required` false when the server does not ask for the log |
+
+### EvidenceRequest
+| Field | Type | Description |
+|-------|------|-------------|
+| required | bool | The server wants the input log of this run |
+| runId | string | Run whose log is requested (empty when not required) |
+| uploadBefore | string | Deadline, ISO 8601 UTC (24 h after the submit) |
+| maxBytes | int | Maximum log size in bytes (32,768) |
+
+Helper: `UploadBeforeUtc` (`DateTime?`).
+
+### EvidenceUploadResult
+| Field | Type | Description |
+|-------|------|-------------|
+| runId | string | The run |
+| status | string | `UPLOADED` |
+| bytes | int | Stored log size |
 
 ### EarnedValue
 | Field | Type | Description |

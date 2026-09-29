@@ -51,14 +51,18 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Error code of the last failed call: the server <c>code</c> (for example
         /// <c>DURATION_TOO_SHORT</c>), a local code (<c>SESSION_REQUIRED</c>, <c>NO_ACTIVE_RUN</c>,
-        /// <c>INVALID_INPUT_LOG_HASH</c>) or an HTTP fallback (see <see cref="ValidatedActionsErrorCodes"/>).
-        /// Null after a success.
+        /// <c>INVALID_INPUT_LOG_HASH</c>, and for <c>UploadEvidence</c> <c>INVALID_RUN_ID</c>,
+        /// <c>EMPTY_INPUT_LOG</c>) or an HTTP fallback (see <see cref="ValidatedActionsErrorCodes"/>).
+        /// Null after a success. The automatic evidence upload never sets it (see <c>LastEvidenceErrorCode</c>).
         /// </summary>
         public string LastErrorCode { get; private set; }
 
         /// <summary>
-        /// Upload the input log right after a submit when the server asks for it (Part 3).
-        /// Only applies when the submit was made with the raw log bytes. Default true.
+        /// Upload the input log right after a submit when the server asks for it (Part 3). Only applies
+        /// when the submit was made with the raw log bytes (<see cref="SubmitValidated"/>). The upload
+        /// runs in the background after the submit returned; its outcome arrives as
+        /// <c>EventKeys.ValidatedEvidenceUploaded</c> (423) or <c>EventKeys.ValidatedEvidenceUploadFailed</c> (424).
+        /// Turn it off to call <c>UploadEvidence</c> yourself. Default true.
         /// </summary>
         public bool AutoUploadEvidence { get; set; } = true;
 
@@ -241,7 +245,15 @@ namespace PM.horizOn.Cloud.Manager
             }
 
             LastErrorCode = ResolveErrorCode(response);
-            HorizonApp.Log.Error($"Validated submit failed ({LastErrorCode}): {response.Error}");
+            if (LastErrorCode == ValidatedActionsErrorCodes.PlayerBanned)
+            {
+                // Checked before the ticket is used: the run stays, but this board refuses the player.
+                HorizonApp.Log.Error($"Validated submit refused: the player is banned from this leaderboard (run {run.runId} kept, call DiscardRun or submit without a board)");
+            }
+            else
+            {
+                HorizonApp.Log.Error($"Validated submit failed ({LastErrorCode}): {response.Error}");
+            }
 
             if (ValidatedActionsTransportContract.IsRejection(status))
             {

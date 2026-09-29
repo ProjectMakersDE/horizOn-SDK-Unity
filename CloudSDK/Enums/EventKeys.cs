@@ -67,6 +67,8 @@ namespace PM.horizOn.Cloud.Enums
         ValidatedRunStarted = 420,
         ValidatedRunSubmitted = 421,
         ValidatedRunRejected = 422,
+        ValidatedEvidenceUploaded = 423,
+        ValidatedEvidenceUploadFailed = 424,
 
         // Network Events (500-599)
         NetworkRequestStarted = 500,
