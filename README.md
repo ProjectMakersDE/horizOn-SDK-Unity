@@ -24,6 +24,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 📰 **News** | `NewsManager` | In-game announcements |
 | 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
+| 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
 | 💥 **Crash Reporting** | `CrashManager` | Automatic crash capture, exception tracking, breadcrumbs |
@@ -138,6 +139,7 @@ Attach one to an empty GameObject and press Play.
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
 | Player Profile | `PlayerProfileExample.cs` |
+| Validated Actions | `ValidatedActionsExample.cs` |
 | Feedback | `FeedbackExample.cs` |
 
 For a full guided tour of every feature in one window, import the **Example UI** sample.
@@ -245,6 +247,10 @@ Use `boardKey:` as a named argument for multi-board leaderboards:
 is deprecated and ignored: the server never stored score metadata, so the SDK does
 not send it. It will be removed in the next major version.
 
+When `SubmitScore` returns `false`, `LeaderboardManager.Instance.LastErrorCode` tells why.
+`VALIDATED_SUBMIT_REQUIRED` means the board only accepts validated runs (see Validated
+Actions); it is not retried. `ListBoards()` returns `validatedOnly` for every board.
+
 ### Cloud Saves
 
 ```csharp
@@ -351,6 +357,47 @@ if (updated == null)
 `CurrentProfile` holds the last result (null after sign-out). After a gift code redemption
 with a non-empty `grantedUnlocks`, the SDK drops it so the next `GetProfile()` shows the
 unlock. Error codes are listed in `PlayerProfileErrorCodes`.
+
+### Validated Actions
+
+The server checks a run before it writes anything. Start a run to get a single-use ticket
+and a server seed, play deterministically with that seed while you record the player's
+inputs, then submit the score with the input log. The SDK sends the SHA-256 of the log; the
+server checks the ticket, measures the duration itself and applies the rules of the API key
+(score limits, minimum duration, score per second, stage rules). Rules never reach the
+client. Leaderboards set to "Validated submissions only" accept scores only this way.
+Every call needs a signed-in player. Cloud only: a self-hosted simpleServer answers
+`NOT_SUPPORTED`.
+
+```csharp
+var run = await ValidatedActionsManager.Instance.StartRun("weekly");
+if (run == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode); // RUN_RATE_LIMITED, ...
+    return;
+}
+var random = new System.Random(run.seed);   // deterministic gameplay
+// ... play, record the inputs into byte[] inputLog ...
+
+var result = await ValidatedActionsManager.Instance.SubmitValidated(18250, inputLog);
+if (result == null)
+{
+    // DURATION_TOO_SHORT, SCORE_ABOVE_MAX, TICKET_EXPIRED, SESSION_REQUIRED, ...
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);
+}
+else
+{
+    Debug.Log($"Rank {result.rank}, best {result.bestScore}");
+}
+```
+
+A ticket is single use: after a success, a 422 rejection (except `LEADERBOARD_MISMATCH`)
+and `SCORE_LIMIT_REACHED` the SDK drops `CurrentRun`. After a network error, 401, 404, 429
+or 5xx the run stays and you may call `SubmitValidated` again. `RUN_RATE_LIMITED` and
+`RUN_CAPACITY_REACHED` are not retried automatically. Use `SubmitValidatedWithHash(score,
+hash)` when you hash the log yourself (`ValidatedActionsManager.ComputeInputLogHash(bytes)`),
+and `DiscardRun()` when the player quits. Error codes are listed in
+`ValidatedActionsErrorCodes`.
 
 ### Feedback
 
@@ -490,7 +537,7 @@ void OnUserSignedIn(UserData user)
 | 0-99 | Connection | `ServerConnected`, `ServerDisconnected` |
 | 100-199 | Auth | `UserSignInSuccess`, `UserSignInFailed`, `UserSignedOut` |
 | 200-399 | Data | `CloudSaveSaved`, `CloudSaveLoaded`, `ScoreSubmitted`, `PlayerProfileChanged` (204), `PlayerProfileLoaded` (307) |
-| 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410) |
+| 400-499 | Features | `EmailSent` (404), `EmailCancelled` (405), `CrashReported` (410), `ValidatedRunStarted` (420), `ValidatedRunSubmitted` (421), `ValidatedRunRejected` (422) |
 | 500-599 | Network | `RequestFailed`, `RateLimited` |
 
 ## Configuration Options
@@ -572,10 +619,12 @@ if (data == null)
 | 401 | Unauthorized | Re-authenticate |
 | 403 | Forbidden | Check tier/permissions |
 | 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` (gift code grants) |
-| 429 | Rate Limited | Wait and retry |
+| 422 | Unprocessable | Validated run rejected by a rule or ticket check (`LastErrorCode`) |
+| 429 | Rate Limited | Wait and retry (`RUN_RATE_LIMITED` / `RUN_CAPACITY_REACHED` are not retried by the SDK) |
 
 Player profile calls return `null` on failure and set `PlayerProfileManager.Instance.LastErrorCode`
-to the server's stable `code` (constants in `PlayerProfileErrorCodes`).
+to the server's stable `code` (constants in `PlayerProfileErrorCodes`). Validated Actions do the
+same with `ValidatedActionsManager.Instance.LastErrorCode` (constants in `ValidatedActionsErrorCodes`).
 
 ## Self-Hosted Option
 
@@ -589,6 +638,9 @@ To connect to your own server, pass your server URL when creating `HorizonServer
 var server = new HorizonServer("https://your-server.example.com");
 await server.Connect();
 ```
+
+Validated Actions is cloud only: Simple Server has no such endpoints, so `StartRun` and
+`SubmitValidated` fail with `LastErrorCode = "NOT_SUPPORTED"` there.
 
 > **Note:** Simple Server is a starting point, not a full replacement. For the complete experience with dashboard, user authentication, multi-region deployment, and more, use [horizOn BaaS](https://horizon.pm).
 

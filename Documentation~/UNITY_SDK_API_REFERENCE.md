@@ -20,8 +20,9 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 8. [Cloud Save](#cloud-save)
 9. [Leaderboard](#leaderboard)
 10. [Player Profile](#player-profile)
-11. [Data Models](#data-models)
-12. [Error Handling](#error-handling)
+11. [Validated Actions](#validated-actions)
+12. [Data Models](#data-models)
+13. [Error Handling](#error-handling)
 
 ---
 
@@ -1027,6 +1028,11 @@ in the next major version. Pass a board key as a named argument: `SubmitScore(12
 |------|-------|
 | 400 | Invalid request |
 | 403 | Entry limit exceeded |
+| 403 | `VALIDATED_SUBMIT_REQUIRED`: the board only accepts validated runs (see [Validated Actions](#validated-actions)); nothing is written |
+
+On failure `LeaderboardManager.Instance.LastErrorCode` holds the server `code` (for example
+`VALIDATED_SUBMIT_REQUIRED`), `SESSION_REQUIRED` without a signed-in player, or an HTTP
+fallback code. `ListBoards()` returns `validatedOnly` (bool) for every board.
 
 #### Unity SDK Usage
 
@@ -1366,6 +1372,178 @@ All codes are constants in `PlayerProfileErrorCodes`.
 
 ---
 
+## Validated Actions
+
+Base path: `/api/v1/app/validated-actions`
+**Manager**: `ValidatedActionsManager`
+
+Server-checked runs. The game starts a run and gets a single-use ticket with a server seed,
+plays deterministically with that seed while it records the input log, and submits the score
+with the SHA-256 of the log. The server checks the ticket and every rule of the API key
+(score limits, minimum duration measured by the server, score per second, stage rules) before
+anything is written. Rule values never appear in responses or error messages; only the `code`
+tells which rule rejected a run. Cloud only: without the endpoints (simpleServer) the SDK
+reports `NOT_SUPPORTED`.
+
+**Headers** (both endpoints): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
+signed-in player, sent by the SDK. Without a signed-in player every method fails locally (no
+request) with `LastErrorCode = "SESSION_REQUIRED"`.
+
+### 23. Start Validated Run
+
+**Endpoint**: `POST /api/v1/app/validated-actions/runs`
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "leaderboardKey": "weekly"
+}
+```
+`leaderboardKey` is optional and left out when empty (the ticket is then not bound to a board).
+
+**Response** (200):
+```json
+{
+  "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11",
+  "ticket": "hzn-rt1:2026-09:Qm9...:c2Vj...",
+  "seed": 1834201177,
+  "leaderboardKey": "weekly",
+  "issuedAt": "2026-09-29T14:00:00.120Z",
+  "expiresAt": "2026-09-29T16:00:00.120Z",
+  "expiresInSeconds": 7200
+}
+```
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 400 | Validation (bad key format) |
+| 401 | `SESSION_REQUIRED` |
+| 403 | `SESSION_FORBIDDEN` |
+| 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` |
+| 429 | Account request limit (empty body, retried by the SDK), or `RUN_RATE_LIMITED` / `RUN_CAPACITY_REACHED` (not retried) |
+| 503 | `VALIDATED_ACTIONS_UNAVAILABLE` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+
+ValidatedRun run = await ValidatedActionsManager.Instance.StartRun("weekly");
+if (run == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);
+    return;
+}
+var random = new System.Random(run.seed);
+```
+
+The run becomes `CurrentRun`; a new `StartRun` replaces it.
+**Event**: `EventKeys.ValidatedRunStarted` (420) with the `ValidatedRun`.
+
+---
+
+### 24. Submit Validated Run
+
+**Endpoint**: `POST /api/v1/app/validated-actions/submit`
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "ticket": "hzn-rt1:...",
+  "inputLogHash": "64 lower case hex characters",
+  "score": 18250,
+  "stage": "wave_10",
+  "leaderboardKey": "weekly",
+  "earned": [{ "key": "gold", "amount": 250 }]
+}
+```
+`stage`, `leaderboardKey` and `earned` are left out when empty. Without `leaderboardKey` the
+board of the ticket is used; for a run without a board the server ignores `score`. `earned`
+(Part 2) is accepted and ignored by Part 1 servers.
+
+**Response** (200):
+```json
+{
+  "accepted": true,
+  "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11",
+  "leaderboardKey": "weekly",
+  "score": 18250,
+  "bestScore": 21000,
+  "isNewHighScore": false,
+  "rank": 17,
+  "durationSeconds": 734,
+  "state": null,
+  "evidence": null
+}
+```
+
+**Error Responses**:
+| Code | Cause | Run |
+|------|-------|-----|
+| 400 | Validation, `SCORE_REQUIRED`, `PLAYER_NAME_REQUIRED` | kept |
+| 401 / 403 | `SESSION_REQUIRED` / `SESSION_FORBIDDEN` | kept |
+| 403 | `SCORE_LIMIT_REACHED` (ticket used up) | dropped |
+| 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` | kept |
+| 422 | `TICKET_INVALID`, `TICKET_EXPIRED`, `TICKET_FOREIGN`, `TICKET_CONSUMED` | dropped |
+| 422 | `LEADERBOARD_MISMATCH` (checked before the ticket is used) | kept |
+| 422 | Rule codes: `STAGE_REQUIRED`, `STAGE_UNKNOWN`, `SCORE_ABOVE_MAX`, `SCORE_BELOW_MIN`, `STAGE_SCORE_ABOVE_MAX`, `STAGE_SCORE_BELOW_MIN`, `DURATION_TOO_SHORT`, `SCORE_RATE_TOO_HIGH` | dropped |
+| 429 | Account request limit (empty body, retried by the SDK) | kept |
+| 503 | `VALIDATED_ACTIONS_UNAVAILABLE` | kept |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+
+// The SDK hashes the log (SHA-256) and sends the ticket of CurrentRun.
+ValidatedSubmitResult result = await ValidatedActionsManager.Instance.SubmitValidated(
+    18250, inputLog, stage: "wave_10");
+if (result == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);        // e.g. DURATION_TOO_SHORT
+    Debug.Log(ValidatedActionsManager.Instance.HasActiveRun);         // false when the ticket is used up
+}
+
+// Or with a ready hash
+string hash = ValidatedActionsManager.ComputeInputLogHash(inputLog);
+result = await ValidatedActionsManager.Instance.SubmitValidatedWithHash(18250, hash);
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), a current run (`NO_ACTIVE_RUN`), the hash format
+(`INVALID_INPUT_LOG_HASH`). An expired run (by the device clock) is still sent; the server
+decides. After an accepted run with a board the `LeaderboardManager` cache is cleared.
+
+**Events**: `EventKeys.ValidatedRunSubmitted` (421) with the `ValidatedSubmitResult`;
+`EventKeys.ValidatedRunRejected` (422) on a 422 or 403 with a `ValidatedRunRejection`
+(`code`, `runId`, `httpStatus`, `runCleared`).
+
+### ValidatedActionsManager members
+
+| Member | Description |
+|--------|-------------|
+| `Task<ValidatedRun> StartRun(string leaderboardKey = null)` | Start a run; `null` on failure |
+| `Task<ValidatedSubmitResult> SubmitValidated(long score, byte[] inputLog, string stage = null, string leaderboardKey = null, IList<EarnedValue> earned = null)` | Hash the log and submit the current run; `null` on failure |
+| `Task<ValidatedSubmitResult> SubmitValidatedWithHash(long score, string inputLogHash, string stage = null, string leaderboardKey = null, IList<EarnedValue> earned = null)` | Submit with a ready hash; `null` on failure |
+| `static string ComputeInputLogHash(byte[] inputLog)` | SHA-256 as 64 lower case hex characters (`null` hashes like an empty log) |
+| `ValidatedRun CurrentRun` | The current run; `null` before the first run, after a final submit, after `DiscardRun()`, after sign-out and when another player signed in |
+| `bool HasActiveRun` | `CurrentRun != null` |
+| `string LastErrorCode` | Code of the last failure; `null` after a success |
+| `void DiscardRun()` | Drop the current run without submitting |
+| `bool AutoUploadEvidence` | Default `true`; used by the evidence upload of Part 3 |
+
+`LastErrorCode` holds the server `code` of the error body, a local code (`SESSION_REQUIRED`,
+`NO_ACTIVE_RUN`, `INVALID_INPUT_LOG_HASH`) or an HTTP fallback: `NOT_SUPPORTED` (404 without a
+code, for example a simpleServer), `BAD_REQUEST` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403),
+`UNPROCESSABLE_ENTITY` (422), `RATE_LIMITED` (429 after the retries), `SERVER_ERROR` (5xx),
+`NETWORK_ERROR` (no response), `INVALID_RESPONSE` (unreadable 2xx body). All codes are constants
+in `ValidatedActionsErrorCodes`.
+
+---
+
 ## Data Models
 
 ### Enums
@@ -1441,6 +1619,38 @@ Helpers: `List<PlayerCosmetic> GetCosmetics(string type)` and `bool IsAvailable(
 | message | string | Server message |
 | giftData | string | JSON string with the rewards |
 | grantedUnlocks | string[] | Cosmetic IDs the code unlocked (owned after this redemption), empty when none |
+
+### ValidatedRun
+| Field | Type | Description |
+|-------|------|-------------|
+| runId | string | Ticket ID |
+| ticket | string | Opaque token, sent unchanged |
+| seed | int | Server seed, 0 to 2,147,483,646 |
+| leaderboardKey | string | Bound board, empty when unbound |
+| issuedAt, expiresAt | string | ISO 8601 UTC |
+| expiresInSeconds | int | Lifetime at issue |
+
+Helpers: `HasLeaderboard`, `ExpiresAtUtc`, `IsExpired` (device clock, informational).
+
+### ValidatedSubmitResult
+| Field | Type | Description |
+|-------|------|-------------|
+| accepted | bool | Always true on success |
+| runId | string | The run |
+| leaderboardKey | string | Board written to, empty without a board |
+| score | long | Submitted score (0 without a board) |
+| bestScore | long | Player's row after the write (0 without a board) |
+| isNewHighScore | bool | New best score |
+| rank | long | 1-based rank (0 without a board) |
+| durationSeconds | long | Server-measured duration |
+| state | PlayerState | Part 2, never null, empty in Part 1 (`day`, `values`, `GetBalance(key)`) |
+| evidence | EvidenceRequest | Part 3, never null, `required` false in Part 1 (`runId`, `uploadBefore`, `maxBytes`) |
+
+### EarnedValue
+| Field | Type | Description |
+|-------|------|-------------|
+| key | string | Value key, `^[a-z0-9][a-z0-9._-]{0,23}$` |
+| amount | long | Earned (positive) or spent (negative); Part 2 |
 
 ### UserNewsResponse
 | Field | Type | Description |
@@ -1560,8 +1770,10 @@ else
 | 20 | Get Around | `/leaderboard/around` | GET | `GetAround()` |
 | 21 | Get Player Profile | `/player-profile?userId=` | GET | `PlayerProfileManager.GetProfile()` |
 | 22 | Set Player Profile | `/player-profile` | PUT | `PlayerProfileManager.SetProfile()` |
+| 23 | Start Validated Run | `/validated-actions/runs` | POST | `ValidatedActionsManager.StartRun()` |
+| 24 | Submit Validated Run | `/validated-actions/submit` | POST | `ValidatedActionsManager.SubmitValidated()`, `SubmitValidatedWithHash()` |
 
-**Total Endpoints**: 22
+**Total Endpoints**: 24
 
 ---
 

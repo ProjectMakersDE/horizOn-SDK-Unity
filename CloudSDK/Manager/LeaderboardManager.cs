@@ -18,6 +18,15 @@ namespace PM.horizOn.Cloud.Manager
     {
         private Dictionary<string, List<SimpleLeaderboardEntry>> _leaderboardCache = new Dictionary<string, List<SimpleLeaderboardEntry>>();
 
+        /// <summary>
+        /// Error code of the last failed <see cref="SubmitScore"/>: the server <c>code</c> (for example
+        /// <c>VALIDATED_SUBMIT_REQUIRED</c> when the board only accepts validated runs, see
+        /// <see cref="ValidatedActionsManager"/>), <c>SESSION_REQUIRED</c> when no player is signed in,
+        /// or an HTTP fallback code (see <see cref="ValidatedActionsErrorCodes.FromHttpStatus"/>).
+        /// Null after a successful submit.
+        /// </summary>
+        public string LastErrorCode { get; private set; }
+
         private string BuildEndpoint(string boardKey, string action)
         {
             if (string.IsNullOrEmpty(boardKey))
@@ -43,7 +52,8 @@ namespace PM.horizOn.Cloud.Manager
         /// SDK does not send it. Kept only for source compatibility; it will be removed in the next
         /// major version. Pass the board key as a named argument: <c>SubmitScore(score, boardKey: "weekly")</c>.</param>
         /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
-        /// <returns>True if submission succeeded, false otherwise</returns>
+        /// <returns>True if submission succeeded, false otherwise (then <see cref="LastErrorCode"/> is set;
+        /// <c>VALIDATED_SUBMIT_REQUIRED</c> means the board only accepts validated runs and is not retried)</returns>
         public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
             if (!string.IsNullOrEmpty(metadata))
@@ -59,6 +69,7 @@ namespace PM.horizOn.Cloud.Manager
                     boardKey,
                     out var plan))
             {
+                LastErrorCode = ValidatedActionsErrorCodes.SessionRequired;
                 HorizonApp.Log.Error("User must be signed in to submit score");
                 return false;
             }
@@ -71,6 +82,7 @@ namespace PM.horizOn.Cloud.Manager
 
             if (response.IsSuccess)
             {
+                LastErrorCode = null;
                 HorizonApp.Log.Info($"Score submitted: {score}");
                 HorizonApp.Events.Publish(EventKeys.LeaderboardDataChanged, score);
 
@@ -81,7 +93,17 @@ namespace PM.horizOn.Cloud.Manager
             }
             else
             {
-                HorizonApp.Log.Error($"Score submission failed: {response.Error}");
+                LastErrorCode = !string.IsNullOrEmpty(response.ErrorCode)
+                    ? response.ErrorCode
+                    : ValidatedActionsErrorCodes.FromHttpStatus(response.StatusCode);
+                if (LastErrorCode == ValidatedActionsErrorCodes.ValidatedSubmitRequired)
+                {
+                    HorizonApp.Log.Error("Score submission refused: this board only accepts validated runs (use ValidatedActionsManager.SubmitValidated)");
+                }
+                else
+                {
+                    HorizonApp.Log.Error($"Score submission failed ({LastErrorCode}): {response.Error}");
+                }
                 return false;
             }
         }

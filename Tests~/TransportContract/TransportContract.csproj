@@ -14,5 +14,8 @@
     <Compile Include="../../CloudSDK/Objects/Network/Requests/PlayerProfileRequests.cs" Link="Production/PlayerProfileRequests.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/PlayerProfileResponses.cs" Link="Production/PlayerProfileResponses.cs" />
     <Compile Include="../../CloudSDK/Transport/PlayerProfileTransportContract.cs" Link="Production/PlayerProfileTransportContract.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/ValidatedActionsRequests.cs" Link="Production/ValidatedActionsRequests.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/ValidatedActionsResponses.cs" Link="Production/ValidatedActionsResponses.cs" />
+    <Compile Include="../../CloudSDK/Transport/ValidatedActionsTransportContract.cs" Link="Production/ValidatedActionsTransportContract.cs" />
   </ItemGroup>
 </Project>

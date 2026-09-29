@@ -62,6 +62,11 @@ namespace PM.horizOn.Cloud.Enums
         CrashSessionRegistered = 412,
         BreadcrumbRecorded = 413,
 
+        // Validated Actions Events
+        ValidatedRunStarted = 420,
+        ValidatedRunSubmitted = 421,
+        ValidatedRunRejected = 422,
+
         // Network Events (500-599)
         NetworkRequestStarted = 500,
         NetworkRequestSuccess = 501,

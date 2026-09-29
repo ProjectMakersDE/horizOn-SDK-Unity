@@ -209,20 +209,24 @@ namespace PM.horizOn.Cloud.Service
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
                             float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
                                 RetryAfter = retryDelay
                             });
 
-                            if (attemptCount < maxAttempts)
+                            // Feature limits with a code (for example RUN_RATE_LIMITED) can last an hour:
+                            // they are reported right away instead of being retried.
+                            if (attemptCount < maxAttempts && !IsNonRetryableRateLimitCode(rateLimitCode))
                             {
                                 LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
                                 await Task.Delay((int)(retryDelay * 1000));
                                 continue;
                             }
 
-                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            // Still rate limited after the last attempt (or not retryable): fail with a clear
+                            // message and keep the 429 status and the server code.
                             string rateLimitError = BuildRateLimitMessage(retryDelay);
                             EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
                             {
@@ -232,7 +236,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode);
                         }
 
                         // Server errors (5xx) or timeout - retry
@@ -745,6 +749,19 @@ namespace PM.horizOn.Cloud.Service
                 return $"Rate limit exceeded (HTTP 429). Try again in {(int)Math.Ceiling(retryAfterSeconds)} seconds.";
             }
             return "Rate limit exceeded (HTTP 429). Try again later.";
+        }
+
+        /// <summary>
+        /// True for a 429 server code that must not be retried automatically because the wait can
+        /// be long: the validated actions run limits <c>RUN_RATE_LIMITED</c> and
+        /// <c>RUN_CAPACITY_REACHED</c> (up to an hour). A 429 without a code (the account request
+        /// limit) keeps the Retry-After based retries.
+        /// </summary>
+        /// <param name="errorCode">The <c>code</c> of the 429 body, or null</param>
+        internal static bool IsNonRetryableRateLimitCode(string errorCode)
+        {
+            return errorCode == ValidatedActionsErrorCodes.RunRateLimited ||
+                   errorCode == ValidatedActionsErrorCodes.RunCapacityReached;
         }
 
         /// <summary>

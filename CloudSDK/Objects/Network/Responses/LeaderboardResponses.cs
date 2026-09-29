@@ -76,6 +76,13 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public string sortOrder;
         public bool isActive;
         public long scoreCount;
+
+        /// <summary>
+        /// True when the board only accepts validated runs (<c>ValidatedActionsManager.SubmitValidated</c>).
+        /// A plain <c>SubmitScore</c> to it fails with <c>VALIDATED_SUBMIT_REQUIRED</c>.
+        /// </summary>
+        public bool validatedOnly;
+
         public string createdAt;
         public string updatedAt;
     }

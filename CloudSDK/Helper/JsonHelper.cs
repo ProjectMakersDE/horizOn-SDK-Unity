@@ -99,6 +99,12 @@ namespace PM.horizOn.Cloud.Helper
                         // An empty collection stays in the body as [].
                         AppendStringArray(sb, stringValues);
                     }
+                    else if (value is System.Collections.IEnumerable items)
+                    {
+                        // JsonUtility cannot serialize a bare array or list either, so arrays of
+                        // serializable objects (for example earned values) are written element by element.
+                        AppendObjectArray(sb, items);
+                    }
                     else
                     {
                         // For complex types, use JsonUtility
@@ -139,6 +145,25 @@ namespace PM.horizOn.Cloud.Helper
                     sb.Append(EscapeJsonString(item));
                     sb.Append("\"");
                 }
+            }
+            sb.Append("]");
+        }
+
+        /// <summary>
+        /// Append a JSON array of serializable objects, each written with JsonUtility.
+        /// Null entries are written as null.
+        /// </summary>
+        private static void AppendObjectArray(StringBuilder sb, System.Collections.IEnumerable values)
+        {
+            sb.Append("[");
+            bool firstItem = true;
+            foreach (var item in values)
+            {
+                if (!firstItem)
+                    sb.Append(",");
+                firstItem = false;
+
+                sb.Append(item == null ? "null" : JsonUtility.ToJson(item));
             }
             sb.Append("]");
         }

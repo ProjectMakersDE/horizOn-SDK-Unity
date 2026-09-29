@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using PM.horizOn.Cloud.Objects.Data;
+using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Transport;
 
@@ -127,7 +128,93 @@ Require(!PlayerProfileTransportContract.IsValidCosmeticId("avatar.a\n"), "profil
 Require(PlayerProfileErrorCodes.FromHttpStatus(429) == PlayerProfileErrorCodes.RateLimited, "profile 429 fallback code");
 Require(PlayerProfileErrorCodes.FromHttpStatus(0) == PlayerProfileErrorCodes.NetworkError, "profile network fallback code");
 
-Console.WriteLine("Unity SDK leaderboard, gift code and player profile transport contract passed");
+// Validated Actions Part 1 (TASK-883): start and submit carry the session, the submit sends the
+// ticket of the current run with the lower case SHA-256 of the input log.
+const string abcHash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+Require(ValidatedActionsTransportContract.ComputeInputLogHash(System.Text.Encoding.ASCII.GetBytes("abc")) == abcHash, "input log hash is lower case SHA-256");
+Require(ValidatedActionsTransportContract.ComputeInputLogHash(null) ==
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "null input log hashes like an empty log");
+Require(ValidatedActionsTransportContract.IsValidInputLogHash(abcHash.ToUpperInvariant()), "upper case hash is accepted");
+Require(!ValidatedActionsTransportContract.IsValidInputLogHash(abcHash + "\n"), "hash with a trailing newline is invalid");
+
+if (!ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", " weekly ", out var startPlan, out var startError))
+{
+    throw new InvalidOperationException($"signed user did not produce a start run plan: {startError}");
+}
+Require(ValidatedStartRunPlan.Endpoint == "/api/v1/app/validated-actions/runs", "start run endpoint");
+Require(startPlan.UseSessionToken, "start run uses the session token");
+Require(startPlan.Request.userId == "user-720" && startPlan.Request.leaderboardKey == "weekly", "start run body fields");
+Require(ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", "  ", out var unboundPlan, out _) &&
+    unboundPlan.Request.leaderboardKey == null, "blank board key leaves the run unbound");
+Require(!ValidatedActionsTransportContract.TryCreateStartRunPlan(new UserData(), "session-token-720", null, out _, out var noSessionCode) &&
+    noSessionCode == ValidatedActionsErrorCodes.SessionRequired, "start run missing user session gate");
+Require(!ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "stale-token", null, out _, out _), "start run current transport session gate");
+
+var currentRun = new ValidatedRun { runId = "run-720", ticket = "hzn-rt1:2026-09:abc:def", seed = 42, leaderboardKey = "weekly" };
+if (!ValidatedActionsTransportContract.TryCreateSubmitPlan(
+        user, "session-token-720", currentRun, 18250, abcHash.ToUpperInvariant(), "wave_10", "",
+        new[] { new EarnedValue("gold", 250), null }, out var submitPlan, out var submitError))
+{
+    throw new InvalidOperationException($"signed user did not produce a submit plan: {submitError}");
+}
+Require(ValidatedSubmitPlan.Endpoint == "/api/v1/app/validated-actions/submit", "submit endpoint");
+Require(submitPlan.UseSessionToken, "submit uses the session token");
+
+using var submitMessage = new HttpRequestMessage(HttpMethod.Post, ValidatedSubmitPlan.Endpoint.TrimStart('/'));
+foreach (var header in HorizonRequestHeaders.Create("project-key-720", "session-token-720", submitPlan.UseSessionToken))
+{
+    submitMessage.Headers.TryAddWithoutValidation(header.Key, header.Value);
+}
+submitMessage.Content = JsonContent.Create(submitPlan.Request, options: new JsonSerializerOptions { IncludeFields = true });
+
+Task<HttpListenerContext> submitIncoming = listener.GetContextAsync();
+Task<HttpResponseMessage> submitOutgoing = client.SendAsync(submitMessage);
+HttpListenerContext submitContext = await submitIncoming.WaitAsync(TimeSpan.FromSeconds(5));
+using var submitReader = new StreamReader(submitContext.Request.InputStream);
+string submitBody = await submitReader.ReadToEndAsync();
+
+Require(submitContext.Request.HttpMethod == "POST", "submit method");
+Require(submitContext.Request.RawUrl == "/api/v1/app/validated-actions/submit", "submit raw url");
+Require(submitContext.Request.Headers["Authorization"] == "Bearer session-token-720", "submit authorization");
+Require(submitBody.Contains("\"userId\":\"user-720\""), "submit userId body field");
+Require(submitBody.Contains("\"ticket\":\"hzn-rt1:2026-09:abc:def\""), "submit ticket of the current run");
+Require(submitBody.Contains($"\"inputLogHash\":\"{abcHash}\""), "submit hash in lower case");
+Require(submitBody.Contains("\"score\":18250"), "submit score body field");
+Require(submitBody.Contains("\"stage\":\"wave_10\""), "submit stage body field");
+Require(submitBody.Contains("\"leaderboardKey\":null"), "blank board key uses the ticket's board");
+Require(submitBody.Contains("\"earned\":[{\"key\":\"gold\",\"amount\":250}]"), "submit earned values without null entries");
+
+submitContext.Response.StatusCode = 200;
+submitContext.Response.Close();
+(await submitOutgoing).EnsureSuccessStatusCode();
+
+RequireSubmitError(new UserData(), "session-token-720", currentRun, abcHash, ValidatedActionsErrorCodes.SessionRequired, "submit missing user session gate");
+RequireSubmitError(user, "stale-token", currentRun, abcHash, ValidatedActionsErrorCodes.SessionRequired, "submit current transport session gate");
+RequireSubmitError(user, "session-token-720", null, abcHash, ValidatedActionsErrorCodes.NoActiveRun, "submit without a current run");
+RequireSubmitError(user, "session-token-720", currentRun, abcHash.Substring(2), ValidatedActionsErrorCodes.InvalidInputLogHash, "submit short hash");
+RequireSubmitError(user, "session-token-720", currentRun, null, ValidatedActionsErrorCodes.InvalidInputLogHash, "submit missing hash");
+
+Require(ValidatedActionsTransportContract.EndsRun(200, null), "accepted run ends the run");
+Require(ValidatedActionsTransportContract.EndsRun(422, "SCORE_ABOVE_MAX"), "rule rejection ends the run");
+Require(ValidatedActionsTransportContract.EndsRun(422, "TICKET_EXPIRED"), "ticket rejection ends the run");
+Require(!ValidatedActionsTransportContract.EndsRun(422, "LEADERBOARD_MISMATCH"), "board mismatch keeps the run");
+Require(ValidatedActionsTransportContract.EndsRun(403, "SCORE_LIMIT_REACHED"), "score limit ends the run");
+Require(!ValidatedActionsTransportContract.EndsRun(403, "SESSION_FORBIDDEN"), "forbidden session keeps the run");
+Require(!ValidatedActionsTransportContract.EndsRun(0, null), "network error keeps the run");
+Require(!ValidatedActionsTransportContract.EndsRun(429, "RUN_RATE_LIMITED"), "rate limit keeps the run");
+Require(!ValidatedActionsTransportContract.EndsRun(503, "VALIDATED_ACTIONS_UNAVAILABLE"), "unavailable keeps the run");
+Require(ValidatedActionsErrorCodes.Resolve(404, null) == ValidatedActionsErrorCodes.NotSupported, "404 without code means not supported");
+Require(ValidatedActionsErrorCodes.Resolve(404, "PLAYER_NOT_FOUND") == "PLAYER_NOT_FOUND", "server code wins");
+Require(new PlayerState { values = new[] { new PlayerStateValue { key = "gold", balance = 1250 } } }.GetBalance("gold") == 1250, "state balance helper");
+Require(new PlayerState().GetBalance("gold") == 0, "state balance of a missing key");
+
+Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions transport contract passed");
+
+void RequireSubmitError(UserData submitUser, string token, ValidatedRun run, string hash, string expectedCode, string name)
+{
+    Require(!ValidatedActionsTransportContract.TryCreateSubmitPlan(submitUser, token, run, 1, hash, null, null, null, out var rejectedPlan, out var code) &&
+        rejectedPlan == null && code == expectedCode, name);
+}
 
 void RequireSetError(UserData setUser, string token, string avatarId, string frameId, string[] badges, string expectedCode, string name)
 {
