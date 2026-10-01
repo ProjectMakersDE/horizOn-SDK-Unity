@@ -253,6 +253,10 @@ Actions); it is not retried. `ListBoards()` returns `validatedOnly` for every bo
 
 ### Cloud Saves
 
+Sign in before saving or loading. JSON and binary operations send the current player's
+Bearer session. A missing or mismatched session is rejected locally. Binary loading uses
+`POST /api/v1/app/cloud-save/load` with a JSON `userId` and `Accept: application/octet-stream`.
+
 ```csharp
 // Define your save structure
 [System.Serializable]

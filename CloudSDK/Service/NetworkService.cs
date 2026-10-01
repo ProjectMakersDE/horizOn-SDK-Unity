@@ -150,7 +150,19 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The raw binary response or null if not found</returns>
         public async Task<BinaryNetworkResponse> GetBinaryAsync(string endpoint, bool useSessionToken = false)
         {
-            return await SendBinaryGetRequestAsync(endpoint, useSessionToken);
+            return await SendBinaryResponseRequestAsync(endpoint, "GET", null, useSessionToken);
+        }
+
+        /// <summary>
+        /// Send a JSON POST request expecting a raw binary response.
+        /// </summary>
+        /// <param name="endpoint">The API endpoint</param>
+        /// <param name="requestData">The JSON request body</param>
+        /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <returns>The raw binary response or not found for HTTP 204</returns>
+        public async Task<BinaryNetworkResponse> PostForBinaryAsync(string endpoint, object requestData, bool useSessionToken = false)
+        {
+            return await SendBinaryResponseRequestAsync(endpoint, "POST", requestData, useSessionToken);
         }
 
         /// <summary>
@@ -485,9 +497,10 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
-        /// Internal method to send binary GET requests with retry logic.
+        /// Internal method to send requests expecting a binary response with retry logic.
         /// </summary>
-        private async Task<BinaryNetworkResponse> SendBinaryGetRequestAsync(string endpoint, bool useSessionToken)
+        private async Task<BinaryNetworkResponse> SendBinaryResponseRequestAsync(
+            string endpoint, string method, object requestData, bool useSessionToken)
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -510,12 +523,13 @@ namespace PM.horizOn.Cloud.Service
                 EventService.Instance?.Publish(EventKeys.NetworkRequestStarted, new NetworkRequestData
                 {
                     Url = url,
-                    Method = "GET",
+                    Method = method,
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateBinaryGetRequest(url, useSessionToken))
+                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
+                    request.SetRequestHeader("Accept", "application/octet-stream");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -529,7 +543,7 @@ namespace PM.horizOn.Cloud.Service
                         EventService.Instance?.Publish(EventKeys.NetworkRequestSuccess, new NetworkSuccessData
                         {
                             Url = url,
-                            Method = "GET",
+                            Method = method,
                             StatusCode = 204
                         });
                         return BinaryNetworkResponse.NotFound();
@@ -562,11 +576,11 @@ namespace PM.horizOn.Cloud.Service
                             EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
                             {
                                 Url = url,
-                                Method = "GET",
+                                Method = method,
                                 StatusCode = responseCode,
                                 Error = rateLimitError
                             });
-                            LogService.Instance.Error($"Request failed: GET {url} - {rateLimitError}");
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
                             return BinaryNetworkResponse.Failure(rateLimitError, responseCode);
                         }
 
@@ -592,12 +606,12 @@ namespace PM.horizOn.Cloud.Service
                         EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
                         {
                             Url = url,
-                            Method = "GET",
+                            Method = method,
                             StatusCode = responseCode,
                             Error = errorMessage
                         });
 
-                        LogService.Instance.Error($"Request failed: GET {url} - {errorMessage}");
+                        LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
                         return BinaryNetworkResponse.Failure(errorMessage, responseCode);
                     }
 
@@ -606,7 +620,7 @@ namespace PM.horizOn.Cloud.Service
                     EventService.Instance?.Publish(EventKeys.NetworkRequestSuccess, new NetworkSuccessData
                     {
                         Url = url,
-                        Method = "GET",
+                        Method = method,
                         StatusCode = request.responseCode
                     });
 
@@ -627,36 +641,6 @@ namespace PM.horizOn.Cloud.Service
             request.uploadHandler = new UploadHandlerRaw(binaryData ?? new byte[0]);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/octet-stream");
-
-            request.timeout = _config.ConnectionTimeoutSeconds;
-
-            string apiKey = _config.ApiKey;
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
-            }
-            else
-            {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
-            }
-            request.SetRequestHeader("X-API-Key", apiKey);
-
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {_sessionToken}");
-                LogService.Instance.Info("Authorization header added (session token)");
-            }
-
-            return request;
-        }
-
-        /// <summary>
-        /// Create a UnityWebRequest for binary GET with octet-stream accept header.
-        /// </summary>
-        private UnityWebRequest CreateBinaryGetRequest(string url, bool useSessionToken)
-        {
-            UnityWebRequest request = UnityWebRequest.Get(url);
-            request.SetRequestHeader("Accept", "application/octet-stream");
 
             request.timeout = _config.ConnectionTimeoutSeconds;
 

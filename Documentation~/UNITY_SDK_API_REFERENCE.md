@@ -867,6 +867,10 @@ NewsManager.Instance.ClearCache();
 Base path: `/api/v1/app/cloud-save`
 **Manager**: `CloudSaveManager`
 
+All save and load operations require the signed-in player's Bearer session in addition
+to the API key. The SDK sends it automatically and rejects missing or mismatched sessions
+before making a request.
+
 ### 15. Save Cloud Data
 
 **Endpoint**: `POST /api/v1/app/cloud-save/save`
@@ -904,6 +908,7 @@ Base path: `/api/v1/app/cloud-save`
 | Code | Cause |
 |------|-------|
 | 400 | Invalid request |
+| 401 | Missing or invalid player session |
 | 403 | Size limit exceeded |
 | 429 | Rate limit exceeded |
 
@@ -919,6 +924,10 @@ Base path: `/api/v1/app/cloud-save`
   "userId": "uuid"
 }
 ```
+
+JSON and binary loading use the same JSON request body. For binary loading,
+`LoadBytes()` sends `Accept: application/octet-stream`. The response contains raw bytes
+on HTTP 200, or HTTP 204 when no save exists (`LoadBytes()` returns `null`).
 
 **Response (200 OK)**:
 ```json

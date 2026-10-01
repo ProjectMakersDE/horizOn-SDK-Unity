@@ -1,3 +1,4 @@
+using System;
 using System.Text;
 using System.Threading.Tasks;
 using PM.horizOn.Cloud.Base;
@@ -32,7 +33,7 @@ namespace PM.horizOn.Cloud.Manager
                 return false;
             }
 
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            if (!HasSignedInSession())
             {
                 HorizonApp.Log.Error("User must be signed in to save data");
                 return false;
@@ -47,7 +48,7 @@ namespace PM.horizOn.Cloud.Manager
             var response = await HorizonApp.Network.PostAsync<SaveCloudSaveResponse>(
                 "/api/v1/app/cloud-save/save",
                 request,
-                useSessionToken: false
+                useSessionToken: true
             );
 
             if (response.IsSuccess && response.Data != null && response.Data.success)
@@ -69,7 +70,7 @@ namespace PM.horizOn.Cloud.Manager
         /// <returns>Loaded data (UTF-8 string), or null if failed</returns>
         public async Task<string> Load()
         {
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            if (!HasSignedInSession())
             {
                 HorizonApp.Log.Error("User must be signed in to load data");
                 return null;
@@ -83,7 +84,7 @@ namespace PM.horizOn.Cloud.Manager
             var response = await HorizonApp.Network.PostAsync<LoadCloudSaveResponse>(
                 "/api/v1/app/cloud-save/load",
                 request,
-                useSessionToken: false
+                useSessionToken: true
             );
 
             if (response.IsSuccess && response.Data != null && response.Data.found)
@@ -123,7 +124,7 @@ namespace PM.horizOn.Cloud.Manager
                 return false;
             }
 
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            if (!HasSignedInSession())
             {
                 HorizonApp.Log.Error("User must be signed in to save data");
                 return false;
@@ -134,7 +135,7 @@ namespace PM.horizOn.Cloud.Manager
             var response = await HorizonApp.Network.PostBinaryAsync<SaveCloudSaveResponse>(
                 $"/api/v1/app/cloud-save/save?userId={userId}",
                 data,
-                useSessionToken: false
+                useSessionToken: true
             );
 
             if (response.IsSuccess && response.Data != null && response.Data.success)
@@ -157,7 +158,7 @@ namespace PM.horizOn.Cloud.Manager
         /// <returns>Raw binary data, or null if not found or failed</returns>
         public async Task<byte[]> LoadBytes()
         {
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            if (!HasSignedInSession())
             {
                 HorizonApp.Log.Error("User must be signed in to load data");
                 return null;
@@ -165,9 +166,10 @@ namespace PM.horizOn.Cloud.Manager
 
             string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
 
-            BinaryNetworkResponse response = await HorizonApp.Network.GetBinaryAsync(
-                $"/api/v1/app/cloud-save/load?userId={userId}",
-                useSessionToken: false
+            BinaryNetworkResponse response = await HorizonApp.Network.PostForBinaryAsync(
+                "/api/v1/app/cloud-save/load",
+                new LoadCloudDataRequest { userId = userId },
+                useSessionToken: true
             );
 
             if (response.IsSuccess)
@@ -196,6 +198,15 @@ namespace PM.horizOn.Cloud.Manager
                 HorizonApp.Log.Error($"Cloud load (binary) failed: {response.Error}");
                 return null;
             }
+        }
+
+        private static bool HasSignedInSession()
+        {
+            var user = UserManager.Instance.CurrentUser;
+            var sessionToken = HorizonApp.Network.GetSessionToken();
+            return UserManager.Instance.IsSignedIn &&
+                !string.IsNullOrEmpty(sessionToken) &&
+                string.Equals(user.AccessToken, sessionToken, StringComparison.Ordinal);
         }
 
         /// <summary>
