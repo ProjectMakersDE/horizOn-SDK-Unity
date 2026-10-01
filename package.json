@@ -23,8 +23,8 @@
   },
   "license": "MIT",
   "documentationUrl": "https://horizon.pm/docs",
-  "changelogUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/master/CHANGELOG.md",
-  "licensesUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/master/LICENSE.md",
+  "changelogUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/release/CHANGELOG.md",
+  "licensesUrl": "https://github.com/ProjectMakersDE/horizOn-SDK-Unity/blob/release/LICENSE.md",
   "samples": [
     {
       "displayName": "Examples",

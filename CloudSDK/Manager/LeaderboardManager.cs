@@ -18,6 +18,16 @@ namespace PM.horizOn.Cloud.Manager
     {
         private Dictionary<string, List<SimpleLeaderboardEntry>> _leaderboardCache = new Dictionary<string, List<SimpleLeaderboardEntry>>();
 
+        /// <summary>
+        /// Error code of the last failed <see cref="SubmitScore"/>: the server <c>code</c> (for example
+        /// <c>VALIDATED_SUBMIT_REQUIRED</c> when the board only accepts validated runs, see
+        /// <see cref="ValidatedActionsManager"/>, or <c>PLAYER_BANNED</c> when the player is banned from the
+        /// board), <c>SESSION_REQUIRED</c> when no player is signed in,
+        /// or an HTTP fallback code (see <see cref="ValidatedActionsErrorCodes.FromHttpStatus"/>).
+        /// Null after a successful submit.
+        /// </summary>
+        public string LastErrorCode { get; private set; }
+
         private string BuildEndpoint(string boardKey, string action)
         {
             if (string.IsNullOrEmpty(boardKey))
@@ -39,11 +49,20 @@ namespace PM.horizOn.Cloud.Manager
         /// Score is only updated if it's higher than the previous best.
         /// </summary>
         /// <param name="score">Score value</param>
-        /// <param name="metadata">Optional metadata JSON string</param>
+        /// <param name="metadata">Deprecated and ignored. The server never stored score metadata, so the
+        /// SDK does not send it. Kept only for source compatibility; it will be removed in the next
+        /// major version. Pass the board key as a named argument: <c>SubmitScore(score, boardKey: "weekly")</c>.</param>
         /// <param name="boardKey">Optional board key for multi-board leaderboards</param>
-        /// <returns>True if submission succeeded, false otherwise</returns>
+        /// <returns>True if submission succeeded, false otherwise (then <see cref="LastErrorCode"/> is set;
+        /// <c>VALIDATED_SUBMIT_REQUIRED</c> means the board only accepts validated runs, <c>PLAYER_BANNED</c> that the
+        /// player is banned from the board; neither is retried)</returns>
         public async Task<bool> SubmitScore(long score, string metadata = null, string boardKey = null)
         {
+            if (!string.IsNullOrEmpty(metadata))
+            {
+                HorizonApp.Log.Warning("SubmitScore: the metadata parameter is deprecated and ignored, it is not sent to the server");
+            }
+
             var user = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser;
             if (!LeaderboardTransportContract.TryCreateSubmitPlan(
                     user,
@@ -52,6 +71,7 @@ namespace PM.horizOn.Cloud.Manager
                     boardKey,
                     out var plan))
             {
+                LastErrorCode = ValidatedActionsErrorCodes.SessionRequired;
                 HorizonApp.Log.Error("User must be signed in to submit score");
                 return false;
             }
@@ -64,6 +84,7 @@ namespace PM.horizOn.Cloud.Manager
 
             if (response.IsSuccess)
             {
+                LastErrorCode = null;
                 HorizonApp.Log.Info($"Score submitted: {score}");
                 HorizonApp.Events.Publish(EventKeys.LeaderboardDataChanged, score);
 
@@ -74,7 +95,21 @@ namespace PM.horizOn.Cloud.Manager
             }
             else
             {
-                HorizonApp.Log.Error($"Score submission failed: {response.Error}");
+                LastErrorCode = !string.IsNullOrEmpty(response.ErrorCode)
+                    ? response.ErrorCode
+                    : ValidatedActionsErrorCodes.FromHttpStatus(response.StatusCode);
+                if (LastErrorCode == ValidatedActionsErrorCodes.ValidatedSubmitRequired)
+                {
+                    HorizonApp.Log.Error("Score submission refused: this board only accepts validated runs (use ValidatedActionsManager.SubmitValidated)");
+                }
+                else if (LastErrorCode == ValidatedActionsErrorCodes.PlayerBanned)
+                {
+                    HorizonApp.Log.Error("Score submission refused: the player is banned from this leaderboard");
+                }
+                else
+                {
+                    HorizonApp.Log.Error($"Score submission failed ({LastErrorCode}): {response.Error}");
+                }
                 return false;
             }
         }

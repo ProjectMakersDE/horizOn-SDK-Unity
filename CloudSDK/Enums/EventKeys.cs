@@ -33,6 +33,7 @@ namespace PM.horizOn.Cloud.Enums
         CloudSaveDataChanged = 201,
         ConfigDataChanged = 202,
         LeaderboardDataChanged = 203,
+        PlayerProfileChanged = 204,
 
         // Data Load Events (300-399) - Distribute loaded data
         UserDataLoaded = 300,
@@ -42,6 +43,8 @@ namespace PM.horizOn.Cloud.Enums
         NewsDataLoaded = 304,
         CloudSaveBytesLoaded = 305,
         LocalizationDataLoaded = 306,
+        PlayerProfileLoaded = 307,
+        ValidatedStateLoaded = 308,
 
         // Feature Events (400-499)
         GiftCodeRedeemed = 400,
@@ -59,6 +62,13 @@ namespace PM.horizOn.Cloud.Enums
         CrashReportFailed = 411,
         CrashSessionRegistered = 412,
         BreadcrumbRecorded = 413,
+
+        // Validated Actions Events
+        ValidatedRunStarted = 420,
+        ValidatedRunSubmitted = 421,
+        ValidatedRunRejected = 422,
+        ValidatedEvidenceUploaded = 423,
+        ValidatedEvidenceUploadFailed = 424,
 
         // Network Events (500-599)
         NetworkRequestStarted = 500,

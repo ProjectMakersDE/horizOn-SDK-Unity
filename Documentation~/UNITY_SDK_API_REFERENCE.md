@@ -19,8 +19,10 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 7. [News](#news)
 8. [Cloud Save](#cloud-save)
 9. [Leaderboard](#leaderboard)
-10. [Data Models](#data-models)
-11. [Error Handling](#error-handling)
+10. [Player Profile](#player-profile)
+11. [Validated Actions](#validated-actions)
+12. [Data Models](#data-models)
+13. [Error Handling](#error-handling)
 
 ---
 
@@ -419,6 +421,9 @@ Base path: `/api/v1/app/gift-codes`
 
 **Description**: Redeem a promotional code for rewards.
 
+**Headers**: `X-API-Key` and `Authorization: Bearer <accessToken>` of the signed-in player. The SDK sends the
+current session automatically. The server only redeems for the player who owns that session.
+
 **Request Body**:
 ```json
 {
@@ -432,16 +437,23 @@ Base path: `/api/v1/app/gift-codes`
 {
   "success": "boolean",
   "message": "string",
-  "giftData": "string (JSON with rewards)"
+  "giftData": "string (JSON with rewards)",
+  "grantedUnlocks": ["string (cosmetic ID)"]
 }
 ```
+
+`grantedUnlocks` lists the cosmetic IDs from the code's `grants` that the player owns after
+this redemption (newly unlocked or owned before), `[]` when the code grants nothing. See
+[Player Profile](#player-profile). When it is not empty, the SDK drops the cached
+`PlayerProfileManager.CurrentProfile`, so the next `GetProfile()` shows the unlock.
 
 **Example giftData**:
 ```json
 {
   "gold": 100,
   "crystals": 50,
-  "items": ["sword", "shield"]
+  "items": ["sword", "shield"],
+  "grants": ["badge.supporter"]
 }
 ```
 
@@ -449,8 +461,10 @@ Base path: `/api/v1/app/gift-codes`
 | Code | Cause |
 |------|-------|
 | 400 | Invalid/expired/already redeemed |
-| 403 | Code doesn't belong to API key |
+| 401 | Session missing, invalid or expired (sign in again) |
+| 403 | Code doesn't belong to API key, or the session belongs to another player |
 | 404 | Code not found |
+| 409 | `UNLOCK_LIMIT_REACHED`: the player would hold more than 25 unlocks; the code is not used up |
 
 #### Unity SDK Usage
 
@@ -466,28 +480,32 @@ if (!UserManager.Instance.IsSignedIn)
 
 var result = await GiftCodeManager.Instance.Redeem("SUMMER2024");
 
-if (result != null && result.Success)
+if (result != null && result.success)
 {
     Debug.Log("Code redeemed successfully!");
 
     // Parse rewards from giftData (JSON string)
-    if (!string.IsNullOrEmpty(result.GiftData))
+    if (!string.IsNullOrEmpty(result.giftData))
     {
         // Parse JSON and grant rewards
-        var rewards = JsonUtility.FromJson<RewardsData>(result.GiftData);
+        var rewards = JsonUtility.FromJson<RewardsData>(result.giftData);
         GrantRewards(rewards);
+    }
+
+    // Cosmetics unlocked by the code (player profile)
+    foreach (var cosmeticId in result.grantedUnlocks)
+    {
+        Debug.Log($"Unlocked: {cosmeticId}");
     }
 }
 else
 {
-    // Handle specific errors
-    string message = result?.Message ?? "Unknown error";
-    Debug.Log($"Redemption failed: {message}");
-
-    // Common messages:
+    // Redeem returns null on failure; details are in the SDK log.
+    // Common causes:
     // - "Code already redeemed"
     // - "Code expired"
     // - "Code not found"
+    Debug.Log("Redemption failed");
 }
 ```
 
@@ -849,6 +867,10 @@ NewsManager.Instance.ClearCache();
 Base path: `/api/v1/app/cloud-save`
 **Manager**: `CloudSaveManager`
 
+All save and load operations require the signed-in player's Bearer session in addition
+to the API key. The SDK sends it automatically and rejects missing or mismatched sessions
+before making a request.
+
 ### 15. Save Cloud Data
 
 **Endpoint**: `POST /api/v1/app/cloud-save/save`
@@ -886,6 +908,7 @@ Base path: `/api/v1/app/cloud-save`
 | Code | Cause |
 |------|-------|
 | 400 | Invalid request |
+| 401 | Missing or invalid player session |
 | 403 | Size limit exceeded |
 | 429 | Rate limit exceeded |
 
@@ -901,6 +924,10 @@ Base path: `/api/v1/app/cloud-save`
   "userId": "uuid"
 }
 ```
+
+JSON and binary loading use the same JSON request body. For binary loading,
+`LoadBytes()` sends `Accept: application/octet-stream`. The response contains raw bytes
+on HTTP 200, or HTTP 204 when no save exists (`LoadBytes()` returns `null`).
 
 **Response (200 OK)**:
 ```json
@@ -988,6 +1015,8 @@ Base path: `/api/v1/app/leaderboard`
 
 **Description**: Submit score (only updates if higher than previous).
 
+**Headers**: `X-API-Key` and `Authorization: Bearer <accessToken>` of the signed-in player (sent by the SDK).
+
 **Request Body**:
 ```json
 {
@@ -996,6 +1025,11 @@ Base path: `/api/v1/app/leaderboard`
 }
 ```
 
+There is no `metadata` field: the server never stored score metadata. The `metadata`
+parameter of `SubmitScore(long score, string metadata = null, string boardKey = null)` is
+deprecated, ignored and not sent. It stays only for source compatibility and will be removed
+in the next major version. Pass a board key as a named argument: `SubmitScore(12500, boardKey: "weekly")`.
+
 **Response**: 200 OK on success
 
 **Error Responses**:
@@ -1003,6 +1037,12 @@ Base path: `/api/v1/app/leaderboard`
 |------|-------|
 | 400 | Invalid request |
 | 403 | Entry limit exceeded |
+| 403 | `VALIDATED_SUBMIT_REQUIRED`: the board only accepts validated runs (see [Validated Actions](#validated-actions)); nothing is written |
+| 403 | `PLAYER_BANNED`: the player is banned from this board; nothing is written, not retried |
+
+On failure `LeaderboardManager.Instance.LastErrorCode` holds the server `code` (for example
+`VALIDATED_SUBMIT_REQUIRED` or `PLAYER_BANNED`), `SESSION_REQUIRED` without a signed-in player, or an HTTP
+fallback code. `ListBoards()` returns `validatedOnly` (bool) for every board.
 
 #### Unity SDK Usage
 
@@ -1023,11 +1063,8 @@ else
     Debug.Log("Score submission failed");
 }
 
-// Optionally include metadata
-bool submitted = await LeaderboardManager.Instance.SubmitScore(
-    score: 12500,
-    metadata: "Level5-HardMode"  // optional extra data
-);
+// Submit to a named board of a multi-board leaderboard
+bool weekly = await LeaderboardManager.Instance.SubmitScore(12500, boardKey: "weekly");
 ```
 
 ---
@@ -1047,11 +1084,15 @@ bool submitted = await LeaderboardManager.Instance.SubmitScore(
     {
       "position": 1,
       "username": "string",
-      "score": 1000
+      "score": 1000,
+      "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": ["badge.supporter"] }
     }
   ]
 }
 ```
+
+Every entry carries the player's `profile` (see [Player Profile](#player-profile)). In Unity
+`entry.profile` is never null; JSON `null` IDs read as `""`, check `HasAvatar` / `HasFrame`.
 
 #### Unity SDK Usage
 
@@ -1065,7 +1106,11 @@ if (topPlayers != null)
 {
     foreach (var entry in topPlayers)
     {
-        Debug.Log($"#{entry.Position} {entry.Username}: {entry.Score}");
+        Debug.Log($"#{entry.position} {entry.username}: {entry.score}");
+        if (entry.profile.HasAvatar)
+        {
+            // Map entry.profile.avatarId to your sprite; unknown IDs count as "not set"
+        }
     }
 }
 
@@ -1087,7 +1132,8 @@ var topPlayers = await LeaderboardManager.Instance.GetTop(10, useCache: false);
 {
   "position": 42,
   "username": "string",
-  "score": 1000
+  "score": 1000,
+  "profile": { "avatarId": null, "frameId": null, "badges": [] }
 }
 ```
 
@@ -1102,9 +1148,10 @@ var myRank = await LeaderboardManager.Instance.GetRank();
 
 if (myRank != null)
 {
-    Debug.Log($"Your rank: #{myRank.Position}");
-    Debug.Log($"Your score: {myRank.Score}");
-    Debug.Log($"Username: {myRank.Username}");
+    Debug.Log($"Your rank: #{myRank.position}");
+    Debug.Log($"Your score: {myRank.score}");
+    Debug.Log($"Username: {myRank.username}");
+    Debug.Log($"Avatar: {(myRank.profile.HasAvatar ? myRank.profile.avatarId : "(none)")}");
 }
 else
 {
@@ -1126,9 +1173,9 @@ else
 ```json
 {
   "entries": [
-    { "position": 8, "username": "Player8", "score": 950 },
-    { "position": 9, "username": "CurrentUser", "score": 920 },
-    { "position": 10, "username": "Player10", "score": 900 }
+    { "position": 8, "username": "Player8", "score": 950, "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": [] } },
+    { "position": 9, "username": "CurrentUser", "score": 920, "profile": { "avatarId": null, "frameId": null, "badges": [] } },
+    { "position": 10, "username": "Player10", "score": 900, "profile": { "avatarId": null, "frameId": "frame.gold", "badges": ["badge.supporter"] } }
   ]
 }
 ```
@@ -1145,9 +1192,9 @@ if (nearby != null)
 {
     foreach (var entry in nearby)
     {
-        string marker = entry.Username == UserManager.Instance.CurrentUser.DisplayName
+        string marker = entry.username == UserManager.Instance.CurrentUser.DisplayName
             ? " <-- YOU" : "";
-        Debug.Log($"#{entry.Position} {entry.Username}: {entry.Score}{marker}");
+        Debug.Log($"#{entry.position} {entry.username}: {entry.score}{marker}");
     }
 }
 else
@@ -1158,6 +1205,493 @@ else
 // Force fresh fetch
 var nearby = await LeaderboardManager.Instance.GetAround(5, useCache: false);
 ```
+
+---
+
+## Player Profile
+
+Base path: `/api/v1/app/player-profile`
+**Manager**: `PlayerProfileManager`
+
+Leaderboards show an avatar, an optional frame and up to 3 badges next to name and score.
+Each API key has a cosmetics catalog, maintained in the horizOn Dashboard: every entry has an
+ID, a type (`avatar`, `frame`, `badge`) and `locked`. Free entries can be selected by every
+player, locked entries only after an unlock (gift code with `grants`, or the Dashboard). The
+server stores IDs only; the game maps them to its own assets and treats unknown IDs as "not set".
+
+**Headers** (both endpoints): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
+signed-in player. The SDK sends the current session automatically. Without a signed-in player
+both methods fail locally (no request) with `LastErrorCode = "SESSION_REQUIRED"`.
+
+**Cosmetic ID format**: 1 to 32 characters, `^[a-z0-9][a-z0-9._-]{0,31}$`.
+
+### 21. Get Player Profile
+
+**Endpoint**: `GET /api/v1/app/player-profile?userId={uuid}`
+
+**Description**: Profile, unlocks and the full catalog of the API key with an `available`
+flag per entry, so a game builds its picker from one call.
+
+**Response (200 OK)**:
+```json
+{
+  "userId": "0d7e...",
+  "profile": { "avatarId": "avatar.zombie_07", "frameId": null, "badges": ["badge.supporter"] },
+  "unlocks": ["badge.supporter"],
+  "cosmetics": [
+    { "id": "avatar.zombie_07", "type": "avatar", "locked": false, "available": true },
+    { "id": "badge.supporter", "type": "badge", "locked": true, "available": true },
+    { "id": "frame.gold", "type": "frame", "locked": true, "available": false }
+  ],
+  "limits": { "maxBadges": 3, "maxUnlocks": 25 }
+}
+```
+
+`cosmetics` is sorted by `id`, `available = !locked || id in unlocks`. `unlocks` may contain
+IDs that were deleted from the catalog.
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 401 `SESSION_REQUIRED` | Session missing, invalid or expired |
+| 401 (no code) | Invalid API key |
+| 403 `SESSION_FORBIDDEN` | Session of another player |
+| 404 `PLAYER_NOT_FOUND` | Player missing, deleted, inactive or of another API key |
+| 429 | Rate limit; the SDK retries after `Retry-After` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Responses;
+
+PlayerProfileResponse profile = await PlayerProfileManager.Instance.GetProfile();
+if (profile == null)
+{
+    Debug.Log($"Loading failed: {PlayerProfileManager.Instance.LastErrorCode}");
+    return;
+}
+
+// Build the pickers from the catalog
+foreach (PlayerCosmetic avatar in profile.GetCosmetics("avatar"))
+{
+    Debug.Log($"{avatar.id} locked={avatar.locked} available={avatar.available}");
+}
+
+bool canUseGoldFrame = profile.IsAvailable("frame.gold");
+```
+
+`GetProfile()` has no time based cache: every call asks the server, so new unlocks show up
+right away. The last result stays in `PlayerProfileManager.Instance.CurrentProfile`.
+
+**Event**: `EventKeys.PlayerProfileLoaded` (307) with the `PlayerProfileResponse`.
+
+---
+
+### 22. Set Player Profile
+
+**Endpoint**: `PUT /api/v1/app/player-profile`
+
+**Description**: Replace the whole visible profile. Returns the same body as GET.
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "avatarId": "string or null",
+  "frameId": "string or null",
+  "badges": ["string"]
+}
+```
+
+A missing, `null` or empty `avatarId` / `frameId` clears the slot; missing or `[]` badges clear
+all badges. At most 3 distinct badges, order kept. The server checks, in this order: badge count
+and duplicates (`INVALID_BADGES`), then per ID the format (`INVALID_COSMETIC_ID`), the catalog
+(`COSMETIC_NOT_FOUND`), the type (`COSMETIC_TYPE_MISMATCH`) and the unlock (`COSMETIC_LOCKED`).
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 400 `INVALID_BADGES` | More than 3 badges, or a badge listed twice |
+| 400 `INVALID_COSMETIC_ID` | ID does not match the format |
+| 400 `COSMETIC_NOT_FOUND` | ID is not in the catalog of the API key |
+| 400 `COSMETIC_TYPE_MISMATCH` | ID exists with another type than the slot |
+| 401 `SESSION_REQUIRED` | Session missing, invalid or expired |
+| 403 `COSMETIC_LOCKED` | Locked cosmetic and the player has no unlock |
+| 403 `SESSION_FORBIDDEN` | Session of another player |
+| 404 `PLAYER_NOT_FOUND` | See GET |
+| 429 | Rate limit; the SDK retries after `Retry-After` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Responses;
+
+var current = PlayerProfileManager.Instance.CurrentProfile
+              ?? await PlayerProfileManager.Instance.GetProfile();
+
+// PUT replaces everything: pass the current frame to keep it.
+// null or "" clears a slot, null or an empty list clears the badges.
+PlayerProfileResponse updated = await PlayerProfileManager.Instance.SetProfile(
+    "avatar.zombie_07",
+    current?.profile.frameId,
+    new[] { "badge.supporter" });
+
+if (updated == null)
+{
+    switch (PlayerProfileManager.Instance.LastErrorCode)
+    {
+        case PlayerProfileErrorCodes.CosmeticLocked:
+            Debug.Log("Unlock this cosmetic first");
+            break;
+        case PlayerProfileErrorCodes.SessionRequired:
+            Debug.Log("Sign in first");
+            break;
+        default:
+            Debug.Log($"Saving failed: {PlayerProfileManager.Instance.LastErrorCode}");
+            break;
+    }
+}
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), more than 3 or duplicate badges (`INVALID_BADGES`) and the ID format
+(`INVALID_COSMETIC_ID`). IDs are trimmed like on the server.
+
+On success the SDK also clears the `LeaderboardManager` cache, so the next `GetTop()` /
+`GetAround()` shows the new profile (other pods may serve the old one for up to 10 minutes).
+
+**Event**: `EventKeys.PlayerProfileChanged` (204) with the `PlayerProfileResponse`.
+
+### PlayerProfileManager members
+
+| Member | Description |
+|--------|-------------|
+| `Task<PlayerProfileResponse> GetProfile()` | Load profile, unlocks and catalog; `null` on failure |
+| `Task<PlayerProfileResponse> SetProfile(string avatarId, string frameId, IList<string> badges)` | Replace the profile; `null` on failure |
+| `PlayerProfileResponse CurrentProfile` | Last result; `null` before the first call, after `ClearCache()`, after sign-out and when another player signed in |
+| `string LastErrorCode` | Code of the last failure (see below); `null` after a success |
+| `void ClearCache()` | Drop `CurrentProfile` (called by `GiftCodeManager.Redeem` when `grantedUnlocks` is not empty) |
+
+`LastErrorCode` holds the server `code` of the error body. Without one it falls back to an
+HTTP based code: `BAD_REQUEST` (400), `UNAUTHORIZED` (401, for example an invalid API key),
+`FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409), `RATE_LIMITED` (429 after the retries),
+`SERVER_ERROR` (5xx), `NETWORK_ERROR` (no response), `INVALID_RESPONSE` (unreadable 2xx body).
+All codes are constants in `PlayerProfileErrorCodes`.
+
+---
+
+## Validated Actions
+
+Base path: `/api/v1/app/validated-actions`
+**Manager**: `ValidatedActionsManager`
+
+Server-checked runs. The game starts a run and gets a single-use ticket with a server seed,
+plays deterministically with that seed while it records the input log, and submits the score
+with the SHA-256 of the log. The server checks the ticket and every rule of the API key
+(score limits, minimum duration measured by the server, score per second, stage rules) before
+anything is written. Rule values never appear in responses or error messages; only the `code`
+tells which rule rejected a run. Runs may also earn or spend server-owned values (currency,
+loot) defined in the rules; only the server writes them (see 25). The server may ask for the
+input log of an accepted run as evidence (see 26). Cloud only: without the
+endpoints (simpleServer) the SDK reports `NOT_SUPPORTED`.
+
+**Headers** (every endpoint): `X-API-Key` and `Authorization: Bearer <accessToken>` of the
+signed-in player, sent by the SDK. Without a signed-in player every method fails locally (no
+request) with `LastErrorCode = "SESSION_REQUIRED"`.
+
+### 23. Start Validated Run
+
+**Endpoint**: `POST /api/v1/app/validated-actions/runs`
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "leaderboardKey": "weekly"
+}
+```
+`leaderboardKey` is optional and left out when empty (the ticket is then not bound to a board).
+
+**Response** (200):
+```json
+{
+  "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11",
+  "ticket": "hzn-rt1:2026-09:Qm9...:c2Vj...",
+  "seed": 1834201177,
+  "leaderboardKey": "weekly",
+  "issuedAt": "2026-09-29T14:00:00.120Z",
+  "expiresAt": "2026-09-29T16:00:00.120Z",
+  "expiresInSeconds": 7200
+}
+```
+
+**Error Responses**:
+| Code | Cause |
+|------|-------|
+| 400 | Validation (bad key format) |
+| 401 | `SESSION_REQUIRED` |
+| 403 | `SESSION_FORBIDDEN` |
+| 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` |
+| 429 | Account request limit (empty body, retried by the SDK), or `RUN_RATE_LIMITED` / `RUN_CAPACITY_REACHED` (not retried) |
+| 503 | `VALIDATED_ACTIONS_UNAVAILABLE` |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+
+ValidatedRun run = await ValidatedActionsManager.Instance.StartRun("weekly");
+if (run == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);
+    return;
+}
+var random = new System.Random(run.seed);
+```
+
+The run becomes `CurrentRun`; a new `StartRun` replaces it.
+**Event**: `EventKeys.ValidatedRunStarted` (420) with the `ValidatedRun`.
+
+---
+
+### 24. Submit Validated Run
+
+**Endpoint**: `POST /api/v1/app/validated-actions/submit`
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "ticket": "hzn-rt1:...",
+  "inputLogHash": "64 lower case hex characters",
+  "score": 18250,
+  "stage": "wave_10",
+  "leaderboardKey": "weekly",
+  "earned": [{ "key": "gold", "amount": 250 }]
+}
+```
+`stage`, `leaderboardKey` and `earned` are left out when empty. Without `leaderboardKey` the
+board of the ticket is used; for a run without a board the server ignores `score`. `earned`
+(Part 2, at most 64 entries) lists values the run earned (positive) or spent (negative); every
+key must be defined under `values` in the rules, so send it only when the game uses server-owned
+values.
+
+**Response** (200):
+```json
+{
+  "accepted": true,
+  "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11",
+  "leaderboardKey": "weekly",
+  "score": 18250,
+  "bestScore": 21000,
+  "isNewHighScore": false,
+  "rank": 17,
+  "durationSeconds": 734,
+  "state": {
+    "day": "2026-09-29",
+    "values": [
+      { "key": "chest.gold", "balance": 1, "earnedToday": 0, "dailyCap": null, "requested": -1, "credited": -1 },
+      { "key": "gold", "balance": 1500, "earnedToday": 500, "dailyCap": 500, "requested": 400, "credited": 250 }
+    ]
+  },
+  "evidence": null
+}
+```
+`state` lists every value of the rules; values the run touched carry `requested` and `credited`.
+It is `null` when the rules define no values (the SDK keeps an empty `PlayerState`, `HasData`
+false, and leaves `CurrentState` unchanged).
+
+**Error Responses**:
+| Code | Cause | Run |
+|------|-------|-----|
+| 400 | Validation, `SCORE_REQUIRED`, `PLAYER_NAME_REQUIRED` | kept |
+| 401 / 403 | `SESSION_REQUIRED` / `SESSION_FORBIDDEN` | kept |
+| 403 | `SCORE_LIMIT_REACHED` (ticket used up) | dropped |
+| 403 | `PLAYER_BANNED` (banned from the target board, checked before the ticket is used) | kept; the same board refuses it again, call `DiscardRun()` |
+| 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` | kept |
+| 422 | `TICKET_INVALID`, `TICKET_EXPIRED`, `TICKET_FOREIGN`, `TICKET_CONSUMED` | dropped |
+| 422 | `LEADERBOARD_MISMATCH` (checked before the ticket is used) | kept |
+| 422 | Rule codes: `STAGE_REQUIRED`, `STAGE_UNKNOWN`, `SCORE_ABOVE_MAX`, `SCORE_BELOW_MIN`, `STAGE_SCORE_ABOVE_MAX`, `STAGE_SCORE_BELOW_MIN`, `DURATION_TOO_SHORT`, `SCORE_RATE_TOO_HIGH` | dropped |
+| 422 | Value codes: `UNKNOWN_VALUE_KEY`, `DUPLICATE_VALUE_KEY`, `EARNED_ABOVE_MAX`, `EARNED_BELOW_MIN`, `INSUFFICIENT_BALANCE` | dropped |
+| 429 | Account request limit (empty body, retried by the SDK) | kept |
+| 503 | `VALIDATED_ACTIONS_UNAVAILABLE` | kept |
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+
+// The SDK hashes the log (SHA-256) and sends the ticket of CurrentRun.
+ValidatedSubmitResult result = await ValidatedActionsManager.Instance.SubmitValidated(
+    18250, inputLog, stage: "wave_10");
+if (result == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);        // e.g. DURATION_TOO_SHORT
+    Debug.Log(ValidatedActionsManager.Instance.HasActiveRun);         // false when the ticket is used up
+}
+
+// Or with a ready hash
+string hash = ValidatedActionsManager.ComputeInputLogHash(inputLog);
+result = await ValidatedActionsManager.Instance.SubmitValidatedWithHash(18250, hash);
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), a current run (`NO_ACTIVE_RUN`), the hash format
+(`INVALID_INPUT_LOG_HASH`). An expired run (by the device clock) is still sent; the server
+decides. After an accepted run with a board the `LeaderboardManager` cache is cleared.
+
+**Events**: `EventKeys.ValidatedRunSubmitted` (421) with the `ValidatedSubmitResult`;
+`EventKeys.ValidatedRunRejected` (422) on a 422 or 403 with a `ValidatedRunRejection`
+(`code`, `runId`, `httpStatus`, `runCleared`). When the result carries a state,
+`EventKeys.ValidatedStateLoaded` (308) is published first with the new `CurrentState`.
+When `result.evidence.required` is true and the submit had the raw log, the SDK starts the
+evidence upload (see 26) before it publishes `ValidatedRunSubmitted`; the upload finishes in
+the background.
+
+---
+
+### 25. Get Player State
+
+**Endpoint**: `GET /api/v1/app/validated-actions/state?userId={userId}`
+
+The signed-in player's server-owned values. Read only: values change only through `earned` of an
+accepted validated run; support corrects them in the dashboard.
+
+**Response** (200):
+```json
+{
+  "userId": "0d7e...",
+  "day": "2026-09-29",
+  "values": [
+    { "key": "chest.gold", "balance": 2, "earnedToday": 0, "dailyCap": null },
+    { "key": "gold", "balance": 1250, "earnedToday": 250, "dailyCap": 5000 }
+  ]
+}
+```
+Every key defined under `values` in the rules is listed, sorted by key (balance 0 when never
+earned); `values` is empty when the rules define none. `day` is the current UTC day,
+`earnedToday` the positive credit on that day, `dailyCap` `null` without a cap (the SDK reads 0).
+
+**Error Responses**: 401 `SESSION_REQUIRED`, 403 `SESSION_FORBIDDEN`, 404 `PLAYER_NOT_FOUND`
+(404 without a code: `NOT_SUPPORTED`), 429 (empty body, retried by the SDK).
+
+#### Unity SDK Usage
+
+```csharp
+PlayerState state = await ValidatedActionsManager.Instance.GetState();
+if (state == null)
+{
+    Debug.Log(ValidatedActionsManager.Instance.LastErrorCode);   // SESSION_REQUIRED, NOT_SUPPORTED, ...
+    return;
+}
+PlayerStateValue gold = state.GetValue("gold");
+Debug.Log($"{gold.balance} gold, {gold.earnedToday} / {gold.dailyCap} today");
+```
+
+The state becomes `CurrentState`. **Event**: `EventKeys.ValidatedStateLoaded` (308) with the
+`PlayerState`.
+
+**Cloud save as a mirror.** The cloud save stays a client-written blob. Keep server-owned values
+there only as a copy: copy `CurrentState` (or `result.state`) into the save after each accepted
+run, call `GetState()` on start and overwrite the copy with it (never the other way round), never
+send a value from the save back as a balance, and send values earned offline as `earned` of the
+next validated run (the per-run and daily limits apply as always). `PlayerState` is
+`[Serializable]`, so it can be a field of the object you pass to `CloudSaveManager.SaveObject`.
+
+---
+
+### 26. Upload Evidence
+
+**Endpoint**: `PUT /api/v1/app/validated-actions/runs/{runId}/evidence`
+
+Only after a submit answered with `evidence` (`required: true`), before `evidence.uploadBefore`
+(24 hours). The server asks for the log when the run became the player's new entry on the board
+and either carries a soft flag or lands within the board's "Evidence top N"; when the account's
+evidence storage is full it asks for nothing (the run still counts).
+
+**Request Body**:
+```json
+{
+  "userId": "uuid",
+  "log": "AAECAw=="
+}
+```
+`log` is the raw input log as standard base64 with padding, decoded at most `evidence.maxBytes`
+(32,768) bytes. Its SHA-256 must equal the `inputLogHash` sent with the run.
+
+**Response** (200):
+```json
+{ "runId": "5b0b6c1e-8d0f-4c55-9b0e-0e6a4a8a3d11", "status": "UPLOADED", "bytes": 18234 }
+```
+
+**Error Responses**:
+| Code | Cause | Retry |
+|------|-------|-------|
+| 400 | `EVIDENCE_INVALID_ENCODING`: `log` is not standard base64 | no |
+| 401 / 403 | `SESSION_REQUIRED` / `SESSION_FORBIDDEN` | after a new sign-in |
+| 404 | `EVIDENCE_NOT_REQUESTED`: no request for this run and player (never asked, replaced by a better run, deleted) | no |
+| 409 | `EVIDENCE_ALREADY_UPLOADED` | no |
+| 410 | `EVIDENCE_EXPIRED`: the 24 h window passed | no |
+| 413 | `EVIDENCE_TOO_LARGE`: decoded log above `maxBytes` | no |
+| 422 | `EVIDENCE_HASH_MISMATCH`: the bytes differ from the hashed log; the request stays open | yes, with the exact bytes |
+| 429 | Account request limit (empty body, retried by the SDK) | |
+
+#### Unity SDK Usage
+
+```csharp
+// Automatic: SubmitValidated knows the raw log and uploads it in the background.
+ValidatedSubmitResult result = await ValidatedActionsManager.Instance.SubmitValidated(score, inputLog);
+
+// Manual: after SubmitValidatedWithHash, or with AutoUploadEvidence = false.
+if (result != null && result.evidence.required)
+{
+    bool stored = await ValidatedActionsManager.Instance.UploadEvidence(result.evidence.runId, inputLog);
+    if (!stored)
+    {
+        string code = ValidatedActionsManager.Instance.LastErrorCode;   // e.g. EVIDENCE_EXPIRED
+        bool retry = ValidatedActionsManager.IsEvidenceRetryable(code);  // hash mismatch or network error
+    }
+}
+```
+
+The SDK checks locally before sending (no request on failure): signed-in player
+(`SESSION_REQUIRED`), a run ID (`INVALID_RUN_ID`), a non-empty log (`EMPTY_INPUT_LOG`) and, for the
+automatic upload, `evidence.maxBytes` (`EVIDENCE_TOO_LARGE`). Server errors and timeouts are
+retried by the network layer; the SDK does not retry an upload on its own beyond that. An upload
+never changes the submit result. `UploadEvidence` sets `LastErrorCode` and `LastEvidenceErrorCode`;
+the automatic upload sets only `LastEvidenceErrorCode`.
+
+**Events**: `EventKeys.ValidatedEvidenceUploaded` (423) with the `EvidenceUploadResult`;
+`EventKeys.ValidatedEvidenceUploadFailed` (424) with a `ValidatedEvidenceFailure` (`runId`,
+`code`, `httpStatus` (0 for local and network failures), `retryable`, `automatic`).
+
+### ValidatedActionsManager members
+
+| Member | Description |
+|--------|-------------|
+| `Task<ValidatedRun> StartRun(string leaderboardKey = null)` | Start a run; `null` on failure |
+| `Task<ValidatedSubmitResult> SubmitValidated(long score, byte[] inputLog, string stage = null, string leaderboardKey = null, IList<EarnedValue> earned = null)` | Hash the log and submit the current run; `null` on failure |
+| `Task<ValidatedSubmitResult> SubmitValidatedWithHash(long score, string inputLogHash, string stage = null, string leaderboardKey = null, IList<EarnedValue> earned = null)` | Submit with a ready hash; `null` on failure |
+| `static string ComputeInputLogHash(byte[] inputLog)` | SHA-256 as 64 lower case hex characters (`null` hashes like an empty log) |
+| `ValidatedRun CurrentRun` | The current run; `null` before the first run, after a final submit, after `DiscardRun()`, after sign-out and when another player signed in |
+| `bool HasActiveRun` | `CurrentRun != null` |
+| `string LastErrorCode` | Code of the last failure; `null` after a success |
+| `void DiscardRun()` | Drop the current run without submitting |
+| `bool AutoUploadEvidence` | Default `true`: upload the raw log in the background when an accepted `SubmitValidated` asks for evidence |
+| `Task<bool> UploadEvidence(string runId, byte[] inputLog)` | Upload the input log of a run whose submit asked for evidence; `false` on failure |
+| `string LastEvidenceErrorCode` | Code of the last failed evidence upload (automatic or manual); `null` after a successful upload |
+| `static bool IsEvidenceRetryable(string errorCode)` | `true` for `EVIDENCE_HASH_MISMATCH` and `NETWORK_ERROR` |
+| `Task<PlayerState> GetState()` | Load the server-owned values; `null` on failure |
+| `PlayerState CurrentState` | Last known state (from `GetState` or the last accepted submit with a state), `requested` and `credited` always 0; `null` before the first load, after sign-out and when another player signed in |
+
+`LastErrorCode` holds the server `code` of the error body, a local code (`SESSION_REQUIRED`,
+`NO_ACTIVE_RUN`, `INVALID_INPUT_LOG_HASH`, `INVALID_RUN_ID`, `EMPTY_INPUT_LOG`) or an HTTP fallback: `NOT_SUPPORTED` (404 without a
+code, for example a simpleServer), `BAD_REQUEST` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403),
+`UNPROCESSABLE_ENTITY` (422), `RATE_LIMITED` (429 after the retries), `SERVER_ERROR` (5xx),
+`NETWORK_ERROR` (no response), `INVALID_RESPONSE` (unreadable 2xx body). All codes are constants
+in `ValidatedActionsErrorCodes`.
 
 ---
 
@@ -1197,6 +1731,116 @@ ERROR
 | position | long | Rank (1-indexed) |
 | username | string | Display name |
 | score | long | Score value |
+| profile | HorizonPlayerProfile | Visible profile of the player, never null |
+
+`AppUserRankResponse` (from `GetRank()`) has the same four fields.
+
+### HorizonPlayerProfile
+| Field | Type | Description |
+|-------|------|-------------|
+| avatarId | string | Selected avatar, empty when not set |
+| frameId | string | Selected frame, empty when not set |
+| badges | string[] | Displayed badges (0 to 3), order kept |
+| HasAvatar | bool (property) | `avatarId` is not empty |
+| HasFrame | bool (property) | `frameId` is not empty |
+
+### PlayerProfileResponse
+| Field | Type | Description |
+|-------|------|-------------|
+| userId | string | The player |
+| profile | HorizonPlayerProfile | Current selection |
+| unlocks | string[] | Owned locked cosmetics (may contain deleted IDs) |
+| cosmetics | PlayerCosmetic[] | Catalog of the API key, sorted by `id` |
+| limits | PlayerProfileLimits | `maxBadges` (3), `maxUnlocks` (25) |
+
+Helpers: `List<PlayerCosmetic> GetCosmetics(string type)` and `bool IsAvailable(string id)`.
+
+### PlayerCosmetic
+| Field | Type | Description |
+|-------|------|-------------|
+| id | string | Cosmetic ID |
+| type | string | `avatar`, `frame` or `badge` |
+| locked | bool | Needs an unlock |
+| available | bool | The player may select it now |
+
+### RedeemGiftCodeResponse
+| Field | Type | Description |
+|-------|------|-------------|
+| success | bool | Redemption succeeded |
+| message | string | Server message |
+| giftData | string | JSON string with the rewards |
+| grantedUnlocks | string[] | Cosmetic IDs the code unlocked (owned after this redemption), empty when none |
+
+### ValidatedRun
+| Field | Type | Description |
+|-------|------|-------------|
+| runId | string | Ticket ID |
+| ticket | string | Opaque token, sent unchanged |
+| seed | int | Server seed, 0 to 2,147,483,646 |
+| leaderboardKey | string | Bound board, empty when unbound |
+| issuedAt, expiresAt | string | ISO 8601 UTC |
+| expiresInSeconds | int | Lifetime at issue |
+
+Helpers: `HasLeaderboard`, `ExpiresAtUtc`, `IsExpired` (device clock, informational).
+
+### ValidatedSubmitResult
+| Field | Type | Description |
+|-------|------|-------------|
+| accepted | bool | Always true on success |
+| runId | string | The run |
+| leaderboardKey | string | Board written to, empty without a board |
+| score | long | Submitted score (0 without a board) |
+| bestScore | long | Player's row after the write (0 without a board) |
+| isNewHighScore | bool | New best score |
+| rank | long | 1-based rank (0 without a board) |
+| durationSeconds | long | Server-measured duration |
+| state | PlayerState | Never null; `HasData` false when the server sent no state |
+| evidence | EvidenceRequest | Never null; `required` false when the server does not ask for the log |
+
+### EvidenceRequest
+| Field | Type | Description |
+|-------|------|-------------|
+| required | bool | The server wants the input log of this run |
+| runId | string | Run whose log is requested (empty when not required) |
+| uploadBefore | string | Deadline, ISO 8601 UTC (24 h after the submit) |
+| maxBytes | int | Maximum log size in bytes (32,768) |
+
+Helper: `UploadBeforeUtc` (`DateTime?`).
+
+### EvidenceUploadResult
+| Field | Type | Description |
+|-------|------|-------------|
+| runId | string | The run |
+| status | string | `UPLOADED` |
+| bytes | int | Stored log size |
+
+### EarnedValue
+| Field | Type | Description |
+|-------|------|-------------|
+| key | string | Value key, `^[a-z0-9][a-z0-9._-]{0,23}$` |
+| amount | long | Earned (positive) or spent (negative) |
+
+### PlayerState
+| Field | Type | Description |
+|-------|------|-------------|
+| day | string | UTC day of `earnedToday`, empty when the server sent no state |
+| values | PlayerStateValue[] | One entry per value key, sorted by key, never null |
+
+Helpers: `GetValue(key)` (null when missing), `GetBalance(key)` (0 when missing), `IsEmpty`,
+`HasData`, `WithoutRunDetails()` (copy with `requested` and `credited` set to 0).
+
+### PlayerStateValue
+| Field | Type | Description |
+|-------|------|-------------|
+| key | string | Value key |
+| balance | long | Current balance |
+| earnedToday | long | Positive credit on `day` |
+| dailyCap | long | Daily cap, 0 when none (JSON `null`) |
+| requested | long | Amount the run sent (submit results only, touched values; 0 otherwise) |
+| credited | long | Amount applied (submit results only, touched values; 0 otherwise) |
+
+Helpers: `HasDailyCap`, `RemainingToday` (`long.MaxValue` without a cap), `IsFullyCredited`
+(`credited == requested`; grant a purchase paid with a spend only when true).
 
 ### UserNewsResponse
 | Field | Type | Description |
@@ -1222,7 +1866,12 @@ ERROR
 | 401 | Unauthorized | Invalid API key, re-authenticate |
 | 403 | Forbidden | Tier limit, wrong user, check permissions |
 | 404 | Not Found | Resource doesn't exist |
+| 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` on a gift code with grants |
 | 429 | Rate Limited | Wait and retry with backoff |
+
+Player profile errors carry a stable `code` in the JSON body (`COSMETIC_LOCKED`, ...). The
+Unity SDK exposes it as `PlayerProfileManager.Instance.LastErrorCode`; switch on the code,
+never on the message.
 | 500 | Server Error | Retry with exponential backoff |
 
 ### Rate Limit Handling
@@ -1309,8 +1958,13 @@ else
 | 18 | Get Top | `/leaderboard/top` | GET | `GetTop()` |
 | 19 | Get Rank | `/leaderboard/rank` | GET | `GetRank()` |
 | 20 | Get Around | `/leaderboard/around` | GET | `GetAround()` |
+| 21 | Get Player Profile | `/player-profile?userId=` | GET | `PlayerProfileManager.GetProfile()` |
+| 22 | Set Player Profile | `/player-profile` | PUT | `PlayerProfileManager.SetProfile()` |
+| 23 | Start Validated Run | `/validated-actions/runs` | POST | `ValidatedActionsManager.StartRun()` |
+| 24 | Submit Validated Run | `/validated-actions/submit` | POST | `ValidatedActionsManager.SubmitValidated()`, `SubmitValidatedWithHash()` |
+| 25 | Get Player State | `/validated-actions/state?userId=` | GET | `ValidatedActionsManager.GetState()` |
 
-**Total Endpoints**: 20
+**Total Endpoints**: 25
 
 ---
 
@@ -1321,4 +1975,4 @@ else
 - **README**: See [README.md](../README.md)
 
 **Version**: 1.8.6
-**Last Updated**: 2026-02-20
+**Last Updated**: 2026-09-29

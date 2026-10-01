@@ -59,6 +59,12 @@ namespace PM.horizOn.Cloud.Examples.Features
                 if (result != null && result.success)
                 {
                     Debug.Log($"[GiftCodesExample] Code redeemed, gift data: {result.giftData}");
+                    // Cosmetics the code unlocked (see PlayerProfileExample). The SDK already
+                    // dropped its cached profile, the next GetProfile() shows them.
+                    if (result.grantedUnlocks != null && result.grantedUnlocks.Length > 0)
+                    {
+                        Debug.Log($"[GiftCodesExample] Unlocked: {string.Join(", ", result.grantedUnlocks)}");
+                    }
                 }
                 else
                 {

@@ -4,6 +4,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Objects.Network.Responses;
+using PM.horizOn.Cloud.Transport;
 
 namespace PM.horizOn.Cloud.Manager
 {
@@ -14,9 +15,13 @@ namespace PM.horizOn.Cloud.Manager
     {
         /// <summary>
         /// Redeem a gift code for rewards.
+        /// The request carries the signed-in player's session, the server only redeems
+        /// codes for the player who owns that session.
+        /// When the code granted cosmetics (<c>grantedUnlocks</c> not empty), the cached player
+        /// profile is dropped so the next <see cref="PlayerProfileManager.GetProfile"/> shows the unlock.
         /// </summary>
         /// <param name="code">The gift code to redeem</param>
-        /// <returns>Redeem response with giftData JSON string, or null if failed</returns>
+        /// <returns>Redeem response with giftData JSON string and grantedUnlocks, or null if failed</returns>
         public async Task<RedeemGiftCodeResponse> Redeem(string code)
         {
             if (string.IsNullOrEmpty(code))
@@ -25,27 +30,29 @@ namespace PM.horizOn.Cloud.Manager
                 return null;
             }
 
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
+            if (!GiftCodeTransportContract.TryCreateRedeemPlan(
+                    PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser,
+                    HorizonApp.Network.GetSessionToken(),
+                    code,
+                    out var plan))
             {
                 HorizonApp.Log.Error("User must be signed in to redeem gift code");
                 return null;
             }
 
-            var request = new RedeemGiftCodeRequest
-            {
-                code = code,
-                userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId
-            };
-
             var response = await HorizonApp.Network.PostAsync<RedeemGiftCodeResponse>(
-                "/api/v1/app/gift-codes/redeem",
-                request,
-                useSessionToken: false
+                GiftCodeRedeemPlan.Endpoint,
+                plan.Request,
+                useSessionToken: plan.UseSessionToken
             );
 
             if (response.IsSuccess && response.Data != null && response.Data.success)
             {
                 HorizonApp.Log.Info($"Gift code redeemed: {code}");
+                if (response.Data.grantedUnlocks != null && response.Data.grantedUnlocks.Length > 0)
+                {
+                    PlayerProfileManager.Instance.ClearCache();
+                }
                 HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed, response.Data);
                 return response.Data;
             }

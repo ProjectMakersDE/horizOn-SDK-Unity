@@ -24,7 +24,7 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Run leaderboard transport contract
+      - name: Run shared transport contract
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
   unity-editor-transport:
@@ -47,7 +47,10 @@ jobs:
           projectPath: .unity-ci-project
           unityVersion: 6000.5.0f1
           testMode: EditMode
-          customParameters: -testFilter PM.horizOn.Cloud.Tests.LeaderboardTransportTests
+          # Every fixture tagged [Category("Transport")]: leaderboard, gift code, player profile and
+          # the three validated actions suites. HorizonConfigApiKeyTests stays out (its legacy
+          # ciphertext test depends on the machine), the E2E fixture needs a live backend.
+          customParameters: -testCategory Transport
           artifactsPath: unity-editor-test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           checkName: Unity Editor Transport Tests

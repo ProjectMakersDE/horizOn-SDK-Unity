@@ -11,6 +11,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public long position;
         public string username;
         public long score;
+
+        /// <summary>
+        /// Visible profile of the player (avatar, frame, badges). Never null; check
+        /// <see cref="HorizonPlayerProfile.HasAvatar"/> and treat unknown IDs as "not set".
+        /// </summary>
+        public HorizonPlayerProfile profile = new HorizonPlayerProfile();
     }
 
     /// <summary>
@@ -40,6 +46,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public long position;
         public string username;
         public long score;
+
+        /// <summary>
+        /// Visible profile of the player (avatar, frame, badges). Never null; check
+        /// <see cref="HorizonPlayerProfile.HasAvatar"/> and treat unknown IDs as "not set".
+        /// </summary>
+        public HorizonPlayerProfile profile = new HorizonPlayerProfile();
     }
 
     /// <summary>
@@ -64,6 +76,13 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public string sortOrder;
         public bool isActive;
         public long scoreCount;
+
+        /// <summary>
+        /// True when the board only accepts validated runs (<c>ValidatedActionsManager.SubmitValidated</c>).
+        /// A plain <c>SubmitScore</c> to it fails with <c>VALIDATED_SUBMIT_REQUIRED</c>.
+        /// </summary>
+        public bool validatedOnly;
+
         public string createdAt;
         public string updatedAt;
     }

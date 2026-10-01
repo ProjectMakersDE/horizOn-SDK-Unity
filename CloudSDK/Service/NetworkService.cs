@@ -104,6 +104,20 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
+        /// Send a PUT request to the API.
+        /// Same headers, JSON serialization, retries and error handling as <see cref="PostAsync{TResponse}"/>.
+        /// </summary>
+        /// <typeparam name="TResponse">The response type</typeparam>
+        /// <param name="endpoint">The API endpoint</param>
+        /// <param name="requestData">The request data to serialize as JSON</param>
+        /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <returns>The deserialized response</returns>
+        public async Task<NetworkResponse<TResponse>> PutAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+        {
+            return await SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken);
+        }
+
+        /// <summary>
         /// Send a DELETE request to the API.
         /// </summary>
         /// <typeparam name="TResponse">The response type</typeparam>
@@ -136,7 +150,19 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The raw binary response or null if not found</returns>
         public async Task<BinaryNetworkResponse> GetBinaryAsync(string endpoint, bool useSessionToken = false)
         {
-            return await SendBinaryGetRequestAsync(endpoint, useSessionToken);
+            return await SendBinaryResponseRequestAsync(endpoint, "GET", null, useSessionToken);
+        }
+
+        /// <summary>
+        /// Send a JSON POST request expecting a raw binary response.
+        /// </summary>
+        /// <param name="endpoint">The API endpoint</param>
+        /// <param name="requestData">The JSON request body</param>
+        /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <returns>The raw binary response or not found for HTTP 204</returns>
+        public async Task<BinaryNetworkResponse> PostForBinaryAsync(string endpoint, object requestData, bool useSessionToken = false)
+        {
+            return await SendBinaryResponseRequestAsync(endpoint, "POST", requestData, useSessionToken);
         }
 
         /// <summary>
@@ -195,17 +221,34 @@ namespace PM.horizOn.Cloud.Service
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
                             float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                            // Feature limits with a code (for example RUN_RATE_LIMITED) can last an hour:
+                            // they are reported right away instead of being retried.
+                            if (attemptCount < maxAttempts && !IsNonRetryableRateLimitCode(rateLimitCode))
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
 
-                            // Wait and retry
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            // Still rate limited after the last attempt (or not retryable): fail with a clear
+                            // message and keep the 429 status and the server code.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = method,
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode);
                         }
 
                         // Server errors (5xx) or timeout - retry
@@ -238,7 +281,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode);
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
                     }
 
                     // Success
@@ -376,9 +419,24 @@ namespace PM.horizOn.Cloud.Service
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            if (attemptCount < maxAttempts)
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
+
+                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = method,
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -409,7 +467,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode);
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
                     }
 
                     string responseText = request.downloadHandler.text;
@@ -439,9 +497,10 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
-        /// Internal method to send binary GET requests with retry logic.
+        /// Internal method to send requests expecting a binary response with retry logic.
         /// </summary>
-        private async Task<BinaryNetworkResponse> SendBinaryGetRequestAsync(string endpoint, bool useSessionToken)
+        private async Task<BinaryNetworkResponse> SendBinaryResponseRequestAsync(
+            string endpoint, string method, object requestData, bool useSessionToken)
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -464,12 +523,13 @@ namespace PM.horizOn.Cloud.Service
                 EventService.Instance?.Publish(EventKeys.NetworkRequestStarted, new NetworkRequestData
                 {
                     Url = url,
-                    Method = "GET",
+                    Method = method,
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateBinaryGetRequest(url, useSessionToken))
+                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
+                    request.SetRequestHeader("Accept", "application/octet-stream");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -483,7 +543,7 @@ namespace PM.horizOn.Cloud.Service
                         EventService.Instance?.Publish(EventKeys.NetworkRequestSuccess, new NetworkSuccessData
                         {
                             Url = url,
-                            Method = "GET",
+                            Method = method,
                             StatusCode = 204
                         });
                         return BinaryNetworkResponse.NotFound();
@@ -504,9 +564,24 @@ namespace PM.horizOn.Cloud.Service
                                 RetryAfter = retryDelay
                             });
 
-                            LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                            await Task.Delay((int)(retryDelay * 1000));
-                            continue;
+                            if (attemptCount < maxAttempts)
+                            {
+                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
+                                await Task.Delay((int)(retryDelay * 1000));
+                                continue;
+                            }
+
+                            // Still rate limited after the last attempt: fail with a clear message and keep the 429 status.
+                            string rateLimitError = BuildRateLimitMessage(retryDelay);
+                            EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
+                            {
+                                Url = url,
+                                Method = method,
+                                StatusCode = responseCode,
+                                Error = rateLimitError
+                            });
+                            LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
+                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -531,12 +606,12 @@ namespace PM.horizOn.Cloud.Service
                         EventService.Instance?.Publish(EventKeys.NetworkRequestFailed, new NetworkErrorData
                         {
                             Url = url,
-                            Method = "GET",
+                            Method = method,
                             StatusCode = responseCode,
                             Error = errorMessage
                         });
 
-                        LogService.Instance.Error($"Request failed: GET {url} - {errorMessage}");
+                        LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
                         return BinaryNetworkResponse.Failure(errorMessage, responseCode);
                     }
 
@@ -545,7 +620,7 @@ namespace PM.horizOn.Cloud.Service
                     EventService.Instance?.Publish(EventKeys.NetworkRequestSuccess, new NetworkSuccessData
                     {
                         Url = url,
-                        Method = "GET",
+                        Method = method,
                         StatusCode = request.responseCode
                     });
 
@@ -590,36 +665,6 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
-        /// Create a UnityWebRequest for binary GET with octet-stream accept header.
-        /// </summary>
-        private UnityWebRequest CreateBinaryGetRequest(string url, bool useSessionToken)
-        {
-            UnityWebRequest request = UnityWebRequest.Get(url);
-            request.SetRequestHeader("Accept", "application/octet-stream");
-
-            request.timeout = _config.ConnectionTimeoutSeconds;
-
-            string apiKey = _config.ApiKey;
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
-            }
-            else
-            {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
-            }
-            request.SetRequestHeader("X-API-Key", apiKey);
-
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {_sessionToken}");
-                LogService.Instance.Info("Authorization header added (session token)");
-            }
-
-            return request;
-        }
-
-        /// <summary>
         /// Create a UnityWebRequest with proper headers and body.
         /// </summary>
         private UnityWebRequest CreateRequest(string url, string method, object requestData, bool useSessionToken)
@@ -630,13 +675,13 @@ namespace PM.horizOn.Cloud.Service
             {
                 request = UnityWebRequest.Get(url);
             }
-            else if (method == "POST")
+            else if (method == "POST" || method == "PUT")
             {
                 // Use ToJsonExcludeEmpty to avoid sending empty strings that fail API validation
                 string jsonData = requestData != null ? JsonHelper.ToJsonExcludeEmpty(requestData) : "{}";
                 LogService.Instance.Info($"Request JSON: {jsonData}");
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
-                request = new UnityWebRequest(url, "POST");
+                request = new UnityWebRequest(url, method);
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
@@ -677,6 +722,33 @@ namespace PM.horizOn.Cloud.Service
         }
 
         /// <summary>
+        /// Error message for a request that is still rate limited (HTTP 429) after the last retry.
+        /// </summary>
+        /// <param name="retryAfterSeconds">Seconds from the Retry-After header (0 if unknown)</param>
+        /// <returns>Human-readable error message</returns>
+        internal static string BuildRateLimitMessage(float retryAfterSeconds)
+        {
+            if (retryAfterSeconds > 0f)
+            {
+                return $"Rate limit exceeded (HTTP 429). Try again in {(int)Math.Ceiling(retryAfterSeconds)} seconds.";
+            }
+            return "Rate limit exceeded (HTTP 429). Try again later.";
+        }
+
+        /// <summary>
+        /// True for a 429 server code that must not be retried automatically because the wait can
+        /// be long: the validated actions run limits <c>RUN_RATE_LIMITED</c> and
+        /// <c>RUN_CAPACITY_REACHED</c> (up to an hour). A 429 without a code (the account request
+        /// limit) keeps the Retry-After based retries.
+        /// </summary>
+        /// <param name="errorCode">The <c>code</c> of the 429 body, or null</param>
+        internal static bool IsNonRetryableRateLimitCode(string errorCode)
+        {
+            return errorCode == ValidatedActionsErrorCodes.RunRateLimited ||
+                   errorCode == ValidatedActionsErrorCodes.RunCapacityReached;
+        }
+
+        /// <summary>
         /// Parse error message from request.
         /// </summary>
         private string ParseErrorMessage(UnityWebRequest request)
@@ -701,6 +773,33 @@ namespace PM.horizOn.Cloud.Service
             // Fallback to Unity error message
             return !string.IsNullOrEmpty(request.error) ? request.error : $"HTTP {request.responseCode}";
         }
+
+        /// <summary>
+        /// Parse the stable error <c>code</c> from a JSON error body
+        /// (for example <c>{"code": "COSMETIC_LOCKED", ...}</c>).
+        /// </summary>
+        /// <returns>The server code, or null when the body has none</returns>
+        private string ParseErrorCode(UnityWebRequest request)
+        {
+            try
+            {
+                string text = request.downloadHandler?.text;
+                if (!string.IsNullOrEmpty(text) && text.TrimStart().StartsWith("{"))
+                {
+                    var errorResponse = JsonUtility.FromJson<ErrorResponse>(text);
+                    if (errorResponse != null && !string.IsNullOrEmpty(errorResponse.code))
+                    {
+                        return errorResponse.code;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore JSON parse errors
+            }
+
+            return null;
+        }
     }
 
     /// <summary>
@@ -713,6 +812,12 @@ namespace PM.horizOn.Cloud.Service
         public string Error { get; private set; }
         public long StatusCode { get; private set; }
 
+        /// <summary>
+        /// Stable error code from the JSON error body (for example <c>COSMETIC_LOCKED</c>),
+        /// or null when the server sent none. Only set on failures.
+        /// </summary>
+        public string ErrorCode { get; private set; }
+
         public static NetworkResponse<T> Success(T data, long statusCode = 200)
         {
             return new NetworkResponse<T>
@@ -723,13 +828,14 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static NetworkResponse<T> Failure(string error, long statusCode = 0)
+        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null)
         {
             return new NetworkResponse<T>
             {
                 IsSuccess = false,
                 Error = error,
-                StatusCode = statusCode
+                StatusCode = statusCode,
+                ErrorCode = errorCode
             };
         }
     }
