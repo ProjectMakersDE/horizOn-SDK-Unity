@@ -4,6 +4,7 @@ using UnityEngine;
 using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 
 namespace PM.horizOn.Cloud.Examples.Features
@@ -11,7 +12,8 @@ namespace PM.horizOn.Cloud.Examples.Features
     /// <summary>
     /// Minimal example: Validated Actions (server-checked runs).
     ///
-    /// What it does: connects, signs in anonymously, starts a run bound to a leaderboard,
+    /// What it does: connects, signs in anonymously, starts a run bound to a leaderboard with a
+    /// start context (build versions, content digest and the initial state of the simulation),
     /// seeds a deterministic random generator with the server seed, "plays" by recording a few
     /// inputs into an input log, and submits score plus the log. The server checks ticket and rules
     /// before it writes the score.
@@ -19,10 +21,10 @@ namespace PM.horizOn.Cloud.Examples.Features
     /// leaderboard in the horizOn Dashboard (key "weekly", optionally "Validated submissions only")
     /// and, if you like, a rule set under Validated Actions. Attach the script to an empty
     /// GameObject and press Play.
-    /// Expected Debug.Log output: "Run started: seed N", then "Run accepted: rank N" or
+    /// Expected Debug.Log output: "Run started: seed N", then "Run accepted: rank N, sus False" or
     /// "Run rejected: CODE" (for example DURATION_TOO_SHORT when your rules ask for a minimum
     /// duration, since this example submits right away). When the server asks for the input log
-    /// (a new top entry with "Evidence top N" set on the board, or a flagged run), the SDK uploads
+    /// (a new top entry with "Evidence top N" set on the board, or a sus run), the SDK uploads
     /// it on its own and logs "Evidence uploaded: N bytes".
     ///
     /// Reference: docs/wiki/sdks/features/validated-actions.md
@@ -63,10 +65,26 @@ namespace PM.horizOn.Cloud.Examples.Features
                     return;
                 }
 
-                ValidatedRun run = await ValidatedActionsManager.Instance.StartRun(leaderboardKey);
+                // Optional start context: what this run starts from. The server binds it to the run
+                // together with what it fixes itself (rules, cloud save, seed, start time) and keeps
+                // it with a sus run, so the run can be replayed with the same build and state.
+                // Set the versions once (DefaultRunContext) or pass a context per run as here.
+                byte[] levelData = System.Text.Encoding.UTF8.GetBytes("level-1:walls=12;coins=40");
+                byte[] initialState = System.Text.Encoding.UTF8.GetBytes("hp=100;x=0;y=0");
+                var context = new ValidatedRunContext(
+                    Application.version,
+                    contentVersion: "levels-1",
+                    simulationVersion: "sim-1",
+                    replayFormatVersion: "inputs-v1",
+                    // SHA-256 of the content bytes: the input log hash helper works for any bytes.
+                    contentDigest: ValidatedActionsManager.ComputeInputLogHash(levelData),
+                    initialState: initialState);
+
+                ValidatedRun run = await ValidatedActionsManager.Instance.StartRun(leaderboardKey, context);
                 if (run == null)
                 {
-                    // For example RUN_RATE_LIMITED, LEADERBOARD_NOT_FOUND or NOT_SUPPORTED (simpleServer).
+                    // For example RUN_RATE_LIMITED, LEADERBOARD_NOT_FOUND, NOT_SUPPORTED (simpleServer),
+                    // INITIAL_STATE_TOO_LARGE (413) or INVALID_CONTENT_DIGEST (local).
                     Debug.LogError($"[ValidatedActionsExample] Start failed: {ValidatedActionsManager.Instance.LastErrorCode}");
                     return;
                 }
@@ -101,7 +119,16 @@ namespace PM.horizOn.Cloud.Examples.Features
                 }
 
                 Debug.Log($"[ValidatedActionsExample] Run accepted: rank {result.rank}, best {result.bestScore}, " +
-                          $"new high score {result.isNewHighScore}, {result.durationSeconds}s measured by the server");
+                          $"new high score {result.isNewHighScore}, {result.durationSeconds}s measured by the server, sus {result.sus}");
+
+                if (result.sus)
+                {
+                    // The run counts, but it crossed a soft threshold of your rules. The server keeps it
+                    // with its start context for a review and asks for the input log (evidence.required),
+                    // which the SDK uploads on its own, just like for a top N record. The reasons stay
+                    // on the server; pass the flag on to your own analytics if you like.
+                    Debug.Log("[ValidatedActionsExample] The run was marked sus and is kept for review");
+                }
 
                 if (result.evidence.required)
                 {

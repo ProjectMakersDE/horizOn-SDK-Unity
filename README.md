@@ -406,6 +406,36 @@ and `DiscardRun()` when the player quits. Error codes are listed in
 is checked before the ticket is used), but the same board refuses it again, so call
 `DiscardRun()`.
 
+#### Run start context and sus runs
+
+`StartRun` takes an optional `ValidatedRunContext`: what the run starts from. All fields are
+optional; empty fields are not sent, and without any field the request stays the old one.
+
+```csharp
+var context = new ValidatedRunContext(
+    Application.version,                    // gameVersion, at most 64 printable ASCII characters
+    contentVersion: "levels-7",
+    simulationVersion: "sim-3",
+    replayFormatVersion: "inputs-v1",
+    contentDigest: ValidatedActionsManager.ComputeInputLogHash(levelBytes), // SHA-256, 64 hex
+    initialState: initialStateBytes);       // raw bytes, sent as base64
+var run = await ValidatedActionsManager.Instance.StartRun("weekly", context);
+
+// Or set the versions once; used whenever StartRun gets no context (no merge with a passed one)
+ValidatedActionsManager.Instance.DefaultRunContext = new ValidatedRunContext(Application.version);
+```
+
+The server binds the context to the run together with what it fixes itself (rule version,
+cloud save, server-owned values, seed, start time). A `contentDigest` that is not 64 hex
+characters fails locally with `INVALID_CONTENT_DIGEST`; the server answers
+`INITIAL_STATE_TOO_LARGE` (413, above the game's evidence size limit) or
+`INITIAL_STATE_INVALID_ENCODING` (400).
+
+`result.sus` is true when an accepted run crossed a soft threshold of the rules. The score
+counts; the server keeps the run with its start context for a review and asks for the input
+log through `result.evidence`, which the SDK uploads on its own after `SubmitValidated`, like
+a top N record. The reasons stay on the server. Older servers do not send the field (`false`).
+
 #### Evidence (input log upload)
 
 When a run becomes a new top entry (the board's "Evidence top N") or carries a soft flag, the

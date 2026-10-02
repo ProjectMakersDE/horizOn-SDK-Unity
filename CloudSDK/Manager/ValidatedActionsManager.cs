@@ -51,7 +51,7 @@ namespace PM.horizOn.Cloud.Manager
         /// <summary>
         /// Error code of the last failed call: the server <c>code</c> (for example
         /// <c>DURATION_TOO_SHORT</c>), a local code (<c>SESSION_REQUIRED</c>, <c>NO_ACTIVE_RUN</c>,
-        /// <c>INVALID_INPUT_LOG_HASH</c>, and for <c>UploadEvidence</c> <c>INVALID_RUN_ID</c>,
+        /// <c>INVALID_INPUT_LOG_HASH</c>, <c>INVALID_CONTENT_DIGEST</c>, and for <c>UploadEvidence</c> <c>INVALID_RUN_ID</c>,
         /// <c>EMPTY_INPUT_LOG</c>) or an HTTP fallback (see <see cref="ValidatedActionsErrorCodes"/>).
         /// Null after a success. The automatic evidence upload never sets it (see <c>LastEvidenceErrorCode</c>).
         /// </summary>
@@ -67,8 +67,18 @@ namespace PM.horizOn.Cloud.Manager
         public bool AutoUploadEvidence { get; set; } = true;
 
         /// <summary>
+        /// Run start context used by <see cref="StartRun"/> when the call passes none (TASK-911).
+        /// Set it once with the versions of your build, for example
+        /// <c>new ValidatedRunContext("1.4.2", contentVersion: "levels-7")</c>. It is not merged with
+        /// a context passed to <see cref="StartRun"/>: a passed context replaces it completely.
+        /// Null (default) sends no context.
+        /// </summary>
+        public ValidatedRunContext DefaultRunContext { get; set; }
+
+        /// <summary>
         /// SHA-256 of the raw input log bytes as 64 lower case hex characters.
         /// Keep the same bytes: a later evidence upload must match this hash.
+        /// The same helper gives the <see cref="ValidatedRunContext.contentDigest"/> of your content bytes.
         /// </summary>
         /// <param name="inputLog">Raw input log; null is hashed like an empty log</param>
         public static string ComputeInputLogHash(byte[] inputLog)
@@ -81,18 +91,31 @@ namespace PM.horizOn.Cloud.Manager
         /// <see cref="CurrentRun"/> (a previous run is replaced; its ticket simply expires).
         /// </summary>
         /// <param name="leaderboardKey">Optional board to bind the ticket to; null or "" leaves it unbound</param>
-        /// <returns>The run, or null on failure (then <see cref="LastErrorCode"/> is set, for example RUN_RATE_LIMITED)</returns>
-        public async Task<ValidatedRun> StartRun(string leaderboardKey = null)
+        /// <param name="context">
+        /// Optional start context (TASK-911): game, content, simulation and replay format versions,
+        /// content digest and the raw initial state of the simulation. The server archives it with
+        /// the run when the run turns out sus. Null uses <see cref="DefaultRunContext"/>; a context
+        /// without any field is not sent.
+        /// </param>
+        /// <returns>
+        /// The run, or null on failure (then <see cref="LastErrorCode"/> is set, for example
+        /// RUN_RATE_LIMITED, INVALID_CONTENT_DIGEST, INITIAL_STATE_INVALID_ENCODING or INITIAL_STATE_TOO_LARGE)
+        /// </returns>
+        public async Task<ValidatedRun> StartRun(string leaderboardKey = null, ValidatedRunContext context = null)
         {
             var user = UserManager.Instance.CurrentUser;
             if (!ValidatedActionsTransportContract.TryCreateStartRunPlan(
                     user,
                     HorizonApp.Network.GetSessionToken(),
                     leaderboardKey,
+                    context ?? DefaultRunContext,
                     out var plan,
                     out var localError))
             {
-                return FailLocally<ValidatedRun>(localError, "User must be signed in to start a validated run");
+                string message = localError == ValidatedActionsErrorCodes.InvalidContentDigest
+                    ? "Validated run context rejected before sending: contentDigest must be 64 hex characters (SHA-256)"
+                    : "User must be signed in to start a validated run";
+                return FailLocally<ValidatedRun>(localError, message);
             }
 
             var response = await HorizonApp.Network.PostAsync<ValidatedRun>(
@@ -224,9 +247,9 @@ namespace PM.horizOn.Cloud.Manager
                 result.Normalize();
                 LastErrorCode = null;
 
-                HorizonApp.Log.Info(result.HasLeaderboard
+                HorizonApp.Log.Info((result.HasLeaderboard
                     ? $"Validated run accepted: {result.runId} on {result.leaderboardKey}, score {result.score}, rank {result.rank}"
-                    : $"Validated run accepted: {result.runId} (no board)");
+                    : $"Validated run accepted: {result.runId} (no board)") + (result.sus ? " (sus)" : string.Empty));
 
                 if (result.HasLeaderboard)
                 {

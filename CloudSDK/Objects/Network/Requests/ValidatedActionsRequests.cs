@@ -5,12 +5,96 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
     /// <summary>
     /// Body of POST /api/v1/app/validated-actions/runs.
     /// A null or empty leaderboardKey is left out: the ticket is then not bound to a board.
+    /// A null context (nothing declared) is left out as well, so the request equals the one of
+    /// older SDKs.
     /// </summary>
     [Serializable]
     public class StartRunRequest
     {
         public string userId;
         public string leaderboardKey;
+        public RunStartContextRequest context;
+    }
+
+    /// <summary>
+    /// Wire form of <see cref="ValidatedRunContext"/> (TASK-911): the <c>context</c> object of a run
+    /// start. Null or empty fields are left out. <c>initialState</c> is the raw initial state as
+    /// standard base64 with padding.
+    /// </summary>
+    [Serializable]
+    public class RunStartContextRequest
+    {
+        public string gameVersion;
+        public string contentVersion;
+        public string simulationVersion;
+        public string replayFormatVersion;
+        public string contentDigest;
+        public string initialState;
+    }
+
+    /// <summary>
+    /// What a validated run starts from, declared by the game (optional, TASK-911). The server binds
+    /// it into the run's start context together with the values it fixes itself (rule version,
+    /// cloud save, server-owned values, seed, start time). When the run turns out sus, the context
+    /// is archived with the run so it can be replayed later. Every field is optional; null or empty
+    /// fields are not sent, and a context without any field is not sent at all.
+    /// </summary>
+    [Serializable]
+    public class ValidatedRunContext
+    {
+        /// <summary>Version of the game build, at most 64 printable ASCII characters (for example "1.4.2").</summary>
+        public string gameVersion;
+
+        /// <summary>Version of the game content (levels, balancing data), at most 64 printable ASCII characters.</summary>
+        public string contentVersion;
+
+        /// <summary>Version of the deterministic simulation, at most 64 printable ASCII characters.</summary>
+        public string simulationVersion;
+
+        /// <summary>Version of the input log format, at most 64 printable ASCII characters.</summary>
+        public string replayFormatVersion;
+
+        /// <summary>
+        /// SHA-256 of the game content the run uses as 64 hex characters (checked locally, otherwise
+        /// INVALID_CONTENT_DIGEST without a request). Compute it with
+        /// <c>ValidatedActionsManager.ComputeInputLogHash(contentBytes)</c>, the same SHA-256 helper.
+        /// </summary>
+        public string contentDigest;
+
+        /// <summary>
+        /// Raw bytes the simulation starts from (for example a serialized level state). Sent as base64,
+        /// decoded at most <c>evidenceMaxBytes</c> on the server (otherwise INITIAL_STATE_TOO_LARGE).
+        /// </summary>
+        public byte[] initialState;
+
+        public ValidatedRunContext()
+        {
+        }
+
+        public ValidatedRunContext(
+            string gameVersion,
+            string contentVersion = null,
+            string simulationVersion = null,
+            string replayFormatVersion = null,
+            string contentDigest = null,
+            byte[] initialState = null)
+        {
+            this.gameVersion = gameVersion;
+            this.contentVersion = contentVersion;
+            this.simulationVersion = simulationVersion;
+            this.replayFormatVersion = replayFormatVersion;
+            this.contentDigest = contentDigest;
+            this.initialState = initialState;
+        }
+
+        /// <summary>True when no field is set; such a context is not sent.</summary>
+        public bool IsEmpty =>
+            string.IsNullOrWhiteSpace(gameVersion) &&
+            string.IsNullOrWhiteSpace(contentVersion) &&
+            string.IsNullOrWhiteSpace(simulationVersion) &&
+            string.IsNullOrWhiteSpace(replayFormatVersion) &&
+            string.IsNullOrWhiteSpace(contentDigest) &&
+            (initialState == null || initialState.Length == 0);
     }
 
     /// <summary>

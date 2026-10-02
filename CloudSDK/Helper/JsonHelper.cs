@@ -107,8 +107,9 @@ namespace PM.horizOn.Cloud.Helper
                     }
                     else
                     {
-                        // For complex types, use JsonUtility
-                        sb.Append(JsonUtility.ToJson(value));
+                        // Nested objects (for example the run start context) follow the same
+                        // rule: null and empty string fields are left out.
+                        sb.Append(ToJsonExcludeEmpty(value));
                     }
                 }
 

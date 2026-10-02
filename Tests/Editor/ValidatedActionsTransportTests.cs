@@ -141,6 +141,7 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That(context.Request.Headers["Authorization"], Is.EqualTo("Bearer session-token-883"));
             Assert.That(body, Does.Contain("\"userId\":\"user-883\""), body);
             Assert.That(body, Does.Contain("\"leaderboardKey\":\"weekly\""), body);
+            Assert.That(body, Does.Not.Contain("context"), "without a context the body equals the one of older SDKs");
 
             await Respond(context, 200, RunBody);
             ValidatedRun run = await starting;
@@ -181,6 +182,7 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That(result.state.IsEmpty, Is.True);
             Assert.That(result.evidence, Is.Not.Null);
             Assert.That(result.evidence.required, Is.False);
+            Assert.That(result.sus, Is.False, "an absent sus field reads as false");
             Assert.That(ValidatedActionsManager.Instance.CurrentRun, Is.Null, "a ticket is single use");
             Assert.That(ValidatedActionsManager.Instance.LastErrorCode, Is.Null);
         }
@@ -311,6 +313,96 @@ namespace PM.horizOn.Cloud.Tests
             var list = JsonUtility.FromJson<LeaderboardListResponseV2>(
                 "{\"boards\":[{\"id\":\"b1\",\"key\":\"weekly\",\"validatedOnly\":true}],\"totalElements\":1}");
             Assert.That(list.boards[0].validatedOnly, Is.True);
+        }
+
+        [Test]
+        public async Task StartRun_WithContext_SendsCamelCaseContext_WithBase64InitialState()
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<ValidatedRun> starting = ValidatedActionsManager.Instance.StartRun("weekly", new ValidatedRunContext(
+                "1.4.2",
+                contentVersion: "levels-7",
+                simulationVersion: "sim-3",
+                replayFormatVersion: "  ",
+                contentDigest: AbcHash.ToUpperInvariant(),
+                initialState: new byte[] { 0, 1, 2, 255 }));
+
+            HttpListenerContext context = await WithTimeout(incoming, TimeSpan.FromSeconds(5));
+            string body = await ReadBody(context);
+            Assert.That(body, Does.Contain(
+                "\"context\":{\"gameVersion\":\"1.4.2\",\"contentVersion\":\"levels-7\",\"simulationVersion\":\"sim-3\"," +
+                "\"contentDigest\":\"" + AbcHash + "\",\"initialState\":\"AAEC/w==\"}"), body);
+            Assert.That(body, Does.Not.Contain("replayFormatVersion"), "a blank field is left out");
+
+            await Respond(context, 200, RunBody);
+            Assert.That(await starting, Is.Not.Null);
+        }
+
+        [Test]
+        public async Task StartRun_UsesDefaultRunContext_AndLeavesAnEmptyContextOut()
+        {
+            ValidatedActionsManager.Instance.DefaultRunContext = new ValidatedRunContext { gameVersion = "1.4.2" };
+            try
+            {
+                Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+                Task<ValidatedRun> starting = ValidatedActionsManager.Instance.StartRun("weekly");
+                HttpListenerContext context = await WithTimeout(incoming, TimeSpan.FromSeconds(5));
+                string body = await ReadBody(context);
+                Assert.That(body, Does.Contain("\"context\":{\"gameVersion\":\"1.4.2\"}"), body);
+                await Respond(context, 200, RunBody);
+                Assert.That(await starting, Is.Not.Null);
+
+                incoming = _listener.GetContextAsync();
+                starting = ValidatedActionsManager.Instance.StartRun("weekly", new ValidatedRunContext { initialState = new byte[0] });
+                context = await WithTimeout(incoming, TimeSpan.FromSeconds(5));
+                body = await ReadBody(context);
+                Assert.That(body, Does.Not.Contain("context"), "a passed empty context replaces the default and is left out");
+                await Respond(context, 200, RunBody);
+                Assert.That(await starting, Is.Not.Null);
+            }
+            finally
+            {
+                ValidatedActionsManager.Instance.DefaultRunContext = null;
+            }
+        }
+
+        [Test]
+        public async Task StartRun_InvalidContentDigest_FailsLocallyWithoutRequest()
+        {
+            Task<HttpListenerContext> unexpectedRequest = _listener.GetContextAsync();
+
+            Assert.That(await ValidatedActionsManager.Instance.StartRun("weekly",
+                new ValidatedRunContext { contentDigest = AbcHash.Substring(1) }), Is.Null);
+            Assert.That(ValidatedActionsManager.Instance.LastErrorCode, Is.EqualTo(ValidatedActionsErrorCodes.InvalidContentDigest));
+
+            Task completed = await Task.WhenAny(unexpectedRequest, Task.Delay(350));
+            Assert.That(completed, Is.Not.SameAs(unexpectedRequest), "an invalid content digest must not send a request");
+        }
+
+        [Test]
+        public async Task StartRun_InitialStateTooLarge_ExposesTheServerCode()
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<ValidatedRun> starting = ValidatedActionsManager.Instance.StartRun("weekly",
+                new ValidatedRunContext { initialState = new byte[] { 1, 2, 3 } });
+            await Respond(await WithTimeout(incoming, TimeSpan.FromSeconds(5)), 413,
+                "{\"status\":413,\"code\":\"INITIAL_STATE_TOO_LARGE\",\"message\":\"initialState is too large\"}");
+
+            Assert.That(await starting, Is.Null);
+            Assert.That(ValidatedActionsManager.Instance.LastErrorCode, Is.EqualTo(ValidatedActionsErrorCodes.InitialStateTooLarge));
+            Assert.That(ValidatedActionsManager.Instance.HasActiveRun, Is.False);
+        }
+
+        [Test]
+        public void SubmitResult_ReadsSus_AndDefaultsToFalse()
+        {
+            var sus = JsonUtility.FromJson<ValidatedSubmitResult>(
+                "{\"accepted\":true,\"runId\":\"run-911\",\"evidence\":{\"required\":true,\"runId\":\"run-911\"},\"sus\":true}");
+            Assert.That(sus.sus, Is.True);
+            Assert.That(sus.evidence.required, Is.True);
+
+            var plain = JsonUtility.FromJson<ValidatedSubmitResult>(AcceptedBody);
+            Assert.That(plain.sus, Is.False);
         }
 
         private async Task StartRunWith(string runBody)
