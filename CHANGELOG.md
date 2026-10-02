@@ -1,3 +1,15 @@
+# [1.10.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.9.0...v1.10.0) (2026-10-02)
+
+
+### Bug Fixes
+
+* **email:** serialize template variables as JSON object ([e1ec186](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/e1ec1867c4e81917871f1f3df14106a20c6f1445))
+
+
+### Features
+
+* **validated-actions:** optional run start context and sus result ([2d4faf9](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/2d4faf9b85cd848673980045d5b33158633200a9))
+
 # [1.9.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.6...v1.9.0) (2026-10-01)
 
 
