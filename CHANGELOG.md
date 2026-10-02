@@ -1,3 +1,21 @@
+# [1.9.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.6...v1.9.0) (2026-10-01)
+
+
+### Bug Fixes
+
+* bind cloud saves to sessions and load binary data via POST ([1a23308](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/1a23308fcd96d2bcd27b50f19b31fc73c4c49808))
+* **gift-codes:** send the player session when redeeming a code ([88f50c3](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/88f50c3216ac0360aec16d4acd4ab861a2638bd2))
+* **network:** clear error when still rate limited after the last retry (TASK-885) ([ad14c5a](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/ad14c5a8c390092dccc688518435242e4e09819d))
+* **validated-actions:** report NOT_SUPPORTED for the simpleServer's generic 404 NOT_FOUND ([37e4776](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/37e4776c494af8a2abaa2d2b48659ddd20798a67))
+
+
+### Features
+
+* **player-profile:** add PlayerProfileManager, profile on leaderboard entries and gift code unlocks ([f759973](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/f7599739e28476b10f5f049eda7b10d60784bc7b))
+* **validated-actions:** add server-owned player state (GetState, CurrentState) (TASK-887) ([6b8cbdf](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/6b8cbdfa6ade705a950ccd85c3d7e62aa6ea4df0))
+* **validated-actions:** add ValidatedActionsManager for server-checked runs (TASK-883) ([4c4d66a](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/4c4d66a6e665be5847c5f3fea8a779702d455e12))
+* **validated-actions:** upload input log evidence and expose PLAYER_BANNED (TASK-888) ([5f6d459](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/5f6d459b97ee5a997afa3b917acf327a802821e7))
+
 ## [1.8.6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.8.5...v1.8.6) (2026-09-28)
 
 

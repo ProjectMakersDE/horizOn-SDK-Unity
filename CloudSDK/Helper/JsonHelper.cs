@@ -92,6 +92,11 @@ namespace PM.horizOn.Cloud.Helper
                     {
                         sb.Append(value.ToString());
                     }
+                    else if (value is IDictionary<string, string> stringDictionary)
+                    {
+                        // Template variables are a JSON object, not an array of KeyValuePair values.
+                        AppendStringDictionary(sb, stringDictionary);
+                    }
                     else if (value is IEnumerable<string> stringValues)
                     {
                         // JsonUtility cannot serialize a bare array or list, so string
@@ -121,6 +126,32 @@ namespace PM.horizOn.Cloud.Helper
                 Debug.LogError($"[JsonHelper] ToJsonExcludeEmpty failed: {e.Message}");
                 return "{}";
             }
+        }
+
+        private static void AppendStringDictionary(StringBuilder sb, IDictionary<string, string> values)
+        {
+            sb.Append("{");
+            bool firstItem = true;
+            foreach (var item in values)
+            {
+                if (!firstItem)
+                    sb.Append(",");
+                firstItem = false;
+                sb.Append("\"");
+                sb.Append(EscapeJsonString(item.Key));
+                sb.Append("\":");
+                if (item.Value == null)
+                {
+                    sb.Append("null");
+                }
+                else
+                {
+                    sb.Append("\"");
+                    sb.Append(EscapeJsonString(item.Value));
+                    sb.Append("\"");
+                }
+            }
+            sb.Append("}");
         }
 
         /// <summary>
