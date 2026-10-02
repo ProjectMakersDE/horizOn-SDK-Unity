@@ -101,6 +101,25 @@ namespace PM.horizOn.Cloud.Transport
             out ValidatedStartRunPlan plan,
             out string errorCode)
         {
+            return TryCreateStartRunPlan(user, transportSessionToken, leaderboardKey, null, out plan, out errorCode);
+        }
+
+        /// <summary>
+        /// Builds the start plan with an optional run start context (TASK-911). Local checks in this
+        /// order (no request on failure): session (SESSION_REQUIRED), a set contentDigest must be 64
+        /// hex characters (INVALID_CONTENT_DIGEST). Everything else (version format, initial state
+        /// size) is left to the server. Blank fields are left out, the digest is sent in lower case,
+        /// initialState is sent as standard base64 with padding, and a context without any field is
+        /// left out entirely.
+        /// </summary>
+        internal static bool TryCreateStartRunPlan(
+            UserData user,
+            string transportSessionToken,
+            string leaderboardKey,
+            ValidatedRunContext context,
+            out ValidatedStartRunPlan plan,
+            out string errorCode)
+        {
             plan = null;
             errorCode = null;
 
@@ -110,12 +129,45 @@ namespace PM.horizOn.Cloud.Transport
                 return false;
             }
 
+            string digest = NormalizeOptional(context?.contentDigest);
+            if (digest != null && !IsValidInputLogHash(digest))
+            {
+                errorCode = ValidatedActionsErrorCodes.InvalidContentDigest;
+                return false;
+            }
+
             plan = new ValidatedStartRunPlan(new StartRunRequest
             {
                 userId = user.UserId,
-                leaderboardKey = NormalizeOptional(leaderboardKey)
+                leaderboardKey = NormalizeOptional(leaderboardKey),
+                context = CreateContextRequest(context, digest?.ToLowerInvariant())
             });
             return true;
+        }
+
+        /// <summary>
+        /// The wire form of a run start context, or null when nothing is set (the field is then
+        /// left out and older servers see the request they know). Versions are sent unchanged
+        /// unless blank; the server checks their format.
+        /// </summary>
+        private static RunStartContextRequest CreateContextRequest(ValidatedRunContext context, string normalizedDigest)
+        {
+            if (context == null || context.IsEmpty)
+            {
+                return null;
+            }
+
+            return new RunStartContextRequest
+            {
+                gameVersion = BlankToNull(context.gameVersion),
+                contentVersion = BlankToNull(context.contentVersion),
+                simulationVersion = BlankToNull(context.simulationVersion),
+                replayFormatVersion = BlankToNull(context.replayFormatVersion),
+                contentDigest = normalizedDigest,
+                initialState = context.initialState != null && context.initialState.Length > 0
+                    ? Convert.ToBase64String(context.initialState)
+                    : null
+            };
         }
 
         /// <summary>
@@ -225,6 +277,14 @@ namespace PM.horizOn.Cloud.Transport
         internal static bool IsRejection(long httpStatus)
         {
             return httpStatus == 422 || httpStatus == 403;
+        }
+
+        /// <summary>
+        /// Keeps the value unchanged; blank becomes null so the field is left out of the body.
+        /// </summary>
+        private static string BlankToNull(string value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value;
         }
 
         /// <summary>

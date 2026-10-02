@@ -122,6 +122,16 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// </summary>
         public EvidenceRequest evidence = new EvidenceRequest();
 
+        /// <summary>
+        /// True when the run was accepted but crossed a soft threshold of the rules (TASK-911). Not a
+        /// rejection: the score counts. The server archives the run with its start context for a
+        /// review and asks for the input log through <see cref="evidence"/>, which the SDK uploads on
+        /// its own after <c>SubmitValidated</c>, like a top N record. The reasons stay on the server;
+        /// pass the flag on (for example to your analytics) if you like. False when absent (older
+        /// servers).
+        /// </summary>
+        public bool sus;
+
         /// <summary>True when the score was written to a board.</summary>
         public bool HasLeaderboard => !string.IsNullOrEmpty(leaderboardKey);
 
@@ -431,6 +441,9 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// <summary>UploadEvidence with a null or empty input log (local, no request; the server needs a log).</summary>
         public const string EmptyInputLog = "EMPTY_INPUT_LOG";
 
+        /// <summary>StartRun with a context whose contentDigest is set but not 64 hex characters (local, no request).</summary>
+        public const string InvalidContentDigest = "INVALID_CONTENT_DIGEST";
+
         // Server codes
 
         /// <summary>The session belongs to another player, account or API key (403).</summary>
@@ -543,6 +556,14 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// the window ends: upload the exact bytes that were hashed.
         /// </summary>
         public const string EvidenceHashMismatch = "EVIDENCE_HASH_MISMATCH";
+
+        // Run start context (TASK-911): the run is not started.
+
+        /// <summary>The context's initialState could not be read as standard base64 (400). Final.</summary>
+        public const string InitialStateInvalidEncoding = "INITIAL_STATE_INVALID_ENCODING";
+
+        /// <summary>The decoded initialState is larger than the game's <c>evidenceMaxBytes</c> (413). Final: send a smaller state.</summary>
+        public const string InitialStateTooLarge = "INITIAL_STATE_TOO_LARGE";
 
         /// <summary>The player's hourly run limit is reached (429). Not retried automatically.</summary>
         public const string RunRateLimited = "RUN_RATE_LIMITED";

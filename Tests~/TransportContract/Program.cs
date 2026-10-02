@@ -215,6 +215,42 @@ Require(ValidatedActionsErrorCodes.Resolve(404, "NOT_FOUND") == ValidatedActions
 Require(new PlayerState { values = new[] { new PlayerStateValue { key = "gold", balance = 1250 } } }.GetBalance("gold") == 1250, "state balance helper");
 Require(new PlayerState().GetBalance("gold") == 0, "state balance of a missing key");
 
+// Validated Actions run start context (TASK-911): camelCase fields, blank fields and an empty
+// context left out, initialState as standard base64 with padding, the digest checked locally.
+Require(JsonHelper.ToJsonExcludeEmpty(startPlan.Request) == "{\"userId\":\"user-720\",\"leaderboardKey\":\"weekly\"}",
+    "start run without context sends the old body");
+Require(ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", "weekly",
+        new ValidatedRunContext { gameVersion = " ", initialState = new byte[0] }, out var emptyContextPlan, out _) &&
+    emptyContextPlan.Request.context == null, "empty context is left out");
+if (!ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", null,
+        new ValidatedRunContext("1.4.2", simulationVersion: "sim-3", replayFormatVersion: "",
+            contentDigest: " " + abcHash.ToUpperInvariant() + " ", initialState: new byte[] { 0, 1, 2, 255 }),
+        out var contextPlan, out var contextError))
+{
+    throw new InvalidOperationException($"context did not produce a start run plan: {contextError}");
+}
+string contextJson = JsonHelper.ToJsonExcludeEmpty(contextPlan.Request);
+Require(contextJson == "{\"userId\":\"user-720\",\"context\":{\"gameVersion\":\"1.4.2\",\"simulationVersion\":\"sim-3\"," +
+        $"\"contentDigest\":\"{abcHash}\",\"initialState\":\"AAEC/w==\"}}}}", $"start run context body: {contextJson}");
+Require(ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", null,
+        new ValidatedRunContext { initialState = new byte[] { 0x68, 0x69 } }, out var stateOnlyPlan, out _) &&
+    stateOnlyPlan.Request.context.initialState == "aGk=" && stateOnlyPlan.Request.context.gameVersion == null,
+    "initial state alone is sent with padding");
+Require(!ValidatedActionsTransportContract.TryCreateStartRunPlan(user, "session-token-720", null,
+        new ValidatedRunContext { contentDigest = "abc" }, out var badDigestPlan, out var badDigestCode) &&
+    badDigestPlan == null && badDigestCode == ValidatedActionsErrorCodes.InvalidContentDigest, "short content digest is rejected locally");
+Require(!ValidatedActionsTransportContract.TryCreateStartRunPlan(new UserData(), "session-token-720", null,
+        new ValidatedRunContext { contentDigest = "abc" }, out _, out var contextSessionCode) &&
+    contextSessionCode == ValidatedActionsErrorCodes.SessionRequired, "session is checked before the context");
+Require(ValidatedActionsErrorCodes.Resolve(413, "INITIAL_STATE_TOO_LARGE") == ValidatedActionsErrorCodes.InitialStateTooLarge,
+    "initial state too large code");
+Require(ValidatedActionsErrorCodes.Resolve(400, "INITIAL_STATE_INVALID_ENCODING") == ValidatedActionsErrorCodes.InitialStateInvalidEncoding,
+    "initial state encoding code");
+Require(JsonUtility.FromJson<ValidatedSubmitResult>("{\"accepted\":true,\"runId\":\"run-911\",\"sus\":true}").sus,
+    "submit result reads sus");
+Require(!JsonUtility.FromJson<ValidatedSubmitResult>("{\"accepted\":true,\"runId\":\"run-911\"}").sus,
+    "submit result without sus reads false");
+
 // Validated Actions Part 2 (TASK-887): GET state carries the session and the player's userId,
 // value rejections use up the ticket, a submit without state keeps the cached state.
 if (!ValidatedActionsTransportContract.TryCreateGetStatePlan(user, "session-token-720", out var statePlan, out var stateError))
@@ -468,7 +504,7 @@ Require(restoredManager.CurrentUser.AccessToken == "session-723", "late success 
 Require(!HorizonApp.Events.WasPublished(EventKeys.UserAuthCheckSuccess),
     "late success emits no stale auth event");
 
-Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs, state and evidence) transport contract passed");
+Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs, start context, state and evidence) transport contract passed");
 Console.WriteLine("Unity SDK anonymous session contract passed");
 
 void RequireSubmitError(UserData submitUser, string token, ValidatedRun run, string hash, string expectedCode, string name)

@@ -1409,10 +1409,22 @@ request) with `LastErrorCode = "SESSION_REQUIRED"`.
 ```json
 {
   "userId": "uuid",
-  "leaderboardKey": "weekly"
+  "leaderboardKey": "weekly",
+  "context": {
+    "gameVersion": "1.4.2",
+    "contentVersion": "levels-7",
+    "simulationVersion": "sim-3",
+    "replayFormatVersion": "inputs-v1",
+    "contentDigest": "64 hex characters (SHA-256 of the content)",
+    "initialState": "base64 of the initial state bytes"
+  }
 }
 ```
 `leaderboardKey` is optional and left out when empty (the ticket is then not bound to a board).
+`context` (optional) comes from a `ValidatedRunContext` passed to `StartRun` or from
+`DefaultRunContext`: versions of at most 64 printable ASCII characters, the content digest and
+the raw initial state, sent as standard base64. Empty fields are left out, and a context without
+any field is left out entirely. The server binds it to the run and keeps it with a sus run.
 
 **Response** (200):
 ```json
@@ -1430,10 +1442,11 @@ request) with `LastErrorCode = "SESSION_REQUIRED"`.
 **Error Responses**:
 | Code | Cause |
 |------|-------|
-| 400 | Validation (bad key format) |
+| 400 | Validation (bad key format, bad `context` field), `INITIAL_STATE_INVALID_ENCODING` |
 | 401 | `SESSION_REQUIRED` |
 | 403 | `SESSION_FORBIDDEN` |
 | 404 | `PLAYER_NOT_FOUND`, `LEADERBOARD_NOT_FOUND` |
+| 413 | `INITIAL_STATE_TOO_LARGE` (decoded initial state above the game's evidence size limit) |
 | 429 | Account request limit (empty body, retried by the SDK), or `RUN_RATE_LIMITED` / `RUN_CAPACITY_REACHED` (not retried) |
 | 503 | `VALIDATED_ACTIONS_UNAVAILABLE` |
 
@@ -1449,9 +1462,17 @@ if (run == null)
     return;
 }
 var random = new System.Random(run.seed);
+
+// With a start context (all fields optional)
+run = await ValidatedActionsManager.Instance.StartRun("weekly", new ValidatedRunContext(
+    Application.version,
+    contentVersion: "levels-7",
+    contentDigest: ValidatedActionsManager.ComputeInputLogHash(levelBytes),
+    initialState: initialStateBytes));
 ```
 
-The run becomes `CurrentRun`; a new `StartRun` replaces it.
+The run becomes `CurrentRun`; a new `StartRun` replaces it. A `contentDigest` that is not 64 hex
+characters fails locally with `INVALID_CONTENT_DIGEST` (no request).
 **Event**: `EventKeys.ValidatedRunStarted` (420) with the `ValidatedRun`.
 
 ---
@@ -1496,9 +1517,14 @@ values.
       { "key": "gold", "balance": 1500, "earnedToday": 500, "dailyCap": 500, "requested": 400, "credited": 250 }
     ]
   },
-  "evidence": null
+  "evidence": null,
+  "sus": false
 }
 ```
+`sus` is true when the accepted run crossed a soft threshold of the rules: the score counts, the
+server keeps the run with its start context for a review and asks for the input log through
+`evidence` (uploaded by the SDK like a top N record). The reasons stay on the server. Older
+servers omit the field; the SDK reads it as `false`.
 `state` lists every value of the rules; values the run touched carry `requested` and `credited`.
 It is `null` when the rules define no values (the SDK keeps an empty `PlayerState`, `HasData`
 false, and leaves `CurrentState` unchanged).
