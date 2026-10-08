@@ -36,5 +36,8 @@
       "description": "Full guided demo scene and UI Toolkit window covering every SDK feature.",
       "path": "Samples~/ExampleUI"
     }
-  ]
+  ],
+  "dependencies": {
+    "com.unity.ugui": "2.0.0"
+  }
 }

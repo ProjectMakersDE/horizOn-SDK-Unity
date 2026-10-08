@@ -53,8 +53,9 @@ The optional **Examples** and **Example UI** samples can be imported afterwards 
 ### Option 2: Unity Package (.unitypackage)
 
 1. Download the latest `.unitypackage` from [Releases](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/releases)
-2. Import via **Assets > Import Package > Custom Package**
-3. Import all files when prompted
+2. Ensure **Unity UI** (`com.unity.ugui`, 2.0.0) is installed through Package Manager. The included HelloHorizon sample uses it. The Asset Store package declares this dependency during import.
+3. Import via **Assets > Import Package > Custom Package**
+4. Import all files when prompted
 
 ### Option 3: Manual Installation
 
