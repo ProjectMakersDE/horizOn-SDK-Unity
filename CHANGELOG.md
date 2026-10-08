@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.10.0...v1.10.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **samples:** import demo without render pipeline requirements ([#12](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/12)) ([5005aef](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/5005aef054d08e3c3c2fd7f0ce5e2eeae5818152))
+
 # [1.10.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.9.0...v1.10.0) (2026-10-02)
 
 
