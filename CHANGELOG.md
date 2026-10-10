@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.10.1...v1.11.0) (2026-10-10)
+
+
+### Features
+
+* **cloud-save:** revision-checked saves for several devices ([2eb68b5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/2eb68b5a6a2dd3c543c65a93b4fad12d6c2b8e95))
+
 ## [1.10.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.10.0...v1.10.1) (2026-10-08)
 
 
