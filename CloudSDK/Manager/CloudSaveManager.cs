@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using System.Threading.Tasks;
 using PM.horizOn.Cloud.Base;
@@ -200,6 +202,250 @@ namespace PM.horizOn.Cloud.Manager
             }
         }
 
+        /// <summary>
+        /// Load the string save together with its server revision, for saving from several devices.
+        /// Pass <c>Revision</c> as <c>expectedRevision</c> to <see cref="Save(string, long)"/>.
+        /// </summary>
+        /// <returns>
+        /// The snapshot. <c>Found</c> is false and <c>Revision</c> 0 for an empty slot.
+        /// <c>Revision</c> is null when the server sent none: the state is unknown, not empty.
+        /// </returns>
+        public async Task<CloudSaveSnapshot<string>> LoadSnapshot()
+        {
+            if (!HasSignedInSession())
+            {
+                HorizonApp.Log.Error("User must be signed in to load data");
+                return new CloudSaveSnapshot<string> { Error = "User must be signed in to load data" };
+            }
+
+            var request = new LoadCloudDataRequest
+            {
+                userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId
+            };
+
+            var response = await HorizonApp.Network.PostAsync<LoadCloudSaveResponse>(
+                "/api/v1/app/cloud-save/load",
+                request,
+                useSessionToken: true
+            );
+
+            if (!response.IsSuccess || response.Data == null)
+            {
+                HorizonApp.Log.Error($"Cloud load failed: {response.Error}");
+                return new CloudSaveSnapshot<string> { Error = response.Error, StatusCode = response.StatusCode };
+            }
+
+            long? revision = CloudSaveRevision.FromHeader(response.GetHeader(CloudSaveRevision.ResponseHeader));
+            var snapshot = new CloudSaveSnapshot<string>
+            {
+                IsSuccess = true,
+                Found = response.Data.found,
+                Data = response.Data.found ? response.Data.saveData : null,
+                Revision = revision,
+                StatusCode = response.StatusCode
+            };
+
+            if (snapshot.Found)
+            {
+                int sizeBytes = Encoding.UTF8.GetByteCount(snapshot.Data ?? string.Empty);
+                HorizonApp.Log.Info($"Cloud data loaded: ({sizeBytes} bytes, revision {FormatRevision(revision)})");
+                HorizonApp.Events.Publish(EventKeys.CloudSaveDataLoaded, new CloudSaveLoadedData
+                {
+                    Key = request.userId,
+                    Data = snapshot.Data,
+                    SizeBytes = sizeBytes,
+                    LastModified = ""
+                });
+            }
+            else
+            {
+                HorizonApp.Log.Info($"Cloud data not found (revision {FormatRevision(revision)})");
+            }
+
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Load the binary save together with its server revision, for saving from several devices.
+        /// Pass <c>Revision</c> as <c>expectedRevision</c> to <see cref="SaveBytes(byte[], long)"/>.
+        /// </summary>
+        /// <returns>
+        /// The snapshot. <c>Found</c> is false and <c>Revision</c> 0 for an empty slot (HTTP 204).
+        /// <c>Revision</c> is null when the server sent none: the state is unknown, not empty.
+        /// </returns>
+        public async Task<CloudSaveSnapshot<byte[]>> LoadBytesSnapshot()
+        {
+            if (!HasSignedInSession())
+            {
+                HorizonApp.Log.Error("User must be signed in to load data");
+                return new CloudSaveSnapshot<byte[]> { Error = "User must be signed in to load data" };
+            }
+
+            string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
+
+            BinaryNetworkResponse response = await HorizonApp.Network.PostForBinaryAsync(
+                "/api/v1/app/cloud-save/load",
+                new LoadCloudDataRequest { userId = userId },
+                useSessionToken: true
+            );
+
+            if (!response.IsSuccess)
+            {
+                HorizonApp.Log.Error($"Cloud load (binary) failed: {response.Error}");
+                return new CloudSaveSnapshot<byte[]> { Error = response.Error, StatusCode = response.StatusCode };
+            }
+
+            long? revision = CloudSaveRevision.FromHeader(response.GetHeader(CloudSaveRevision.ResponseHeader));
+            var snapshot = new CloudSaveSnapshot<byte[]>
+            {
+                IsSuccess = true,
+                Found = response.Found,
+                Data = response.Found ? response.Data : null,
+                Revision = revision,
+                StatusCode = response.StatusCode
+            };
+
+            if (snapshot.Found)
+            {
+                int sizeBytes = snapshot.Data?.Length ?? 0;
+                HorizonApp.Log.Info($"Cloud data loaded (binary): ({sizeBytes} bytes, revision {FormatRevision(revision)})");
+                HorizonApp.Events.Publish(EventKeys.CloudSaveBytesLoaded, new CloudSaveBytesLoadedData
+                {
+                    Key = userId,
+                    Data = snapshot.Data,
+                    SizeBytes = sizeBytes
+                });
+            }
+            else
+            {
+                HorizonApp.Log.Info($"Cloud data not found (binary, revision {FormatRevision(revision)})");
+            }
+
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Save a string only if the cloud save is still at <paramref name="expectedRevision"/>
+        /// (sends <c>If-Match</c>). When another device saved first, nothing is written and the
+        /// result is <see cref="CloudSaveWriteStatus.Conflict"/>: load a new snapshot and decide.
+        /// </summary>
+        /// <param name="data">Data to save (UTF-8 string)</param>
+        /// <param name="expectedRevision">Revision from the last snapshot or save, 0 for an empty slot</param>
+        /// <returns>The result with the new revision on success</returns>
+        public async Task<CloudSaveWriteResult> Save(string data, long expectedRevision)
+        {
+            string localError = ValidateConditionalSave(string.IsNullOrEmpty(data), expectedRevision);
+            if (localError != null)
+            {
+                HorizonApp.Log.Error(localError);
+                return new CloudSaveWriteResult { Status = CloudSaveWriteStatus.Failed, Error = localError };
+            }
+
+            var request = new SaveCloudDataRequest
+            {
+                userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId,
+                saveData = data
+            };
+
+            var response = await HorizonApp.Network.PostAsync<SaveCloudSaveResponse>(
+                "/api/v1/app/cloud-save/save",
+                request,
+                useSessionToken: true,
+                headers: CloudSaveRevision.IfMatch(expectedRevision)
+            );
+
+            return ToWriteResult(response, request.userId, "Cloud save");
+        }
+
+        /// <summary>
+        /// Save raw bytes only if the cloud save is still at <paramref name="expectedRevision"/>
+        /// (sends <c>If-Match</c>). When another device saved first, nothing is written and the
+        /// result is <see cref="CloudSaveWriteStatus.Conflict"/>: load a new snapshot and decide.
+        /// </summary>
+        /// <param name="data">Raw binary data to save</param>
+        /// <param name="expectedRevision">Revision from the last snapshot or save, 0 for an empty slot</param>
+        /// <returns>The result with the new revision on success</returns>
+        public async Task<CloudSaveWriteResult> SaveBytes(byte[] data, long expectedRevision)
+        {
+            string localError = ValidateConditionalSave(data == null || data.Length == 0, expectedRevision);
+            if (localError != null)
+            {
+                HorizonApp.Log.Error(localError);
+                return new CloudSaveWriteResult { Status = CloudSaveWriteStatus.Failed, Error = localError };
+            }
+
+            string userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId;
+
+            var response = await HorizonApp.Network.PostBinaryAsync<SaveCloudSaveResponse>(
+                $"/api/v1/app/cloud-save/save?userId={userId}",
+                data,
+                useSessionToken: true,
+                headers: CloudSaveRevision.IfMatch(expectedRevision)
+            );
+
+            return ToWriteResult(response, userId, "Cloud save (binary)");
+        }
+
+        private static string ValidateConditionalSave(bool dataMissing, long expectedRevision)
+        {
+            if (dataMissing)
+            {
+                return "Save data is required";
+            }
+            if (expectedRevision < 0)
+            {
+                return "expectedRevision must be 0 (empty slot) or a revision from a snapshot or save";
+            }
+            if (!HasSignedInSession())
+            {
+                return "User must be signed in to save data";
+            }
+            return null;
+        }
+
+        private static CloudSaveWriteResult ToWriteResult(
+            NetworkResponse<SaveCloudSaveResponse> response, string userId, string operation)
+        {
+            if (response.IsSuccess && response.Data != null && response.Data.success)
+            {
+                long? revision = CloudSaveRevision.FromSaveResponse(response.Data.revision);
+                HorizonApp.Log.Info($"{operation} written: ({response.Data.dataSizeBytes} bytes, revision {FormatRevision(revision)})");
+                HorizonApp.Events.Publish(EventKeys.CloudSaveDataChanged, userId);
+                return new CloudSaveWriteResult
+                {
+                    Status = CloudSaveWriteStatus.Saved,
+                    Revision = revision,
+                    DataSizeBytes = response.Data.dataSizeBytes,
+                    StatusCode = response.StatusCode
+                };
+            }
+
+            if (response.StatusCode == 409)
+            {
+                const string conflict = "Cloud save changed on another device (HTTP 409). Nothing was written. Load a new snapshot before saving again.";
+                HorizonApp.Log.Warning($"{operation} conflict: {conflict}");
+                return new CloudSaveWriteResult
+                {
+                    Status = CloudSaveWriteStatus.Conflict,
+                    Error = conflict,
+                    StatusCode = response.StatusCode
+                };
+            }
+
+            HorizonApp.Log.Error($"{operation} failed: {response.Error}");
+            return new CloudSaveWriteResult
+            {
+                Status = CloudSaveWriteStatus.Failed,
+                Error = response.Error,
+                StatusCode = response.StatusCode
+            };
+        }
+
+        private static string FormatRevision(long? revision)
+        {
+            return revision.HasValue ? revision.Value.ToString(CultureInfo.InvariantCulture) : "unknown";
+        }
+
         private static bool HasSignedInSession()
         {
             var user = UserManager.Instance.CurrentUser;
@@ -230,6 +476,50 @@ namespace PM.horizOn.Cloud.Manager
         {
             string json = await Load();
             return string.IsNullOrEmpty(json) ? default : JsonHelper.FromJson<T>(json);
+        }
+    }
+
+    /// <summary>
+    /// Revision headers of the cloud save endpoints. Server contract checked 2026-10-10
+    /// (horizOn-Server AppCloudSaveController, CloudSaveService.saveCloudSave): load answers
+    /// <c>X-Cloud-Save-Revision</c> on JSON, bytes and 204 (0 = empty slot), save reads
+    /// <c>If-Match</c> as a plain number and answers 409 on a mismatch, a successful save returns
+    /// <c>revision</c> of at least 1.
+    /// </summary>
+    internal static class CloudSaveRevision
+    {
+        internal const string ResponseHeader = "X-Cloud-Save-Revision";
+        internal const string RequestHeader = "If-Match";
+
+        internal static IReadOnlyDictionary<string, string> IfMatch(long expectedRevision)
+        {
+            return new Dictionary<string, string>
+            {
+                [RequestHeader] = expectedRevision.ToString(CultureInfo.InvariantCulture)
+            };
+        }
+
+        /// <summary>
+        /// Revision from the load header, or null when it is missing or not a number (unknown state).
+        /// </summary>
+        internal static long? FromHeader(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+            return long.TryParse(value.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long revision)
+                ? revision
+                : (long?)null;
+        }
+
+        /// <summary>
+        /// Revision from a successful save. A written save is at least revision 1, so 0 means the
+        /// server sent no revision (unknown).
+        /// </summary>
+        internal static long? FromSaveResponse(long revision)
+        {
+            return revision > 0 ? revision : (long?)null;
         }
     }
 

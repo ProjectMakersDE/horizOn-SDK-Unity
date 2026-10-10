@@ -275,6 +275,36 @@ await CloudSaveManager.Instance.SaveObject(data);
 var loaded = await CloudSaveManager.Instance.LoadObject<GameData>();
 ```
 
+**Several devices.** `Save` and `SaveBytes` overwrite whatever is stored, so two devices of the
+same player overwrite each other silently. Load a snapshot with its revision and save with that
+revision instead. The server only writes while the save is still at that revision. Otherwise the
+result is a conflict and nothing is written:
+
+```csharp
+var snapshot = await CloudSaveManager.Instance.LoadSnapshot();   // LoadBytesSnapshot() for bytes
+if (!snapshot.IsSuccess || !snapshot.HasRevision)
+{
+    return; // load failed, or the server sent no revision: the state is unknown, not empty
+}
+
+var data = snapshot.Found ? JsonUtility.FromJson<GameData>(snapshot.Data) : new GameData();
+data.Coins += 50;
+
+CloudSaveWriteResult result = await CloudSaveManager.Instance.Save(JsonUtility.ToJson(data), snapshot.Revision.Value);
+if (result.IsConflict)
+{
+    // Another device saved first. Load a new snapshot, merge or let the player choose, save again.
+}
+else if (result.IsSuccess)
+{
+    Debug.Log($"Saved at revision {result.Revision}"); // pass it to the next Save
+}
+```
+
+Revision `0` means an empty slot. A missing revision (`HasRevision == false`, for example on a
+self-hosted simpleServer) means unknown, not empty. A conflict (HTTP 409) is never retried or
+overwritten automatically.
+
 ### Remote Config
 
 ```csharp

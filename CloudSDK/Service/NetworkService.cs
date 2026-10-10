@@ -87,7 +87,7 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The deserialized response</returns>
         public async Task<NetworkResponse<TResponse>> GetAsync<TResponse>(string endpoint, bool useSessionToken = false) where TResponse : class
         {
-            return await SendRequestAsync<TResponse>(endpoint, "GET", null, useSessionToken);
+            return await SendRequestAsync<TResponse>(endpoint, "GET", null, useSessionToken, null);
         }
 
         /// <summary>
@@ -97,10 +97,11 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="endpoint">The API endpoint</param>
         /// <param name="requestData">The request data to serialize as JSON</param>
         /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <param name="headers">Optional extra request headers, for example <c>If-Match</c></param>
         /// <returns>The deserialized response</returns>
-        public async Task<NetworkResponse<TResponse>> PostAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+        public async Task<NetworkResponse<TResponse>> PostAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false, IReadOnlyDictionary<string, string> headers = null) where TResponse : class
         {
-            return await SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken);
+            return await SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, headers);
         }
 
         /// <summary>
@@ -114,7 +115,7 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The deserialized response</returns>
         public async Task<NetworkResponse<TResponse>> PutAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
         {
-            return await SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken);
+            return await SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, null);
         }
 
         /// <summary>
@@ -126,7 +127,7 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The deserialized response</returns>
         public async Task<NetworkResponse<TResponse>> DeleteAsync<TResponse>(string endpoint, bool useSessionToken = false) where TResponse : class
         {
-            return await SendRequestAsync<TResponse>(endpoint, "DELETE", null, useSessionToken);
+            return await SendRequestAsync<TResponse>(endpoint, "DELETE", null, useSessionToken, null);
         }
 
         /// <summary>
@@ -136,10 +137,11 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="endpoint">The API endpoint</param>
         /// <param name="binaryData">The raw binary data to send</param>
         /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <param name="headers">Optional extra request headers, for example <c>If-Match</c></param>
         /// <returns>The deserialized response</returns>
-        public async Task<NetworkResponse<TResponse>> PostBinaryAsync<TResponse>(string endpoint, byte[] binaryData, bool useSessionToken = false) where TResponse : class
+        public async Task<NetworkResponse<TResponse>> PostBinaryAsync<TResponse>(string endpoint, byte[] binaryData, bool useSessionToken = false, IReadOnlyDictionary<string, string> headers = null) where TResponse : class
         {
-            return await SendBinaryRequestAsync<TResponse>(endpoint, "POST", binaryData, useSessionToken);
+            return await SendBinaryRequestAsync<TResponse>(endpoint, "POST", binaryData, useSessionToken, headers);
         }
 
         /// <summary>
@@ -150,7 +152,7 @@ namespace PM.horizOn.Cloud.Service
         /// <returns>The raw binary response or null if not found</returns>
         public async Task<BinaryNetworkResponse> GetBinaryAsync(string endpoint, bool useSessionToken = false)
         {
-            return await SendBinaryResponseRequestAsync(endpoint, "GET", null, useSessionToken);
+            return await SendBinaryResponseRequestAsync(endpoint, "GET", null, useSessionToken, null);
         }
 
         /// <summary>
@@ -159,10 +161,11 @@ namespace PM.horizOn.Cloud.Service
         /// <param name="endpoint">The API endpoint</param>
         /// <param name="requestData">The JSON request body</param>
         /// <param name="useSessionToken">Whether to include session token in headers</param>
+        /// <param name="headers">Optional extra request headers</param>
         /// <returns>The raw binary response or not found for HTTP 204</returns>
-        public async Task<BinaryNetworkResponse> PostForBinaryAsync(string endpoint, object requestData, bool useSessionToken = false)
+        public async Task<BinaryNetworkResponse> PostForBinaryAsync(string endpoint, object requestData, bool useSessionToken = false, IReadOnlyDictionary<string, string> headers = null)
         {
-            return await SendBinaryResponseRequestAsync(endpoint, "POST", requestData, useSessionToken);
+            return await SendBinaryResponseRequestAsync(endpoint, "POST", requestData, useSessionToken, headers);
         }
 
         /// <summary>
@@ -172,7 +175,8 @@ namespace PM.horizOn.Cloud.Service
             string endpoint,
             string method,
             object requestData,
-            bool useSessionToken) where TResponse : class
+            bool useSessionToken,
+            IReadOnlyDictionary<string, string> headers) where TResponse : class
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -201,6 +205,8 @@ namespace PM.horizOn.Cloud.Service
 
                 using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
+                    ApplyHeaders(request, headers);
+
                     // Send request
                     var operation = request.SendWebRequest();
 
@@ -281,7 +287,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request));
                     }
 
                     // Success
@@ -346,7 +352,7 @@ namespace PM.horizOn.Cloud.Service
                             data = JsonUtility.FromJson<TResponse>(responseText);
                         }
 
-                        return NetworkResponse<TResponse>.Success(data, request.responseCode);
+                        return NetworkResponse<TResponse>.Success(data, request.responseCode, ReadResponseHeaders(request));
                     }
                     catch (Exception e)
                     {
@@ -368,7 +374,8 @@ namespace PM.horizOn.Cloud.Service
             string endpoint,
             string method,
             byte[] binaryData,
-            bool useSessionToken) where TResponse : class
+            bool useSessionToken,
+            IReadOnlyDictionary<string, string> headers) where TResponse : class
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -397,6 +404,7 @@ namespace PM.horizOn.Cloud.Service
 
                 using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken))
                 {
+                    ApplyHeaders(request, headers);
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -467,7 +475,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request));
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request));
                     }
 
                     string responseText = request.downloadHandler.text;
@@ -483,7 +491,7 @@ namespace PM.horizOn.Cloud.Service
                     {
                         LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
                         TResponse data = JsonUtility.FromJson<TResponse>(responseText);
-                        return NetworkResponse<TResponse>.Success(data, request.responseCode);
+                        return NetworkResponse<TResponse>.Success(data, request.responseCode, ReadResponseHeaders(request));
                     }
                     catch (Exception e)
                     {
@@ -500,7 +508,8 @@ namespace PM.horizOn.Cloud.Service
         /// Internal method to send requests expecting a binary response with retry logic.
         /// </summary>
         private async Task<BinaryNetworkResponse> SendBinaryResponseRequestAsync(
-            string endpoint, string method, object requestData, bool useSessionToken)
+            string endpoint, string method, object requestData, bool useSessionToken,
+            IReadOnlyDictionary<string, string> headers)
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -530,6 +539,7 @@ namespace PM.horizOn.Cloud.Service
                 using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
                     request.SetRequestHeader("Accept", "application/octet-stream");
+                    ApplyHeaders(request, headers);
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -546,7 +556,7 @@ namespace PM.horizOn.Cloud.Service
                             Method = method,
                             StatusCode = 204
                         });
-                        return BinaryNetworkResponse.NotFound();
+                        return BinaryNetworkResponse.NotFound(ReadResponseHeaders(request));
                     }
 
                     if (request.result == UnityWebRequest.Result.ConnectionError ||
@@ -612,7 +622,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return BinaryNetworkResponse.Failure(errorMessage, responseCode);
+                        return BinaryNetworkResponse.Failure(errorMessage, responseCode, ReadResponseHeaders(request));
                     }
 
                     byte[] responseData = request.downloadHandler.data;
@@ -625,7 +635,7 @@ namespace PM.horizOn.Cloud.Service
                     });
 
                     LogService.Instance.Info($"Binary response from {endpoint}: {responseData?.Length ?? 0} bytes");
-                    return BinaryNetworkResponse.Success(responseData, request.responseCode);
+                    return BinaryNetworkResponse.Success(responseData, request.responseCode, ReadResponseHeaders(request));
                 }
             }
 
@@ -719,6 +729,31 @@ namespace PM.horizOn.Cloud.Service
             }
 
             return request;
+        }
+
+        /// <summary>
+        /// Set extra per-request headers (for example <c>If-Match</c>) after the default ones.
+        /// </summary>
+        private static void ApplyHeaders(UnityWebRequest request, IReadOnlyDictionary<string, string> headers)
+        {
+            if (headers == null)
+            {
+                return;
+            }
+            foreach (var header in headers)
+            {
+                request.SetRequestHeader(header.Key, header.Value);
+            }
+        }
+
+        /// <summary>
+        /// Copy the response headers into a case-insensitive dictionary. WebGL reports header names
+        /// in lower case, and only headers the server exposes through CORS
+        /// (<c>Access-Control-Expose-Headers</c>) are visible there.
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> ReadResponseHeaders(UnityWebRequest request)
+        {
+            return ResponseHeaders.From(request.GetResponseHeaders());
         }
 
         /// <summary>
@@ -818,24 +853,36 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public string ErrorCode { get; private set; }
 
-        public static NetworkResponse<T> Success(T data, long statusCode = 200)
+        /// <summary>
+        /// Response headers, case-insensitive. Empty when the request never reached the server.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Headers { get; private set; } = ResponseHeaders.Empty;
+
+        /// <summary>
+        /// Value of a response header (name is case-insensitive), or null when it is missing.
+        /// </summary>
+        public string GetHeader(string name) => ResponseHeaders.Get(Headers, name);
+
+        public static NetworkResponse<T> Success(T data, long statusCode = 200, IReadOnlyDictionary<string, string> headers = null)
         {
             return new NetworkResponse<T>
             {
                 IsSuccess = true,
                 Data = data,
-                StatusCode = statusCode
+                StatusCode = statusCode,
+                Headers = headers ?? ResponseHeaders.Empty
             };
         }
 
-        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null)
+        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null, IReadOnlyDictionary<string, string> headers = null)
         {
             return new NetworkResponse<T>
             {
                 IsSuccess = false,
                 Error = error,
                 StatusCode = statusCode,
-                ErrorCode = errorCode
+                ErrorCode = errorCode,
+                Headers = headers ?? ResponseHeaders.Empty
             };
         }
     }
@@ -851,37 +898,83 @@ namespace PM.horizOn.Cloud.Service
         public string Error { get; private set; }
         public long StatusCode { get; private set; }
 
-        public static BinaryNetworkResponse Success(byte[] data, long statusCode = 200)
+        /// <summary>
+        /// Response headers, case-insensitive. Empty when the request never reached the server.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> Headers { get; private set; } = ResponseHeaders.Empty;
+
+        /// <summary>
+        /// Value of a response header (name is case-insensitive), or null when it is missing.
+        /// </summary>
+        public string GetHeader(string name) => ResponseHeaders.Get(Headers, name);
+
+        public static BinaryNetworkResponse Success(byte[] data, long statusCode = 200, IReadOnlyDictionary<string, string> headers = null)
         {
             return new BinaryNetworkResponse
             {
                 IsSuccess = true,
                 Found = true,
                 Data = data,
-                StatusCode = statusCode
+                StatusCode = statusCode,
+                Headers = headers ?? ResponseHeaders.Empty
             };
         }
 
-        public static BinaryNetworkResponse NotFound()
+        public static BinaryNetworkResponse NotFound(IReadOnlyDictionary<string, string> headers = null)
         {
             return new BinaryNetworkResponse
             {
                 IsSuccess = true,
                 Found = false,
                 Data = null,
-                StatusCode = 204
+                StatusCode = 204,
+                Headers = headers ?? ResponseHeaders.Empty
             };
         }
 
-        public static BinaryNetworkResponse Failure(string error, long statusCode = 0)
+        public static BinaryNetworkResponse Failure(string error, long statusCode = 0, IReadOnlyDictionary<string, string> headers = null)
         {
             return new BinaryNetworkResponse
             {
                 IsSuccess = false,
                 Found = false,
                 Error = error,
-                StatusCode = statusCode
+                StatusCode = statusCode,
+                Headers = headers ?? ResponseHeaders.Empty
             };
+        }
+    }
+
+    /// <summary>
+    /// Case-insensitive response header helpers shared by both response wrappers.
+    /// </summary>
+    internal static class ResponseHeaders
+    {
+        internal static readonly IReadOnlyDictionary<string, string> Empty =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        internal static IReadOnlyDictionary<string, string> From(Dictionary<string, string> raw)
+        {
+            if (raw == null || raw.Count == 0)
+            {
+                return Empty;
+            }
+            // Indexer instead of the copy constructor: names that differ only in case must not throw.
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var header in raw)
+            {
+                headers[header.Key] = header.Value;
+            }
+            return headers;
+        }
+
+        internal static string Get(IReadOnlyDictionary<string, string> headers, string name)
+        {
+            if (headers == null || string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+            return headers.TryGetValue(name, out string value) ? value : null;
         }
     }
 

@@ -888,11 +888,16 @@ before making a request.
 - Content-Type: `application/octet-stream`
 - Body: Raw bytes
 
+**Optional header**: `If-Match: <revision>` (a plain number). The save is only written while the
+stored save is still at that revision, `0` for an empty slot. `Save(data, expectedRevision)` and
+`SaveBytes(data, expectedRevision)` send it. `Save(data)` and `SaveBytes(data)` do not.
+
 **Response (200 OK)**:
 ```json
 {
   "success": "boolean",
-  "dataSizeBytes": "integer"
+  "dataSizeBytes": "integer",
+  "revision": "integer (new revision, 1 after the first save)"
 }
 ```
 
@@ -910,6 +915,7 @@ before making a request.
 | 400 | Invalid request |
 | 401 | Missing or invalid player session |
 | 403 | Size limit exceeded |
+| 409 | The save changed since the `If-Match` revision (another device saved first) |
 | 429 | Rate limit exceeded |
 
 ---
@@ -936,6 +942,11 @@ on HTTP 200, or HTTP 204 when no save exists (`LoadBytes()` returns `null`).
   "saveData": "string (nullable)"
 }
 ```
+
+**Response header**: `X-Cloud-Save-Revision: <revision>` on JSON, binary and 204 responses,
+`0` for an empty slot. `LoadSnapshot()` and `LoadBytesSnapshot()` return it as `Revision`; a
+missing header gives `Revision == null` (unknown, not an empty slot). WebGL builds can read it
+because the server exposes it through CORS.
 
 #### Unity SDK Usage
 
@@ -995,6 +1006,54 @@ string json = await CloudSaveManager.Instance.Load();
 await CloudSaveManager.Instance.SaveBytes(binaryData);
 byte[] bytes = await CloudSaveManager.Instance.LoadBytes();
 ```
+
+#### Saving From Several Devices
+
+`Save`, `SaveBytes` and `SaveObject` overwrite unconditionally. When the same player plays on
+several devices, use the revision methods so a newer save is never overwritten silently:
+
+| Method | Returns |
+|--------|---------|
+| `LoadSnapshot()` | `CloudSaveSnapshot<string>`: `IsSuccess`, `Found`, `Data`, `Revision` (`long?`), `Error`, `StatusCode` |
+| `LoadBytesSnapshot()` | `CloudSaveSnapshot<byte[]>`, the same fields |
+| `Save(string data, long expectedRevision)` | `CloudSaveWriteResult`: `Status` (`Saved`, `Conflict`, `Failed`), `IsSuccess`, `IsConflict`, `Revision` (new, `long?`), `DataSizeBytes`, `Error`, `StatusCode` |
+| `SaveBytes(byte[] data, long expectedRevision)` | `CloudSaveWriteResult` |
+
+The flow: load a snapshot, save with its `Revision`, keep the new `Revision` of the result for the
+next save. On `Conflict` (HTTP 409) another device saved first and nothing was written: load a new
+snapshot, merge or let the player choose, then save with the new revision.
+
+```csharp
+var snapshot = await CloudSaveManager.Instance.LoadSnapshot();
+if (!snapshot.IsSuccess || !snapshot.HasRevision)
+{
+    return; // failed, or no revision from the server: unknown state, do not treat it as empty
+}
+
+var save = snapshot.Found ? JsonUtility.FromJson<GameSaveData>(snapshot.Data) : new GameSaveData();
+save.Coins += 100;
+
+var result = await CloudSaveManager.Instance.Save(JsonUtility.ToJson(save), snapshot.Revision.Value);
+switch (result.Status)
+{
+    case CloudSaveWriteStatus.Saved:
+        Debug.Log($"Saved at revision {result.Revision}");
+        break;
+    case CloudSaveWriteStatus.Conflict:
+        // Another device saved first: reload, merge or ask the player, then save again
+        break;
+    case CloudSaveWriteStatus.Failed:
+        Debug.LogError(result.Error);
+        break;
+}
+```
+
+Rules:
+- Revision `0` is an empty slot: `Save(data, 0)` only succeeds when there is no save yet.
+- `Revision == null` means the server sent no revision (for example a self-hosted simpleServer,
+  which does not detect conflicts). It is unknown, not an empty slot.
+- A conflict is reported to the game. The SDK never retries or overwrites it automatically.
+- A negative `expectedRevision` is rejected before sending.
 
 **Best Practices**:
 - Save on natural breakpoints (level complete, quit game)
