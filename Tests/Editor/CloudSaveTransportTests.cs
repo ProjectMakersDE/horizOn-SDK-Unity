@@ -8,6 +8,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Manager;
 using PM.horizOn.Cloud.Objects.Data;
 using PM.horizOn.Cloud.Objects.Network.Requests;
+using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Service;
 using UnityEngine;
 
@@ -16,6 +17,9 @@ namespace PM.horizOn.Cloud.Tests
     /// <summary>
     /// Server contract checked 2026-10-01: AppCloudSaveController requires the player's
     /// session for save/load. Load is POST with a JSON userId and negotiates binary via Accept.
+    /// Revision contract checked 2026-10-10 (AppCloudSaveController, CloudSaveService.saveCloudSave):
+    /// load sends X-Cloud-Save-Revision on JSON, bytes and 204 (0 = empty slot), save reads a plain
+    /// numeric If-Match and answers 409 with {"error": "..."} on a mismatch.
     /// </summary>
     [Category("Transport")]
     public class CloudSaveTransportTests
@@ -74,6 +78,7 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That(context.Request.ContentType, Does.StartWith("application/json"));
             Assert.That(request.userId, Is.EqualTo("user-892"));
             Assert.That(request.saveData, Is.EqualTo("{\"level\":2}"));
+            Assert.That(context.Request.Headers["If-Match"], Is.Null, "Save(data) stays an unconditional write");
             await RespondJson(context, "{\"success\":true,\"dataSizeBytes\":11}");
             Assert.That(await WithTimeout(saving), Is.True);
         }
@@ -104,8 +109,146 @@ namespace PM.horizOn.Cloud.Tests
             }
             AssertSignedPost(context, "/api/v1/app/cloud-save/save?userId=user-892");
             Assert.That(context.Request.ContentType, Does.StartWith("application/octet-stream"));
+            Assert.That(context.Request.Headers["If-Match"], Is.Null, "SaveBytes(data) stays an unconditional write");
             await RespondJson(context, "{\"success\":true,\"dataSizeBytes\":4}");
             Assert.That(await WithTimeout(saving), Is.True);
+        }
+
+        [TestCase("{\"found\":true,\"saveData\":\"saved value\"}", "3", true, 3L)]
+        [TestCase("{\"found\":false}", "0", false, 0L)]
+        [TestCase("{\"found\":false}", null, false, null)]
+        [TestCase("{\"found\":true,\"saveData\":\"saved value\"}", "not-a-number", true, null)]
+        public async Task LoadSnapshot_ReadsRevisionHeader(string body, string revisionHeader, bool found, long? revision)
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<CloudSaveSnapshot<string>> loading = CloudSaveManager.Instance.LoadSnapshot();
+            var context = await WithTimeout(incoming);
+            AssertSignedPost(context, "/api/v1/app/cloud-save/load");
+            Assert.That(context.Request.Headers["Accept"], Is.Not.EqualTo("application/octet-stream"));
+            Assert.That(JsonUtility.FromJson<LoadCloudDataRequest>(await ReadText(context)).userId, Is.EqualTo("user-892"));
+            // Lower case like a WebGL player reports it: the lookup must not depend on case.
+            if (revisionHeader != null) context.Response.AddHeader("x-cloud-save-revision", revisionHeader);
+            await RespondJson(context, body);
+
+            var snapshot = await WithTimeout(loading);
+            Assert.That(snapshot.IsSuccess, Is.True);
+            Assert.That(snapshot.Found, Is.EqualTo(found));
+            Assert.That(snapshot.Data, Is.EqualTo(found ? "saved value" : null));
+            Assert.That(snapshot.Revision, Is.EqualTo(revision), "A missing header is an unknown state, not revision 0");
+            Assert.That(snapshot.HasRevision, Is.EqualTo(revision.HasValue));
+        }
+
+        [TestCase(200, "5", 5L)]
+        [TestCase(204, "0", 0L)]
+        [TestCase(204, null, null)]
+        public async Task LoadBytesSnapshot_ReadsRevisionHeaderOnBytesAndNoContent(int status, string revisionHeader, long? revision)
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<CloudSaveSnapshot<byte[]>> loading = CloudSaveManager.Instance.LoadBytesSnapshot();
+            var context = await WithTimeout(incoming);
+            AssertSignedPost(context, "/api/v1/app/cloud-save/load");
+            Assert.That(context.Request.Headers["Accept"], Is.EqualTo("application/octet-stream"));
+
+            context.Response.StatusCode = status;
+            if (revisionHeader != null) context.Response.AddHeader("X-Cloud-Save-Revision", revisionHeader);
+            if (status == 200)
+            {
+                context.Response.ContentType = "application/octet-stream";
+                context.Response.ContentLength64 = SaveBytes.Length;
+                await context.Response.OutputStream.WriteAsync(SaveBytes, 0, SaveBytes.Length);
+            }
+            context.Response.Close();
+
+            var snapshot = await WithTimeout(loading);
+            Assert.That(snapshot.IsSuccess, Is.True);
+            Assert.That(snapshot.Found, Is.EqualTo(status == 200));
+            if (status == 200) CollectionAssert.AreEqual(SaveBytes, snapshot.Data);
+            else Assert.That(snapshot.Data, Is.Null);
+            Assert.That(snapshot.Revision, Is.EqualTo(revision), "A 204 without the header is an unknown state, not revision 0");
+        }
+
+        [TestCase("json", 0L)]
+        [TestCase("json", 7L)]
+        [TestCase("bytes", 0L)]
+        [TestCase("bytes", 7L)]
+        public async Task ConditionalSave_SendsIfMatchAndReturnsNewRevision(string mode, long expectedRevision)
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<CloudSaveWriteResult> saving = mode == "json"
+                ? CloudSaveManager.Instance.Save("{\"level\":3}", expectedRevision)
+                : CloudSaveManager.Instance.SaveBytes(SaveBytes, expectedRevision);
+            var context = await WithTimeout(incoming);
+            if (mode == "json")
+            {
+                AssertSignedPost(context, "/api/v1/app/cloud-save/save");
+                Assert.That(context.Request.ContentType, Does.StartWith("application/json"));
+                Assert.That(JsonUtility.FromJson<SaveCloudDataRequest>(await ReadText(context)).saveData, Is.EqualTo("{\"level\":3}"));
+            }
+            else
+            {
+                AssertSignedPost(context, "/api/v1/app/cloud-save/save?userId=user-892");
+                Assert.That(context.Request.ContentType, Does.StartWith("application/octet-stream"));
+            }
+            Assert.That(context.Request.Headers["If-Match"], Is.EqualTo(expectedRevision.ToString()));
+            await RespondJson(context, "{\"success\":true,\"dataSizeBytes\":4,\"revision\":" + (expectedRevision + 1) + "}");
+
+            var result = await WithTimeout(saving);
+            Assert.That(result.Status, Is.EqualTo(CloudSaveWriteStatus.Saved));
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Revision, Is.EqualTo(expectedRevision + 1));
+            Assert.That(result.DataSizeBytes, Is.EqualTo(4));
+        }
+
+        [Test]
+        public async Task ConditionalSave_WithoutRevisionInResponseReportsUnknownRevision()
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<CloudSaveWriteResult> saving = CloudSaveManager.Instance.Save("value", 2);
+            var context = await WithTimeout(incoming);
+            await RespondJson(context, "{\"success\":true,\"dataSizeBytes\":5}");
+            var result = await WithTimeout(saving);
+            Assert.That(result.IsSuccess, Is.True);
+            Assert.That(result.Revision, Is.Null);
+        }
+
+        [TestCase("json")]
+        [TestCase("bytes")]
+        public async Task ConditionalSave_ConflictIsReportedWithoutRetry(string mode)
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            Task<CloudSaveWriteResult> saving = mode == "json"
+                ? CloudSaveManager.Instance.Save("stale", 4)
+                : CloudSaveManager.Instance.SaveBytes(SaveBytes, 4);
+            var context = await WithTimeout(incoming);
+            Assert.That(context.Request.Headers["If-Match"], Is.EqualTo("4"));
+            context.Response.StatusCode = 409;
+            context.Response.ContentType = "application/json";
+            using (var writer = new StreamWriter(context.Response.OutputStream))
+                await writer.WriteAsync("{\"error\":\"Cloud save changed on another device (expected revision 4, current revision 5)\"}");
+            context.Response.Close();
+
+            Task<HttpListenerContext> retry = _listener.GetContextAsync();
+            var result = await WithTimeout(saving);
+            Assert.That(result.Status, Is.EqualTo(CloudSaveWriteStatus.Conflict));
+            Assert.That(result.IsConflict, Is.True);
+            Assert.That(result.IsSuccess, Is.False);
+            Assert.That(result.StatusCode, Is.EqualTo(409));
+            Assert.That(result.Revision, Is.Null);
+            Assert.That(result.Error, Does.Contain("another device"));
+            Assert.That(await Task.WhenAny(retry, Task.Delay(300)), Is.Not.SameAs(retry), "A conflict must not be retried or overwritten");
+        }
+
+        [TestCase("json")]
+        [TestCase("bytes")]
+        public async Task ConditionalSave_NegativeRevisionIsRejectedBeforeTransport(string mode)
+        {
+            Task<HttpListenerContext> incoming = _listener.GetContextAsync();
+            var result = mode == "json"
+                ? await CloudSaveManager.Instance.Save("value", -1)
+                : await CloudSaveManager.Instance.SaveBytes(SaveBytes, -1);
+            Assert.That(result.Status, Is.EqualTo(CloudSaveWriteStatus.Failed));
+            Assert.That(result.StatusCode, Is.EqualTo(0));
+            Assert.That(await Task.WhenAny(incoming, Task.Delay(100)), Is.Not.SameAs(incoming));
         }
 
         [TestCase(false)]
@@ -181,6 +324,10 @@ namespace PM.horizOn.Cloud.Tests
         [TestCase("load", "staleToken")]
         [TestCase("saveBytes", "staleToken")]
         [TestCase("loadBytes", "staleToken")]
+        [TestCase("loadSnapshot", "user")]
+        [TestCase("loadBytesSnapshot", "missingToken")]
+        [TestCase("conditionalSave", "staleToken")]
+        [TestCase("conditionalSaveBytes", "user")]
         public async Task MissingOrMismatchedSession_DoesNotSendRequest(string operation, string missing)
         {
             if (missing == "user") SetCurrentUser(new UserData());
@@ -202,6 +349,10 @@ namespace PM.horizOn.Cloud.Tests
                 case "load": Assert.That(await CloudSaveManager.Instance.Load(), Is.Null); break;
                 case "saveBytes": Assert.That(await CloudSaveManager.Instance.SaveBytes(SaveBytes), Is.False); break;
                 case "loadBytes": Assert.That(await CloudSaveManager.Instance.LoadBytes(), Is.Null); break;
+                case "loadSnapshot": Assert.That((await CloudSaveManager.Instance.LoadSnapshot()).IsSuccess, Is.False); break;
+                case "loadBytesSnapshot": Assert.That((await CloudSaveManager.Instance.LoadBytesSnapshot()).IsSuccess, Is.False); break;
+                case "conditionalSave": Assert.That((await CloudSaveManager.Instance.Save("save", 1)).Status, Is.EqualTo(CloudSaveWriteStatus.Failed)); break;
+                case "conditionalSaveBytes": Assert.That((await CloudSaveManager.Instance.SaveBytes(SaveBytes, 1)).Status, Is.EqualTo(CloudSaveWriteStatus.Failed)); break;
                 default: Assert.Fail("Unknown Cloud Save operation"); break;
             }
         }
