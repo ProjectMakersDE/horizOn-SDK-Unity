@@ -6,7 +6,7 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 
 **Base URL**: `https://horizon.pm`
 **All endpoints require**: `X-API-Key` header for authentication
-**Rate Limit**: 10 requests/minute per client
+**Rate Limit**: per account, Free plan 10 requests/minute soft and 100 hard, higher on paid plans
 
 ## Table of Contents
 
@@ -35,8 +35,8 @@ X-API-Key: horizon_your-api-key-here
 ```
 
 ### Rate Limiting
-- **10 requests per minute** per client (all tiers)
-- Exceeding returns HTTP 429 with `Retry-After` header
+- Counted **per account**, shared by all players. Free plan: soft limit **10**, hard limit **100** requests per minute. Paid plans have higher limits ([pricing](https://horizon.pm/pricing))
+- Above the hard limit, requests return HTTP 429 with a `Retry-After` header
 - Design API calls efficiently using caching
 
 ### Account Tiers

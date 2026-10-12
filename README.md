@@ -701,7 +701,7 @@ Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/horizOn/HorizonConfig.as
 
 ## Rate Limiting
 
-**Limit**: 10 requests per minute per client.
+**Limit**: counted per account, shared by all players of all your games. On the Free plan the soft limit is 10 and the hard limit 100 requests per minute. Paid plans have higher limits, see [horizon.pm/pricing](https://horizon.pm/pricing).
 
 | Do | Don't |
 |----|-------|
@@ -725,7 +725,7 @@ async void Start()
     await NewsManager.Instance.LoadNews();
     CrashManager.Instance.StartCapture(); // registers session
 
-    // 6 requests remaining for gameplay
+    // The per-minute limit counts for your whole account, not per player
 }
 ```
 

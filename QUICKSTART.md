@@ -144,7 +144,7 @@ To switch configurations:
 
 ## Rate Limiting
 
-> **Important**: Each client is limited to **10 requests per minute**.
+> **Important**: The limit counts **per account**, shared by all players. On the Free plan the soft limit is **10** and the hard limit **100 requests per minute**. Paid plans have higher limits, see [horizon.pm/pricing](https://horizon.pm/pricing).
 
 Design your API calls efficiently:
 
@@ -169,7 +169,7 @@ async void Start()
     await RemoteConfigManager.Instance.GetAllConfigs();
     await NewsManager.Instance.LoadNews();
 
-    // Remaining 7 requests available for gameplay actions
+    // The per-minute limit counts for your whole account, not per player
 }
 ```
 
