@@ -52,6 +52,13 @@ namespace PM.horizOn.Cloud.Tests
                 handle.Invoke(manager, new object[] { "{\"type\":\"subscribed\",\"version\":1,\"topic\":\"matches:game\"}" });
                 handle.Invoke(manager, new object[] { "{\"type\":\"unsubscribed\",\"version\":1,\"topic\":\"matches:game\"}" });
                 Assert.That(sent.Contains("matches:game"), Is.False, "The next update must resubscribe the still-desired topic.");
+                typeof(RealtimeManager).GetField("_pending", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(manager, "matches:game");
+                typeof(RealtimeManager).GetField("_pendingRequestId", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(manager, 3L);
+                typeof(RealtimeManager).GetField("_pendingCanceled", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(manager, false);
+                handle.Invoke(manager, new object[] { "{\"type\":\"unsubscribed\",\"version\":1,\"topic\":\"matches:game\",\"requestId\":2}" });
+                Assert.That(typeof(RealtimeManager).GetField("_pending", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(manager), Is.EqualTo("matches:game"));
+                handle.Invoke(manager, new object[] { "{\"type\":\"subscribed\",\"version\":1,\"topic\":\"matches:game\",\"requestId\":3}" });
+                Assert.That(sent.Contains("matches:game"), Is.True);
             }
             finally { UnityEngine.Object.DestroyImmediate(gameObject); }
         }

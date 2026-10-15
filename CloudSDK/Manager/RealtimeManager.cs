@@ -21,7 +21,7 @@ namespace PM.horizOn.Cloud.Manager
     {
         public string type, topic, eventId, resourceId, eventType, reason, code;
         public int version, pollAfterSeconds;
-        public long revision;
+        public long revision, requestId;
     }
     [Serializable] internal sealed class RealtimeSessionInfo { public int pollAfterSeconds = 120; }
     [Serializable] internal sealed class RealtimeAuthentication
@@ -30,7 +30,7 @@ namespace PM.horizOn.Cloud.Manager
         public int version = 1;
         public string apiKey, sessionToken, clientId;
     }
-    [Serializable] internal sealed class RealtimeCommand { public string type, topic, eventId; }
+    [Serializable] internal sealed class RealtimeCommand { public string type, topic, eventId; public long requestId; }
 
     /// <summary>On-demand invalidations. Events and snapshots are loaded through each feature's HTTP API.</summary>
     public class RealtimeManager : BaseManager<RealtimeManager>
@@ -50,6 +50,8 @@ namespace PM.horizOn.Cloud.Manager
         private readonly string _clientId = Guid.NewGuid().ToString();
         private string _pending, _token, _userId;
         private int _generation, _attempt, _pendingSends;
+        private long _requestId, _pendingRequestId;
+        private bool _pendingCanceled;
         private float _retryAt, _pollAt, _pingAt, _connectDeadline, _lastFrameAt;
         private bool _connecting, _unsupported;
         private volatile bool _overflow;
@@ -75,7 +77,8 @@ namespace PM.horizOn.Cloud.Manager
         {
             if (!_topics.Remove(topic)) return;
             _sent.Remove(topic);
-            if (IsReady) Send(new RealtimeCommand { type = "unsubscribe", topic = topic });
+            if (_pending == topic) _pendingCanceled = true;
+            if (IsReady) Send(new RealtimeCommand { type = "unsubscribe", topic = topic, requestId = ++_requestId });
             if (_topics.Count == 0) DisconnectTransport();
         }
         public void Close() { _topics.Clear(); DisconnectTransport(); }
@@ -102,7 +105,8 @@ namespace PM.horizOn.Cloud.Manager
                 if (string.IsNullOrEmpty(_pending))
                 {
                     foreach (string topic in _topics) if (!_sent.Contains(topic))
-                    { _pending = topic; Send(new RealtimeCommand { type = "subscribe", topic = topic }); break; }
+                    { _pending = topic; _pendingCanceled = false; _pendingRequestId = ++_requestId;
+                        Send(new RealtimeCommand { type = "subscribe", topic = topic, requestId = _pendingRequestId }); break; }
                 }
                 if (now >= _pingAt && string.IsNullOrEmpty(_pending))
                 { Send(new RealtimeCommand { type = "ping" }); _pingAt = now + 30; }
@@ -240,8 +244,9 @@ namespace PM.horizOn.Cloud.Manager
             switch (frame.type)
             {
                 case "ready": IsReady = true; _connecting = false; _attempt = 0; PollAfterSeconds = Math.Max(1, frame.pollAfterSeconds); _pingAt = Time.realtimeSinceStartup + 30; break;
-                case "unsubscribed": _sent.Remove(frame.topic); if (frame.topic == _pending) _pending = null; break;
-                case "subscribed": if (frame.topic == _pending) { _sent.Add(frame.topic); _pending = null; } break;
+                case "unsubscribed": if (frame.requestId == _pendingRequestId && frame.topic == _pending) { _sent.Remove(frame.topic); _pending = null; } break;
+                case "subscribed": if (frame.requestId == _pendingRequestId && frame.topic == _pending)
+                    { if (!_pendingCanceled && _topics.Contains(frame.topic)) _sent.Add(frame.topic); _pending = null; } break;
                 case "event":
                     if (_topics.Contains(frame.topic)) EventReceived?.Invoke(frame);
                     Send(new RealtimeCommand { type = "ack", eventId = frame.eventId });
@@ -251,8 +256,10 @@ namespace PM.horizOn.Cloud.Manager
                     if (!string.IsNullOrEmpty(frame.topic)) { if (_topics.Contains(frame.topic)) ResyncRequired?.Invoke(frame.topic); }
                     else foreach (string topic in new List<string>(_topics))
                     { if (SyncIdentity()) break; if (_topics.Contains(topic)) ResyncRequired?.Invoke(topic); }
+                    Send(new RealtimeCommand { type = "ack", eventId = frame.eventId });
                     break;
-                case "error": if (frame.code == "SUBSCRIPTION_FORBIDDEN" && frame.topic != null) { _topics.Remove(frame.topic); _sent.Remove(frame.topic); _pending = null; } LastErrorCode = frame.code; ConnectionError?.Invoke(frame.code); break;
+                case "error": if (frame.code == "SUBSCRIPTION_FORBIDDEN" && frame.topic != null && frame.requestId == _pendingRequestId)
+                    { _topics.Remove(frame.topic); _sent.Remove(frame.topic); _pending = null; } LastErrorCode = frame.code; ConnectionError?.Invoke(frame.code); break;
             }
         }
         private void Failed(string code)
