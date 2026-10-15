@@ -19,8 +19,14 @@ namespace PM.horizOn.Cloud.Examples.Features
             {
                 HorizonApp.Initialize();
                 if (!await new HorizonServer().Connect()) return;
-                if (!UserManager.Instance.IsSignedIn && !await UserManager.Instance.RestoreAnonymousSession()
-                    && !await UserManager.Instance.SignUpAnonymous("StatisticsPlayer")) return;
+                if (!UserManager.Instance.IsSignedIn)
+                {
+                    // A transient restore error must preserve the existing identity and intent.
+                    bool authenticated = UserManager.Instance.HasCachedAnonymousToken()
+                        ? await UserManager.Instance.RestoreAnonymousSession()
+                        : await UserManager.Instance.SignUpAnonymous("StatisticsPlayer");
+                    if (!authenticated) return;
+                }
                 var manager = StatisticsManager.Instance;
                 var snapshot = await manager.GetStatistics(); // Explicit snapshot also supplies server time.
                 if (snapshot == null) { Debug.LogError(manager.LastErrorCode); return; }

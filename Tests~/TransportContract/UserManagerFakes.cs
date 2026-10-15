@@ -102,6 +102,7 @@ namespace PM.horizOn.Cloud.Service
         public Func<string, object, Task<object>> RespondAsync { get; set; }
         public string SessionToken { get; private set; }
         public string ActiveHost { get; private set; }
+        public string ApiKey { get; set; } = "statistics-project";
         public bool LastUseSessionToken { get; private set; }
         public int RequestCount { get; private set; }
 
@@ -123,6 +124,7 @@ namespace PM.horizOn.Cloud.Service
         public string GetSessionToken() => SessionToken;
         public void SetActiveHost(string host) => ActiveHost = host;
         public string GetActiveHost() => ActiveHost;
+        public string GetApiKey() => ApiKey;
     }
 
     public sealed class NetworkResponse<T> where T : class

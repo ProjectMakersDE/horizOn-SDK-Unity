@@ -604,6 +604,15 @@ authTransport.RespondAsync = (endpoint, request) =>
     return Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
 };
 Require(await statisticsManager.GetStatistics() != null, "statistics full reload after clear succeeds");
+delayedStatistics = new TaskCompletionSource<object>();
+authTransport.RespondAsync = (endpoint, request) => delayedStatistics.Task;
+Task<StatisticsSnapshot> oldStatisticsProject = statisticsManager.GetStatistics();
+authTransport.ApiKey = "replacement-statistics-project";
+Require(statisticsManager.CurrentStatistics == null && statisticsManager.CurrentDefinitions == null,
+    "statistics project change clears both caches even with unchanged host/user/session");
+delayedStatistics.SetResult(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
+Require(await oldStatisticsProject == null && statisticsManager.LastErrorCode == StatisticsErrorCodes.SessionChanged,
+    "statistics late old-project response cannot restore the previous catalog");
 Console.WriteLine("Unity SDK statistics atomic batch, safe integer, cache and retry contract passed");
 
 StatisticsSnapshot StatisticsResult(long revision, long value) => new StatisticsSnapshot

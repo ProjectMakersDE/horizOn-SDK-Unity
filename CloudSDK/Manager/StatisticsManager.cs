@@ -21,7 +21,7 @@ namespace PM.horizOn.Cloud.Manager
         private long _maxObservedRevision = -1;
         private long _lastObservedServerTime;
         private long _cacheEpoch;
-        private string _userId, _token, _host;
+        private string _userId, _token, _host, _apiKey;
 
         public string LastErrorCode { get; private set; }
         /// <summary>Keep this ID and the original batch after a timeout; never replace it automatically.</summary>
@@ -41,11 +41,11 @@ namespace PM.horizOn.Cloud.Manager
             EnsureScope();
             var user = UserManager.Instance.CurrentUser;
             if (!StatisticsTransportContract.HasSession(user, _token)) return Fail<StatisticsSnapshot>(StatisticsErrorCodes.SessionRequired);
-            string owner = _userId, token = _token, host = _host;
+            string owner = _userId, token = _token, host = _host, apiKey = _apiKey;
             long epoch = _cacheEpoch;
             var response = await HorizonApp.Network.GetAsync<StatisticsSnapshot>(
                 StatisticsTransportContract.GetEndpoint(user, KnownVersion), useSessionToken: true);
-            if (!SameScope(owner, token, host, epoch)) return Fail<StatisticsSnapshot>(LastErrorCode);
+            if (!SameScope(owner, token, host, apiKey, epoch)) return Fail<StatisticsSnapshot>(LastErrorCode);
             if (!response.IsSuccess) return NetworkFailure(response);
             return Accept(response.Data);
         }
@@ -54,11 +54,11 @@ namespace PM.horizOn.Cloud.Manager
         {
             EnsureScope();
             if (!StatisticsTransportContract.HasSession(UserManager.Instance.CurrentUser, _token)) return Fail<StatisticsDefinitionsResponse>(StatisticsErrorCodes.SessionRequired);
-            string owner = _userId, token = _token, host = _host;
+            string owner = _userId, token = _token, host = _host, apiKey = _apiKey;
             long epoch = _cacheEpoch;
             var response = await HorizonApp.Network.GetAsync<StatisticsDefinitionsResponse>(
                 StatisticsTransportContract.DefinitionsEndpoint(KnownVersion), useSessionToken: true);
-            if (!SameScope(owner, token, host, epoch)) return Fail<StatisticsDefinitionsResponse>(LastErrorCode);
+            if (!SameScope(owner, token, host, apiKey, epoch)) return Fail<StatisticsDefinitionsResponse>(LastErrorCode);
             if (!response.IsSuccess) return NetworkFailure(response);
             if (response.Data == null || !AcceptDefinitions(response.Data.definitionVersion, response.Data.definitions))
                 return Fail<StatisticsDefinitionsResponse>(StatisticsErrorCodes.InvalidResponse);
@@ -76,11 +76,11 @@ namespace PM.horizOn.Cloud.Manager
             EnsureScope();
             if (!StatisticsTransportContract.TryUpdate(UserManager.Instance.CurrentUser, _token, updates, operationId, out var body, out var error))
                 return Fail<StatisticsSnapshot>(error);
-            string owner = _userId, token = _token, host = _host;
+            string owner = _userId, token = _token, host = _host, apiKey = _apiKey;
             long epoch = _cacheEpoch;
             LastSubmittedOperationId = operationId;
             var response = await HorizonApp.Network.PostAsync<StatisticsSnapshot>(StatisticsTransportContract.Endpoint, body, useSessionToken: true);
-            if (!SameScope(owner, token, host, epoch)) return Fail<StatisticsSnapshot>(LastErrorCode);
+            if (!SameScope(owner, token, host, apiKey, epoch)) return Fail<StatisticsSnapshot>(LastErrorCode);
             if (!response.IsSuccess) return NetworkFailure(response);
             if (response.Data == null || response.Data.operationId != operationId) return Fail<StatisticsSnapshot>(StatisticsErrorCodes.InvalidResponse);
             return Accept(response.Data);
@@ -104,15 +104,16 @@ namespace PM.horizOn.Cloud.Manager
             string user = UserManager.Instance.CurrentUser?.UserId;
             string token = HorizonApp.Network.GetSessionToken();
             string host = HorizonApp.Network.GetActiveHost();
-            if (_userId != user || _token != token || _host != host)
+            string apiKey = HorizonApp.Network.GetApiKey();
+            if (_userId != user || _token != token || _host != host || _apiKey != apiKey)
             {
-                ClearData(); _userId = user; _token = token; _host = host;
+                ClearData(); _userId = user; _token = token; _host = host; _apiKey = apiKey;
             }
         }
-        private bool SameScope(string user, string token, string host, long epoch)
+        private bool SameScope(string user, string token, string host, string apiKey, long epoch)
         {
             EnsureScope();
-            if (_userId != user || _token != token || _host != host)
+            if (_userId != user || _token != token || _host != host || _apiKey != apiKey)
             {
                 LastErrorCode = StatisticsErrorCodes.SessionChanged;
                 return false;
