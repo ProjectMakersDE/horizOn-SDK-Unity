@@ -93,6 +93,20 @@ namespace PM.horizOn.Cloud.Tests
             EventService.Instance.Publish(PM.horizOn.Cloud.Enums.EventKeys.UserSignOutSuccess, DateTime.UtcNow);
             EventService.Instance.Unsubscribe(PM.horizOn.Cloud.Enums.EventKeys.UserSignInSuccess, other);
         }
+        [Test] public void SignedAmountsSerializeWithJsonCultureRegardlessOfDeviceLocale()
+        {
+            var old = System.Globalization.CultureInfo.CurrentCulture;
+            var custom = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.InvariantCulture.Clone();
+            custom.NumberFormat.NegativeSign = "minus";
+            try
+            {
+                System.Globalization.CultureInfo.CurrentCulture = custom;
+                var json = PM.horizOn.Cloud.Helper.JsonHelper.ToJsonExcludeEmpty(new AmountRequest { amount = -9007199254740991L });
+                Assert.That(json, Is.EqualTo("{\"amount\":-9007199254740991}"));
+            }
+            finally { System.Globalization.CultureInfo.CurrentCulture = old; }
+        }
+        private class AmountRequest { public long amount; }
         [Test] public async Task ClearCacheAndSignoutRejectLateReplies()
         {
             var incoming = _listener.GetContextAsync(); var pending = Manager.GetState(User); var context = await Timeout(incoming);
