@@ -53,6 +53,9 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Get the current session token.
         /// </summary>
+        /// <summary>Project API key used by the shared transports, including optional realtime.</summary>
+        public string GetApiKey() => _config?.ApiKey;
+
         public string GetSessionToken()
         {
             return _sessionToken;
