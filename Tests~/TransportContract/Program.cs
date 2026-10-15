@@ -648,3 +648,5 @@ static void Require(bool condition, string name)
         throw new InvalidOperationException($"transport contract failed: {name}");
     }
 }
+
+await InboxContractTests.Run();

@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
 | 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
@@ -142,7 +143,8 @@ Attach one to an empty GameObject and press Play.
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
 | Player Profile | `PlayerProfileExample.cs` |
-| Statistics | `StatisticsExample.cs` |
+| Statistics | `StatisticsExample.cs`, `StatisticsSampleStore.cs` |
+| Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -885,3 +887,17 @@ if (!result.IsSuccess) UnityEngine.Debug.Log(result.ErrorCode);
 ```
 
 Generate one operation ID per logical action and reuse that exact ID and payload after a timeout. Never automatically create a replacement after `OPERATION_EXPIRED`; refresh state and reconcile the intended action first. `CreateOperationId()` uses learned server time plus elapsed monotonic time, falling back to local UTC before the first state/offer response (`HasServerClock` is false). No purchases or adjustments are automatically polled. Amounts are signed `long` integers within +/-9,007,199,254,740,991; unsafe or fractional response tokens are rejected before Unity's JSON conversion. A `dailyCap` of -1 represents JSON null, while zero is a real zero cap (`HasDailyCap`). Offer `purchasesPerDay == -1` means unlimited. Realtime is optional; fetch HTTP state after validated actions or another balance-changing feature.
+
+## Inbox (TASK-1006)
+
+Use `InboxManager.Instance.GetInbox(userId, since: null)`, `MarkRead(userId, entryId)`, `Remove(userId, entryId)` and `Claim(userId, entryId)`. They require the matching current player session and project key. Snapshot results expose `IsSuccess`, `Data`, `ErrorCode`, `Error`; claim `Data` exposes `entryId`, `replayed`, `inbox`, `playerValues`. Entry dictionaries `parameters` and snapshot `counts` preserve escaped string values; attachment amounts retain safe64-bit integers without first rounding through a double. Unknown attachment kinds or malformed numbers fail with INVALID_RESPONSE.
+
+`CurrentInbox` returns a defensive copy. Unchanged HTTP snapshots keep cached entries and update polling metadata. Changed snapshots replace the entire cache, including removals. One active refresh and one coalesced follow-up preserve expiry ordering even when revision numbers are equal. Mutations invalidate in-flight reads. Session/project/host and cache epochs reject late answers; revision/server-time watermarks survive ClearCache. A conditional response without cached entries triggers one bounded full reload. JSON payloads are limited to8MiB with bounded depth/arrays. Inbox payload contents are not copied into raw-response logs.
+
+Claims reuse the original entry ID after an uncertain response. They never choose rewards or add returned amounts locally. The SDK accepts the complete authorized Player Values snapshot through `PlayerValuesManager.AcceptServerState(userId,state)` and rejects stale state rather than replacing a newer balance. INBOX_FULL/value-limit/UNCLAIMED_REWARD errors remain visible and do not destroy pending attachments. The sample exposes only explicit player-triggered claims.
+
+There is no automatic polling or socket connection. A screen waits at least `pollAfterSeconds` between lifecycle-driven refreshes. Optional realtime `inbox:<userId>` and `inbox:project.<projectApiKeyId>` metadata calls ClearCache, followed by an explicit HTTP refresh. InboxExample demonstrates lifecycle cleanup without closing another feature's shared realtime manager.
+
+PlayerValuesExample now binds pending storage to project/player across regional hosts and migrates original configured-host keys without changing the command. Conflicts and damaged data block replacement. Because portable PlayerPrefs cannot enumerate unknown historical hosts, an existing player with no known pending intent requires game-owned reconciliation before this automatic sample creates another purchase. New players get one demo intent. Cache reads never delete an invalid old anonymous token, and restore failure never creates a replacement identity in these value-bearing samples.
+
+The statistics sample scopes saved batches to the project API key and player. An older projectless pending batch is preserved and blocks a new batch until game-specific reconciliation. Its identity recovery and signup marker are saved before authentication, so a transient restore error or lost SDK token cache cannot silently create another guest.

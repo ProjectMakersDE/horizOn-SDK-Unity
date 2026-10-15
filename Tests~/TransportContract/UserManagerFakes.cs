@@ -47,6 +47,8 @@ namespace PM.horizOn.Cloud.Base
         }
 
         protected virtual void OnInit() { }
+        protected virtual void RegisterEvents() { }
+        protected void RegisterEvent<TData>(EventKeys key, Action<TData> handler) { }
     }
 }
 
@@ -132,6 +134,7 @@ namespace PM.horizOn.Cloud.Service
         public bool IsSuccess { get; private set; }
         public T Data { get; private set; }
         public string Error { get; private set; }
+        public string ErrorBody { get; private set; }
         public long StatusCode { get; private set; }
         public string ErrorCode { get; private set; }
 

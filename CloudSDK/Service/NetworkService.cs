@@ -310,7 +310,9 @@ namespace PM.horizOn.Cloud.Service
                     try
                     {
                         // Debug log the raw response
-                        LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
+                        if (typeof(TResponse) == typeof(InboxSnapshot) || typeof(TResponse) == typeof(InboxClaimResponse))
+                            LogService.Instance.Info($"Inbox response: {responseText.Length} characters");
+                        else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
 
                         TResponse data;
                         if (typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesState) || typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesOffers))
@@ -343,6 +345,14 @@ namespace PM.horizOn.Cloud.Service
                         else if (typeof(TResponse) == typeof(LocalizationAllResponse))
                         {
                             data = LocalizationAllResponse.ParseFromJson(responseText) as TResponse;
+                        }
+                        else if (typeof(TResponse) == typeof(InboxSnapshot))
+                        {
+                            data = PM.horizOn.Cloud.Helper.InboxJson.Snapshot(responseText) as TResponse;
+                        }
+                        else if (typeof(TResponse) == typeof(InboxClaimResponse))
+                        {
+                            data = PM.horizOn.Cloud.Helper.InboxJson.Claim(responseText) as TResponse;
                         }
                         // Special handling for array responses (JsonUtility can't deserialize arrays directly)
                         else if (typeof(TResponse).IsArray)
@@ -497,7 +507,9 @@ namespace PM.horizOn.Cloud.Service
 
                     try
                     {
-                        LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
+                        if (typeof(TResponse) == typeof(InboxSnapshot) || typeof(TResponse) == typeof(InboxClaimResponse))
+                            LogService.Instance.Info($"Inbox response: {responseText.Length} characters");
+                        else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
                         TResponse data = JsonUtility.FromJson<TResponse>(responseText);
                         return NetworkResponse<TResponse>.Success(data, request.responseCode, ReadResponseHeaders(request));
                     }
