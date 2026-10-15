@@ -6,6 +6,10 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../CloudSDK/Manager/StatisticsManager.cs" Link="Production/StatisticsManager.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Requests/StatisticsRequests.cs" Link="Production/StatisticsRequests.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/StatisticsResponses.cs" Link="Production/StatisticsResponses.cs" />
+    <Compile Include="../../CloudSDK/Transport/StatisticsTransportContract.cs" Link="Production/StatisticsTransportContract.cs" />
     <Compile Include="../../CloudSDK/Objects/Data/UserData.cs" Link="Production/UserData.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/SignUpRequest.cs" Link="Production/SignUpRequest.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/SignInRequest.cs" Link="Production/SignInRequest.cs" />

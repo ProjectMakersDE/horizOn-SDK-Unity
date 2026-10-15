@@ -25,6 +25,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 📰 **News** | `NewsManager` | In-game announcements |
 | 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
+| 📈 **Statistics** | `StatisticsManager` | Batched sum/max/min/last counters with optional UTC daily/weekly resets |
 | 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot, input log evidence |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
@@ -141,6 +142,7 @@ Attach one to an empty GameObject and press Play.
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
 | Player Profile | `PlayerProfileExample.cs` |
+| Statistics | `StatisticsExample.cs` |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -535,6 +537,38 @@ cloud save for display and offline start. Copy `CurrentState` into the save afte
 run, overwrite the copy with `GetState()` on start (never the other way round), never send a
 value from the save back as a balance, and send values earned offline as `earned` of the next
 validated run. See `ValidatedStateExample.cs`.
+
+### Statistics
+
+Define `kills` (sum) and `best_score` (max) for the project in the Dashboard. Sign in, then load
+an explicit snapshot when the game needs it. Nothing is fetched automatically during sign-in.
+
+```csharp
+using PM.horizOn.Cloud.Objects.Network.Requests;
+
+var statistics = StatisticsManager.Instance;
+var snapshot = await statistics.GetStatistics(); // values, definitions, revision and server time
+if (snapshot == null) return;
+string operationId = statistics.CreateOperationId(); // create once and persist with this batch
+var batch = new[] { new StatisticUpdate("kills", 3), new StatisticUpdate("best_score", 250) };
+var result = await statistics.UpdateStatistics(batch, operationId);
+if (result == null) Debug.LogWarning(statistics.LastErrorCode);
+```
+
+After a timeout, keep the original batch and ID, refresh the snapshot and retry that same ID.
+The SDK never invents a replacement ID. A retained receipt replays safely; an old or evicted
+unknown ID is rejected with `OPERATION_EXPIRED`, so the game must reconcile rather than report
+the session again. At most eight receipts and a 24-hour acceptance window are retained;
+delayed out-of-order IDs can expire sooner. Values use exact `long` integers within
+±9,007,199,254,740,991. `hasValue` distinguishes an unset counter from zero.
+
+`CurrentStatistics` and `CurrentDefinitions` cache the last accepted response and clear on
+session/host change or `ClearCache()`. Late responses cannot overwrite a newer revision or a
+new session. Optional `maxPerUpdate` uses `HasMaxPerUpdate` (zero means absent in the Unity
+model). See `StatisticsExample.cs` for a pending batch persisted across restarts and the
+[API reference](Documentation~/UNITY_SDK_API_REFERENCE.md#statistics) for all members/errors.
+Revision and snapshot-server-time watermarks survive catalog changes. `ClearCache()` also
+invalidates pending conditional reads, so a late response cannot create an empty catalog.
 
 ### Feedback
 

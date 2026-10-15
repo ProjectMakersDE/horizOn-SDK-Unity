@@ -175,6 +175,21 @@ async void Start()
 
 ---
 
+## Report Statistics At Session End
+
+In the Dashboard define `kills` as `sum` and `best_score` as `max` for your project. After
+authentication, call `StatisticsManager.Instance.GetStatistics()` once when you need the
+values/catalog. Batch session changes with `UpdateStatistics(updates, operationId)` rather
+than sending every gameplay event. Create the ID once with `CreateOperationId()` and persist
+it together with the original updates before sending. A timeout keeps that same ID; never
+automatically report the session under a new ID. The sample
+`Samples~/Examples/Features/StatisticsExample.cs` demonstrates durable pending batches.
+
+`CurrentStatistics` contains the last accepted values; use `hasValue` to distinguish unset
+from zero. `LastErrorCode` exposes `OPERATION_EXPIRED`, `OPERATION_CONFLICT`,
+`UPDATE_ABOVE_LIMIT`, `VALUE_OVERFLOW` and the session errors. Statistics also works against
+simpleServer with its project definitions configured in SQL.
+
 ## Next Steps
 
 - Read the [README.md](README.md) for feature overview
