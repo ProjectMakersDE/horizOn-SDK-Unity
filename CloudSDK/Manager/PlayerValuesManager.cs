@@ -1,6 +1,6 @@
 using System;
 using System.Globalization;
-using System.Text.RegularExpressions;
+using PM.horizOn.Cloud.Helper;
 using System.Threading.Tasks;
 using PM.horizOn.Cloud.Base;
 using PM.horizOn.Cloud.Core;
@@ -22,6 +22,7 @@ namespace PM.horizOn.Cloud.Manager
         private long _epoch, _revision = -1, _definition = -1, _serverMillis = -1;
         private long _clockObservedAt;
         public string LastErrorCode { get; private set; }
+        internal long CacheEpoch { get { SyncIdentity(); return _epoch; } }
         public bool HasServerClock { get { SyncIdentity(); return _serverMillis >= 0; } }
         public PlayerValuesState CurrentState { get { SyncIdentity(); return Clone(_state); } }
         public PlayerValuesOffers CurrentOffers { get { SyncIdentity(); return Clone(_offers); } }
@@ -75,6 +76,12 @@ namespace PM.horizOn.Cloud.Manager
             LastErrorCode = response.IsSuccess ? null : response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode);
             return new PlayerValuesResult { IsSuccess = response.IsSuccess, State = state, ErrorCode = LastErrorCode, Error = response.Error };
         }
+        /// <summary>Accept a complete authorized snapshot from Inbox/gift rewards, never add deltas.</summary>
+        public bool AcceptServerState(string userId, PlayerValuesState state)
+        {
+            if (!TryBegin(userId, out _, out _) || state == null || !AcceptState(state, userId)) { LastErrorCode = "STALE_RESPONSE"; return false; }
+            LastErrorCode = null; return true;
+        }
         private bool AcceptState(PlayerValuesState state, string userId)
         {
             if (state.userId != userId || state.values == null || state.revision < 0 || state.definitionVersion < 0 || state.revision < _revision || state.definitionVersion < _definition ||
@@ -106,17 +113,7 @@ namespace PM.horizOn.Cloud.Manager
         private PlayerValuesResult Failure(string code) { LastErrorCode = code; return new PlayerValuesResult { ErrorCode = code, Error = code }; }
         private static bool TryMillis(string value, out long millis) { millis = 0; if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)) return false; millis = time.ToUnixTimeMilliseconds(); return true; }
         private static bool ValidOperationId(string value) { var parts = value?.Split(':'); return parts?.Length == 2 && long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var time) && time > 0 && Guid.TryParseExact(parts[1], "D", out _); }
-        internal static string NormalizeNulls(string json) => Regex.Replace(json, "(\\\"(?:dailyCap|purchasesPerDay)\\\"\\s*:\\s*)null", "${1}-1");
-        internal static string PrepareJson(string json)
-        {
-            foreach (Match match in Regex.Matches(json, "\\\"(balance|earnedToday|dailyCap|amount|revision|definitionVersion|purchasesPerDay)\\\"\\s*:\\s*([^,}\\]\\s]+)"))
-            {
-                string key = match.Groups[1].Value, value = match.Groups[2].Value;
-                if (value == "null" && (key == "dailyCap" || key == "purchasesPerDay")) continue;
-                if (!long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var number) || number < -MaxSafeInteger || number > MaxSafeInteger) throw new FormatException("Player values response contains an unsafe or non-integer number");
-            }
-            return NormalizeNulls(json);
-        }
+        internal static string PrepareJson(string json) => PlayerValuesJson.Prepare(json);
         private static T Clone<T>(T value) where T : class => value == null ? null : JsonUtility.FromJson<T>(JsonUtility.ToJson(value));
         [Serializable] private class ErrorEnvelope { public PlayerValuesState state; }
         [Serializable] private class PurchaseRequest { public string userId, offerKey, operationId; }

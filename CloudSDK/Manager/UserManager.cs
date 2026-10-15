@@ -764,9 +764,8 @@ namespace PM.horizOn.Cloud.Manager
                     return token;
                 }
 
-                // Invalid token format (likely old 36-char GUID with dashes), clear it
-                HorizonApp.Log.Warning("Cached anonymous token has invalid format (too long). Clearing cache.");
-                ClearAnonymousToken();
+                // Reading must never destroy an identity that may own valuable pending actions.
+                HorizonApp.Log.Warning("Cached anonymous identity needs reconciliation. Token retained.");
             }
             return null;
         }
