@@ -21,8 +21,9 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 9. [Leaderboard](#leaderboard)
 10. [Player Profile](#player-profile)
 11. [Validated Actions](#validated-actions)
-12. [Data Models](#data-models)
-13. [Error Handling](#error-handling)
+12. [Statistics](#statistics)
+13. [Data Models](#data-models)
+14. [Error Handling](#error-handling)
 
 ---
 
@@ -1780,6 +1781,57 @@ in `ValidatedActionsErrorCodes`.
 
 ---
 
+## Statistics
+
+Every endpoint requires the current player's Bearer session and Project API key.
+
+| Method | Endpoint | Result |
+|---|---|---|
+| GET | `/api/v1/app/statistics?userId=&definitionVersion=` | `StatisticsSnapshot` |
+| GET | `/api/v1/app/statistics/definitions?definitionVersion=` | `StatisticsDefinitionsResponse` |
+| POST | `/api/v1/app/statistics` | Snapshot plus original `operationId` and `replayed` |
+
+POST body: `{userId,operationId,updates:[{key,value}]}`. All updates apply atomically. Modes
+are `sum`, `max`, `min`, `last`; optional resets use UTC midnight or ISO Monday. Missing values
+are zero with `hasValue:false`; the first min/max/last report initializes the counter.
+Integers are exact `long` values within ±9,007,199,254,740,991. Duplicate keys and overflow
+reject the whole batch. An optional positive `maxPerUpdate` bounds the absolute reported value.
+
+| StatisticsManager member | Meaning |
+|---|---|
+| `Task<StatisticsSnapshot> GetStatistics()` | Explicit snapshot; conditional catalog version is managed by the SDK |
+| `Task<StatisticsDefinitionsResponse> GetDefinitions()` | Explicit catalog read; unchanged definitions are folded from cache |
+| `Task<StatisticsSnapshot> UpdateStatistics(IList<StatisticUpdate> updates, string operationId)` | One session batch; original ID is mandatory |
+| `string CreateOperationId()` | Timestamp:UUID, corrected using the last snapshot's server time |
+| `CurrentStatistics`, `CurrentDefinitions` | Last accepted data, cleared on session/host change |
+| `LastErrorCode`, `LastSubmittedOperationId` | Stable failure code and original submitted ID |
+| `void ClearCache()` | Drop snapshot, catalog, clock correction and pending-ID reference |
+
+Persist the ID and immutable batch before sending. Transport retries use that ID. After a
+timeout, load a snapshot and retry the original ID; never silently generate a replacement.
+Retained receipts replay the current snapshot; mismatched payloads return `OPERATION_CONFLICT`.
+Unknown IDs must be within 24 hours, no more than 30 seconds ahead of server time and newer
+than the persistent eviction floor. Only eight receipts are retained, so delayed or
+out-of-order unknown IDs can receive `OPERATION_EXPIRED` sooner. Reconcile an uncertain old
+operation before deciding to report another session.
+
+Snapshots expose `definitionVersion`, `definitions`, `revision`, `values` with `hasValue` and
+`period`, `operationWindow`, and `newlyUnlocked` for achievement integration. The Unity SDK
+preserves cached definitions when JsonUtility materializes an unchanged null catalog as an
+empty array. A higher definition version invalidates the old counter projection. Optional
+`maxPerUpdate` is omitted by the server; Unity uses `HasMaxPerUpdate`/zero for absence.
+Revision and snapshot-server-time watermarks are independent of the current projection and
+survive catalog invalidation. An older snapshot fails locally with `STATE_CONFLICT`, even
+when lazy UTC reset left the revision unchanged. Clearing the cache invalidates in-flight
+conditional responses and makes the next request load the full catalog.
+
+Methods return null on failure. `StatisticsErrorCodes` includes `SESSION_REQUIRED`,
+`SESSION_FORBIDDEN`, `OPERATION_CONFLICT`, `OPERATION_EXPIRED`, `OPERATION_IN_FUTURE`,
+`STATE_CONFLICT`, `UNKNOWN_STATISTIC`, `UPDATE_ABOVE_LIMIT`, `VALUE_OVERFLOW` and
+`RATE_LIMITED`. A clock behind an already stored UTC bucket fails with `STATE_CONFLICT`;
+refresh/retry the original ID. `SESSION_CHANGED` rejects a late response from another session.
+No statistics read is added to login, run-start or cloud-save operations.
+
 ## Data Models
 
 ### Enums
@@ -2048,8 +2100,11 @@ else
 | 23 | Start Validated Run | `/validated-actions/runs` | POST | `ValidatedActionsManager.StartRun()` |
 | 24 | Submit Validated Run | `/validated-actions/submit` | POST | `ValidatedActionsManager.SubmitValidated()`, `SubmitValidatedWithHash()` |
 | 25 | Get Player State | `/validated-actions/state?userId=` | GET | `ValidatedActionsManager.GetState()` |
+| 26 | Get Statistics | `/statistics?userId=` | GET | `StatisticsManager.GetStatistics()` |
+| 27 | Get Statistic Definitions | `/statistics/definitions` | GET | `StatisticsManager.GetDefinitions()` |
+| 28 | Update Statistics | `/statistics` | POST | `StatisticsManager.UpdateStatistics()` |
 
-**Total Endpoints**: 25
+**Listed Endpoints**: 28
 
 ---
 
