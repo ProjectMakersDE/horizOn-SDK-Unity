@@ -28,6 +28,9 @@ jobs:
       - name: Run shared transport contract
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
+      - name: Check WebGL realtime bridge
+        run: node Tests~/WebGLRealtimeBridge.test.cjs
+
   unity-editor-transport:
     runs-on: ubuntu-latest
     timeout-minutes: 30

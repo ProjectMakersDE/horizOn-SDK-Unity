@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
 | 📰 **News** | `NewsManager` | In-game announcements |
@@ -826,3 +827,9 @@ horizOn-SDK-Unity/        # the package (repo root)
 MIT License - Copyright (c) [ProjectMakers](https://projectmakers.de)
 
 See [LICENSE.md](LICENSE.md) for details.
+
+## Realtime invalidations (Cloud)
+
+After sign-in, subscribe with `RealtimeManager.Instance.Subscribe("inbox:" + UserManager.Instance.CurrentUser.UserId)`. Handle `ResyncRequired` and `EventReceived` by loading current authorized content through the feature HTTP API. `PollingRequired` is the offline fallback signal; wait at least its `pollAfterSeconds` and never poll chat. Call `Unsubscribe(topic)` when the screen closes.
+
+The manager reconnects with jitter, reauthorizes topics and requests a fresh snapshot after reconnect. Events contain IDs and revisions only, not message or save contents. Unity native and WebGL transports share this contract. simpleServer reports `NOT_SUPPORTED`; realtime is Cloud only.
