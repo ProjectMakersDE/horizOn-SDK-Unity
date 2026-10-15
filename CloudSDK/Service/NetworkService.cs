@@ -192,6 +192,7 @@ namespace PM.horizOn.Cloud.Service
             }
 
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
             int attemptCount = 0;
             int maxAttempts = _config.MaxRetryAttempts + 1; // Initial attempt + retries
 
@@ -206,6 +207,8 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
+                if (requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
                 using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
                     ApplyHeaders(request, headers);
@@ -290,7 +293,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request));
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request), request.downloadHandler?.text);
                     }
 
                     // Success
@@ -310,6 +313,8 @@ namespace PM.horizOn.Cloud.Service
                         LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
 
                         TResponse data;
+                        if (typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesState) || typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesOffers))
+                            responseText = PM.horizOn.Cloud.Manager.PlayerValuesManager.PrepareJson(responseText);
 
                         // Special handling for MessageResponse with plain text responses
                         if (typeof(TResponse) == typeof(MessageResponse))
@@ -849,6 +854,8 @@ namespace PM.horizOn.Cloud.Service
         public T Data { get; private set; }
         public string Error { get; private set; }
         public long StatusCode { get; private set; }
+        /// <summary>JSON error body for feature-specific current-state recovery.</summary>
+        public string ErrorBody { get; private set; }
 
         /// <summary>
         /// Stable error code from the JSON error body (for example <c>COSMETIC_LOCKED</c>),
@@ -877,7 +884,7 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null, IReadOnlyDictionary<string, string> headers = null)
+        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null, IReadOnlyDictionary<string, string> headers = null, string errorBody = null)
         {
             return new NetworkResponse<T>
             {
@@ -885,6 +892,7 @@ namespace PM.horizOn.Cloud.Service
                 Error = error,
                 StatusCode = statusCode,
                 ErrorCode = errorCode,
+                ErrorBody = errorBody,
                 Headers = headers ?? ResponseHeaders.Empty
             };
         }
