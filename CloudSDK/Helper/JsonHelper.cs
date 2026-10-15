@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Globalization;
 using System.Text;
 using UnityEngine;
 
@@ -90,7 +91,7 @@ namespace PM.horizOn.Cloud.Helper
                     }
                     else if (value is int || value is long || value is float || value is double)
                     {
-                        sb.Append(value.ToString());
+                        sb.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
                     }
                     else if (value is IDictionary<string, string> stringDictionary)
                     {

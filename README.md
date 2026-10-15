@@ -833,3 +833,21 @@ See [LICENSE.md](LICENSE.md) for details.
 After sign-in, subscribe with `RealtimeManager.Instance.Subscribe("inbox:" + UserManager.Instance.CurrentUser.UserId)`. Handle `ResyncRequired` and `EventReceived` by loading current authorized content through the feature HTTP API. `PollingRequired` is the offline fallback signal; wait at least its `pollAfterSeconds` and never poll chat. Call `Unsubscribe(topic)` when the screen closes.
 
 The manager reconnects with jitter, reauthorizes topics and requests a fresh snapshot after reconnect. Events contain IDs and revisions only, not message or save contents. Unity native and WebGL transports share this contract. simpleServer reports `NOT_SUPPORTED`; realtime is Cloud only.
+
+## Player values
+
+`PlayerValuesManager.Instance` reads server-owned balances and active offers. All four routes require the matching signed-in player's ID and session. `GetState(userId)`, `Purchase(userId,offerKey,operationId)` and `Adjust(userId,key,longAmount,reason,operationId)` return `PlayerValuesResult` with `IsSuccess`, `State`, `ErrorCode`, `Error`; `GetOffers(userId)` returns `PlayerValuesOffersResult` with `Data`. Business errors can carry an up-to-date `State`: render it even when `IsSuccess` is false. `CurrentState` and `CurrentOffers` are defensive copies; `ClearCache()` invalidates in-flight responses. Session/project/host changes discard old state. Revisions and server-clock watermarks survive catalogue/cache invalidation.
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+var userId = UserManager.Instance.CurrentUser.UserId;
+var values = PlayerValuesManager.Instance;
+var loaded = await values.GetState(userId);
+if (!loaded.IsSuccess) return;
+var operationId = values.CreateOperationId(); // persist with the immutable purchase intent
+var result = await values.Purchase(userId, "energy-pack", operationId);
+if (result.State != null) foreach (var balance in result.State.values) UnityEngine.Debug.Log(balance.balance);
+if (!result.IsSuccess) UnityEngine.Debug.Log(result.ErrorCode);
+```
+
+Generate one operation ID per logical action and reuse that exact ID and payload after a timeout. Never automatically create a replacement after `OPERATION_EXPIRED`; refresh state and reconcile the intended action first. `CreateOperationId()` uses learned server time plus elapsed monotonic time, falling back to local UTC before the first state/offer response (`HasServerClock` is false). No purchases or adjustments are automatically polled. Amounts are signed `long` integers within +/-9,007,199,254,740,991; unsafe or fractional response tokens are rejected before Unity's JSON conversion. A `dailyCap` of -1 represents JSON null, while zero is a real zero cap (`HasDailyCap`). Offer `purchasesPerDay == -1` means unlimited. Realtime is optional; fetch HTTP state after validated actions or another balance-changing feature.
