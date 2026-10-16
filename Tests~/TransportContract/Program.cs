@@ -649,4 +649,5 @@ static void Require(bool condition, string name)
     }
 }
 
+GiftCodeValuesContractTests.Run();
 await InboxContractTests.Run();

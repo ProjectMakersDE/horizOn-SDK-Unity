@@ -24,7 +24,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
 | 📰 **News** | `NewsManager` | In-game announcements |
-| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
+| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks, authoritative player values |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
 | 📈 **Statistics** | `StatisticsManager` | Batched sum/max/min/last counters with optional UTC daily/weekly resets |
 | 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot, input log evidence |

@@ -17,6 +17,10 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         /// (newly unlocked or owned before). Empty when the code grants nothing.
         /// </summary>
         public string[] grantedUnlocks = new string[0];
+        public PlayerValueAmount[] grantedValues = Array.Empty<PlayerValueAmount>();
+        /// <summary>Authoritative current balances, already adopted by PlayerValuesManager. Never add grantedValues locally.</summary>
+        public PlayerValuesState playerValues;
+        public bool replayed;
     }
 
     /// <summary>
