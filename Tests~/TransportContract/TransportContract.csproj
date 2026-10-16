@@ -19,6 +19,8 @@
     <Compile Include="../../CloudSDK/Objects/Network/Responses/PlayerValuesResponses.cs" Link="Production/PlayerValuesResponses.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/InboxResponses.cs" Link="Production/InboxResponses.cs" />
     <Compile Include="../../CloudSDK/Helper/JsonFragments.cs" Link="Production/JsonFragments.cs" />
+    <Compile Include="../../CloudSDK/Helper/AchievementsJson.cs" Link="Production/AchievementsJson.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/AchievementsResponses.cs" Link="Production/AchievementsResponses.cs" />
     <Compile Include="../../CloudSDK/Helper/InboxJson.cs" Link="Production/InboxJson.cs" />
     <Compile Include="../../CloudSDK/Manager/StatisticsManager.cs" Link="Production/StatisticsManager.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Requests/StatisticsRequests.cs" Link="Production/StatisticsRequests.cs" />
