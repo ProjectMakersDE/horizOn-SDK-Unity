@@ -10,6 +10,8 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
     {
         public string code;
         public string userId;
+        /// <summary>Optional stable ID for this redemption. Preserve it across uncertain outcomes.</summary>
+        public string idempotencyId;
     }
 
     /// <summary>

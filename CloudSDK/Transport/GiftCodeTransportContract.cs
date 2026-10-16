@@ -34,9 +34,22 @@ namespace PM.horizOn.Cloud.Transport
             string transportSessionToken,
             string code,
             out GiftCodeRedeemPlan plan)
+            => CreatePlan(user, transportSessionToken, code, null, out plan);
+
+        internal static bool TryCreateRedeemPlan(
+            UserData user, string transportSessionToken, string code, string idempotencyId,
+            out GiftCodeRedeemPlan plan)
         {
             plan = null;
-            if (string.IsNullOrEmpty(code))
+            return idempotencyId != null && CreatePlan(user, transportSessionToken, code, idempotencyId, out plan);
+        }
+
+        private static bool CreatePlan(UserData user, string transportSessionToken, string code,
+            string idempotencyId, out GiftCodeRedeemPlan plan)
+        {
+            plan = null;
+            if (string.IsNullOrWhiteSpace(code) || code.Length > 50 ||
+                (idempotencyId != null && (string.IsNullOrWhiteSpace(idempotencyId) || idempotencyId.Length > 128)))
             {
                 return false;
             }
@@ -54,7 +67,8 @@ namespace PM.horizOn.Cloud.Transport
                 new RedeemGiftCodeRequest
                 {
                     code = code,
-                    userId = user.UserId
+                    userId = user.UserId,
+                    idempotencyId = idempotencyId
                 });
             return true;
         }

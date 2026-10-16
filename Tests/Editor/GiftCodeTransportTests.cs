@@ -60,7 +60,7 @@ namespace PM.horizOn.Cloud.Tests
             _listener?.Close();
             foreach (var gameObject in UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
             {
-                if (gameObject.name == "[UserManager]" || gameObject.name == "[GiftCodeManager]")
+                if (gameObject.name == "[UserManager]" || gameObject.name == "[GiftCodeManager]" || gameObject.name == "[PlayerValuesManager]")
                 {
                     UnityEngine.Object.DestroyImmediate(gameObject);
                 }

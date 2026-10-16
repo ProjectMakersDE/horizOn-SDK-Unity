@@ -1,8 +1,10 @@
+using System;
 using System.Threading.Tasks;
 using PM.horizOn.Cloud.Base;
 using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Requests;
+using PM.horizOn.Cloud.Objects.Data;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Transport;
 
@@ -22,45 +24,64 @@ namespace PM.horizOn.Cloud.Manager
         /// </summary>
         /// <param name="code">The gift code to redeem</param>
         /// <returns>Redeem response with giftData JSON string and grantedUnlocks, or null if failed</returns>
-        public async Task<RedeemGiftCodeResponse> Redeem(string code)
+        public Task<RedeemGiftCodeResponse> Redeem(string code) => RedeemInternal(code, null);
+
+        public string LastErrorCode { get; private set; }
+        private long _identityEpoch;
+        protected override void RegisterEvents()
         {
-            if (string.IsNullOrEmpty(code))
-            {
-                HorizonApp.Log.Error("Gift code is required");
-                return null;
-            }
+            RegisterEvent<DateTime>(EventKeys.UserSignOutSuccess, _ => _identityEpoch++);
+            RegisterEvent<UserData>(EventKeys.UserSignInSuccess, _ => _identityEpoch++);
+        }
 
-            if (!GiftCodeTransportContract.TryCreateRedeemPlan(
-                    PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser,
-                    HorizonApp.Network.GetSessionToken(),
-                    code,
-                    out var plan))
-            {
-                HorizonApp.Log.Error("User must be signed in to redeem gift code");
-                return null;
-            }
+        /// <summary>Redeem using the original persisted ID. Never replace it after a timeout.</summary>
+        public Task<RedeemGiftCodeResponse> Redeem(string code, string idempotencyId)
+        {
+            if (string.IsNullOrWhiteSpace(idempotencyId) || idempotencyId.Length > 128)
+                return Task.FromResult(Failure("INVALID_REQUEST"));
+            return RedeemInternal(code, idempotencyId);
+        }
+        private async Task<RedeemGiftCodeResponse> RedeemInternal(string code, string idempotencyId)
+        {
+            LastErrorCode = null;
+            if (string.IsNullOrWhiteSpace(code) || code.Length > 50 ||
+                (idempotencyId != null && (string.IsNullOrWhiteSpace(idempotencyId) || idempotencyId.Length > 128)))
+                return Failure("INVALID_REQUEST");
+            var network = HorizonApp.Network;
+            GiftCodeRedeemPlan plan;
+            bool valid = idempotencyId == null
+                ? GiftCodeTransportContract.TryCreateRedeemPlan(UserManager.Instance.CurrentUser, network.GetSessionToken(), code, out plan)
+                : GiftCodeTransportContract.TryCreateRedeemPlan(UserManager.Instance.CurrentUser, network.GetSessionToken(), code, idempotencyId, out plan);
+            if (!valid) return Failure("SESSION_REQUIRED");
 
-            var response = await HorizonApp.Network.PostAsync<RedeemGiftCodeResponse>(
-                GiftCodeRedeemPlan.Endpoint,
-                plan.Request,
-                useSessionToken: plan.UseSessionToken
-            );
-
-            if (response.IsSuccess && response.Data != null && response.Data.success)
+            long generation = network.ContextGeneration, epoch = _identityEpoch;
+            string userId = plan.Request.userId, token = network.GetSessionToken();
+            var values = PlayerValuesManager.Instance;
+            long valuesEpoch = values.CacheEpoch;
+            var response = await network.PostAsync<RedeemGiftCodeResponse>(GiftCodeRedeemPlan.Endpoint,
+                plan.Request, useSessionToken: plan.UseSessionToken);
+            var user = UserManager.Instance.CurrentUser;
+            if (!ReferenceEquals(network, HorizonApp.Network) || generation != network.ContextGeneration || epoch != _identityEpoch
+                || valuesEpoch != values.CacheEpoch || user?.UserId != userId || user.AccessToken != token)
+                return Failure("STALE_RESPONSE");
+            if (!response.IsSuccess || response.Data == null || !response.Data.success)
+                return Failure(response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode));
+            var data = response.Data;
+            if (data.playerValues != null)
             {
-                HorizonApp.Log.Info($"Gift code redeemed: {code}");
-                if (response.Data.grantedUnlocks != null && response.Data.grantedUnlocks.Length > 0)
-                {
-                    PlayerProfileManager.Instance.ClearCache();
-                }
-                HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed, response.Data);
-                return response.Data;
+                if (!values.AcceptServerState(userId, data.playerValues)) return Failure("STALE_RESPONSE");
+                data.playerValues = values.CurrentState;
             }
-            else
-            {
-                HorizonApp.Log.Error($"Gift code redemption failed: {response.Error ?? response.Data?.message}");
-                return null;
-            }
+            if (data.grantedUnlocks != null && data.grantedUnlocks.Length > 0) PlayerProfileManager.Instance.ClearCache();
+            LastErrorCode = null;
+            HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed, data);
+            return data;
+        }
+        private RedeemGiftCodeResponse Failure(string code)
+        {
+            LastErrorCode = code;
+            HorizonApp.Log.Warning($"Gift code redemption failed [{code}]; retain the original intent for reconciliation.");
+            return null;
         }
 
         /// <summary>
@@ -82,7 +103,7 @@ namespace PM.horizOn.Cloud.Manager
                 return null;
             }
 
-            var request = new RedeemGiftCodeRequest
+            var request = new ValidateGiftCodeRequest
             {
                 code = code,
                 userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId

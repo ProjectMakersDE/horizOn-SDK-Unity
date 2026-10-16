@@ -58,6 +58,8 @@ namespace PM.horizOn.Cloud.Core
 
         // Cached decrypted API key (only in memory, never serialized)
         private string _cachedApiKey;
+        private long _apiKeyGeneration;
+        internal long ApiKeyGeneration => _apiKeyGeneration;
 
         /// <summary>
         /// Get the API key (decrypted).
@@ -136,6 +138,7 @@ namespace PM.horizOn.Cloud.Core
         /// <param name="apiKey">The plain-text API key</param>
         public void SetApiKey(string apiKey)
         {
+            if (!string.Equals(ApiKey, apiKey, StringComparison.Ordinal)) _apiKeyGeneration++;
             _encryptedApiKey = EncryptApiKey(apiKey);
             _cachedApiKey = apiKey;
         }

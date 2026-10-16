@@ -23,12 +23,25 @@ namespace PM.horizOn.Cloud.Service
         private HorizonConfig _config;
         private string _activeHost;
         private string _sessionToken;
+        private long _contextGeneration, _routingGeneration, _configGeneration;
+        /// <summary>Also detects a host, session or project switched away and back during a request.</summary>
+        internal long ContextGeneration { get { _ = RoutingGeneration; return _contextGeneration; } }
+        internal long RoutingGeneration
+        {
+            get
+            {
+                long generation = _config?.ApiKeyGeneration ?? 0;
+                if (_configGeneration != generation) { _configGeneration = generation; _contextGeneration++; _routingGeneration++; }
+                return _routingGeneration;
+            }
+        }
 
         /// <summary>
         /// Set the active host URL to use for API requests.
         /// </summary>
         public void SetActiveHost(string host)
         {
+            if (!string.Equals(_activeHost, host, StringComparison.Ordinal)) { _contextGeneration++; _routingGeneration++; }
             _activeHost = host;
             LogService.Instance.Info($"Active host set to: {host}");
         }
@@ -46,6 +59,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void SetSessionToken(string token)
         {
+            if (!string.Equals(_sessionToken, token, StringComparison.Ordinal)) _contextGeneration++;
             _sessionToken = token;
             LogService.Instance.Info("Session token updated");
         }
@@ -66,6 +80,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void ClearSessionToken()
         {
+            if (_sessionToken != null) _contextGeneration++;
             _sessionToken = null;
             LogService.Instance.Info("Session token cleared");
         }
@@ -75,6 +90,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void Initialize(HorizonConfig config)
         {
+            if (_config != config) { _contextGeneration++; _routingGeneration++; }
             _config = config;
 
             if (config == null || !config.IsValid()) 
@@ -193,8 +209,13 @@ namespace PM.horizOn.Cloud.Service
 
             string url = $"{_activeHost}{endpoint}";
             string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
             int attemptCount = 0;
-            int maxAttempts = _config.MaxRetryAttempts + 1; // Initial attempt + retries
+            // Signup creates a server-issued identity; legacy gift redemption has no stable
+            // caller ID. An uncertain response must never silently create another operation.
+            bool oneAttempt = method == "POST" && (endpoint == "/api/v1/app/user-management/signup"
+                || endpoint == "/api/v1/app/gift-codes/redeem" && requestData is PM.horizOn.Cloud.Objects.Network.Requests.RedeemGiftCodeRequest gift && string.IsNullOrEmpty(gift.idempotencyId));
+            int maxAttempts = oneAttempt ? 1 : _config.MaxRetryAttempts + 1;
 
             while (attemptCount < maxAttempts)
             {
@@ -207,7 +228,7 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                if (requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
                     return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
                 using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
                 {
@@ -353,6 +374,10 @@ namespace PM.horizOn.Cloud.Service
                         else if (typeof(TResponse) == typeof(InboxClaimResponse))
                         {
                             data = PM.horizOn.Cloud.Helper.InboxJson.Claim(responseText) as TResponse;
+                        }
+                        else if (typeof(TResponse) == typeof(RedeemGiftCodeResponse))
+                        {
+                            data = GiftCodeJson.Redeem(responseText) as TResponse;
                         }
                         // Special handling for array responses (JsonUtility can't deserialize arrays directly)
                         else if (typeof(TResponse).IsArray)

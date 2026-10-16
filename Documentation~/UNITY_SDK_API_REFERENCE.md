@@ -59,6 +59,11 @@ Base path: `/api/v1/app/user-management`
 
 **Endpoint**: `POST /api/v1/app/user-management/signup`
 
+Signup uses one transport attempt, including on timeout, 5xx or 429. The server creates the
+anonymous identity, so a lost response must be reconciled rather than automatically creating
+another account. Keep any existing anonymous token and restore that identity before signup.
+
+
 **Description**: Create a new user account. Supports ANONYMOUS, EMAIL, and GOOGLE authentication.
 
 **Request Body**:
@@ -429,7 +434,8 @@ current session automatically. The server only redeems for the player who owns t
 ```json
 {
   "code": "string (max 50 chars)",
-  "userId": "uuid"
+  "userId": "uuid",
+  "idempotencyId": "optional stable ID, 1–128 nonblank characters"
 }
 ```
 
@@ -439,7 +445,10 @@ current session automatically. The server only redeems for the player who owns t
   "success": "boolean",
   "message": "string",
   "giftData": "string (JSON with rewards)",
-  "grantedUnlocks": ["string (cosmetic ID)"]
+  "grantedUnlocks": ["string (cosmetic ID)"],
+  "grantedValues": [{"key": "gold", "amount": 50}],
+  "playerValues": "full PlayerValuesState or null",
+  "replayed": false
 }
 ```
 
@@ -447,6 +456,30 @@ current session automatically. The server only redeems for the player who owns t
 this redemption (newly unlocked or owned before), `[]` when the code grants nothing. See
 [Player Profile](#player-profile). When it is not empty, the SDK drops the cached
 `PlayerProfileManager.CurrentProfile`, so the next `GetProfile()` shows the unlock.
+
+`Redeem(code)` remains supported and makes only one transport attempt, because the server
+creates a new redemption ID when the caller omits it. The two-argument overload rejects a null/empty/blank ID before HTTP; it never silently selects
+legacy behavior. `Redeem(code, idempotencyId)` preserves your supplied ID
+on transport retries; create and durably save it together with the **original code** before
+the first request. Reuse that exact pair after a timeout. Do not replace an unresolved
+intent or automatically retry permanent 4xx errors. `LastErrorCode` exposes the server code,
+`SESSION_REQUIRED`, `INVALID_REQUEST`, `INVALID_RESPONSE`, `STALE_RESPONSE` or an `HTTP_` status when the legacy
+nullable return value is null.
+
+`grantedValues` contains the original grant, including on a replay. The manager replaces
+`PlayerValuesManager.CurrentState` using the authoritative `playerValues` snapshot before
+publishing `GiftCodeRedeemed`. Never add `grantedValues` to balances locally. State adoption
+rejects an older revision, definition or server clock and a changed session/project/host or
+cleared values cache. The returned snapshot is isolated from the manager cache. Old servers
+that omit the new fields produce `[]`, `null`, and `false` respectively.
+
+Import the Examples sample for `GiftCodesExample` and `GiftCodeSampleStore`: startup restores
+an existing anonymous identity without silently replacing it, while explicit UI actions save
+one UUID per redemption and retain uncertain outcomes. Pending storage belongs to the game,
+is scoped to project/player, and survives regional host changes. Connect separate UI buttons
+to `RedeemConfiguredCode()` and `RetryPendingRedemption()`; startup does not redeem a code.
+Persist the intent atomically in your game's own durable storage for production integration.
+
 
 **Example giftData**:
 ```json
@@ -1907,6 +1940,9 @@ Helpers: `List<PlayerCosmetic> GetCosmetics(string type)` and `bool IsAvailable(
 | message | string | Server message |
 | giftData | string | JSON string with the rewards |
 | grantedUnlocks | string[] | Cosmetic IDs the code unlocked (owned after this redemption), empty when none |
+| grantedValues | PlayerValueAmount[] | Original authoritative grant (also on replay); never add locally |
+| playerValues | PlayerValuesState | Full current snapshot or null, adopted by PlayerValuesManager |
+| replayed | bool | This request replays an existing redemption |
 
 ### ValidatedRun
 | Field | Type | Description |
