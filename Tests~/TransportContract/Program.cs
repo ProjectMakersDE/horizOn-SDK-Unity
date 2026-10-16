@@ -656,3 +656,4 @@ AchievementsContractTests.Run();
 FriendsContractTests.Run();
 
 GroupsContractTests.Run();
+ItemsContractTests.Run();

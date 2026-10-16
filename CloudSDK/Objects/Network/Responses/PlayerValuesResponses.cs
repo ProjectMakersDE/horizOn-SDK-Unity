@@ -15,6 +15,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public string key, name;
         public bool active;
         public PlayerValueAmount[] costs = Array.Empty<PlayerValueAmount>(), rewards = Array.Empty<PlayerValueAmount>();
+        public ItemReward[] itemRewards = Array.Empty<ItemReward>();
         /// <summary>-1 means unlimited.</summary>
         public int purchasesPerDay = -1;
     }
@@ -24,6 +25,8 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public string operationId;
         public bool replayed;
         public PlayerValueAmount[] applied = Array.Empty<PlayerValueAmount>();
+        /// <summary>Original grant references, even after the current offer changes or an instance is discarded.</summary>
+        public ItemReference[] items = Array.Empty<ItemReference>();
     }
     [Serializable] public class PlayerValuesState
     {

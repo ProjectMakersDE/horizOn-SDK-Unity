@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| 🎒 **Items** | `ItemsManager` | Bounded catalog, unique inventory and explicit revision-fenced equip/adjust/discard |
 | 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
 | 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
 | 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
@@ -148,6 +149,7 @@ Attach one to an empty GameObject and press Play.
 | Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
 | Achievements | `AchievementsExample.cs` (progress, manual unlock, pending handoff and saved Inbox claim) |
 | Friends | `FriendsExample.cs` (explicit lookup, saved original actions and reconciliation) |
+| Items | `ItemsExample.cs`, `ItemsSampleStore.cs` (durable original purchase/CAS and GET-only recovery) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -975,3 +977,77 @@ Data is `GroupJsonData.FromJson("{...}")`, an immutable original JSON object; `d
 All 16 mutations (including PUT) send the frozen original input exactly once, even after429/5xx/timeout. Keep the caller-reviewed revision and exact pending request UUID; no client group UUID or operation ID is generated for creation. On uncertainty, retain the durable original intent and explicitly read/reconcile before another decision. Never replace its revision/request ID automatically. Snapshot/member/pending replies carry their own revision; explicitly restart member pages when it changes. Lists retained after a plan downgrade stay readable; current server limits govern additions. Calls are serialized and host/project/session/generation/epoch fenced. `CurrentGroups` is a defensive own-player snapshot; `ClearCache()` preserves bounded revision/time history. Hosted `groups:{groupId}` carries optional invalidation metadata; explicitly read HTTP after invalidation/reconnect. simpleServer supports REST without hosted realtime.
 
 `GroupsExample` demonstrates explicit two-player UI actions: Refresh, ReviewGroup, one member page, create, invite/accept, officer/leadership transfer and leave/delete. Configure its stable project UUID. `GroupsSampleStore` flushes and verifies original project/player-scoped input before every send, blocks replacement after uncertain results and durably saves successful result identity. `AcknowledgeSavedSuccess` is an explicit game/player action after applying that result; it archives the original and receipt for inspection. Production games own archive retention/transactional persistence. WebGL must supply a game-owned durable browser store; this filesystem sample fails closed there. New pending commands must select a current matching request; saved original replay never substitutes it. Failed restoration never creates a replacement identity.
+
+
+## Items (TASK-1011, Develop extension)
+
+Use `ItemsManager.Instance` with the current signed-in `UserManager.Instance.CurrentUser.UserId`.
+Every result has `IsSuccess`, `Data`, `ErrorCode`, `Error`; `LastErrorCode` is also available.
+There is no signup, background poller, automatic page loop, local grant or automatic revision replacement.
+
+| Method | Data |
+|---|---|
+| `GetInventory(userId)` | `InventorySnapshot` |
+| `GetCatalog(userId, afterKey: null, limit: 50, catalogRevision: null)` | `ItemCatalogPage` |
+| `AdjustProperties(userId, instanceId, expectedRevision, IList<ItemPropertyDelta> changes)` | `InventorySnapshot` |
+| `SetEquipped(userId, instanceId, expectedRevision, equipped)` | `InventorySnapshot` |
+| `DiscardItem(userId, instanceId, expectedRevision)` | `InventorySnapshot` |
+
+`ItemsResult<T>` and the DTOs are in `PM.horizOn.Cloud.Objects.Network.Responses`. Snapshot fields
+are camelCase: `userId`, `revision`, `instances`, `limits`, `serverTime`; an instance has
+`instanceId`, `itemKey`, `properties`, `equipped`, `createdAt`. Catalog pages have `revision`,
+`definitions`, `nextAfterKey` (null at the end), `total`, `limits`, `serverTime`. Explicitly pass
+the first page's revision to subsequent pages; a conflict requires a deliberate restart. Catalog
+includes archived templates so old instances stay interpretable; never treat `active:false` as deletion.
+
+Flat property objects become `ItemProperty[]`: `key`, `type` (`ItemPropertyType.Integer`,
+`Boolean`, `String`) and the corresponding `integerValue` (`long`), `booleanValue`, `stringValue`.
+Strings preserve Unicode and embedded U+0000; keys retain the server's strict ASCII grammar.
+Original integer tokens are validated before conversion; fractions, exponents, negative zero,
+unsafe integers and decoded duplicate keys fail. Canonical UTF-8 property bytes obey the server's
+256-byte limit. No floating-point dictionary projection or native JSON string clone is used for
+Items DTOs. `CurrentInventory` and `CurrentCatalogPage` are defensive typed copies.
+
+All three inventory writes send the frozen original body exactly once, including global429,
+5xx and timeout cases. Keep the caller-reviewed `instanceId`, revision (including zero) and deltas
+or equipment choice. On uncertainty, explicitly read/reconcile; never automatically substitute
+the new revision or another instance. Server snapshots replace matching state. Requests serialize,
+and actual network instance/host/project/player/session/generation plus cache epoch fence late
+responses and away/back changes. `ClearCache()` preserves separate inventory/catalog revision and
+server-time watermarks. Current tier limits do not delete retained downgraded state.
+
+Player Values DTOs add `offer.itemRewards` (`ItemReward[]{itemKey,quantity}`) and
+`state.operation.items` (`ItemReference[]{instanceId,itemKey}`), defaulting to empty arrays for
+legacy payloads. A retained purchase receipt returns the original references even after offer
+changes or discarded items. Persist one original purchase `operationId` before HTTP, reuse it
+on uncertain retry and explicitly GET inventory after success. Never synthesize an item, add
+local balance deltas or buy again to recover a failed inventory refresh.
+
+Import `ItemsExample` and `ItemsSampleStore` from the Examples sample. Configure the stable
+project UUID; use an existing matching session. Explicitly call `ReadOneCatalogPage`,
+`ReviewOffers`, then `SavePurchaseAfterReview` for an active configured item offer. The reviewed
+page must contain its active item templates. After success, `SaveEquipAfterReview`,
+`SaveAdjustAfterReview` and the deliberately destructive `SaveDiscardAfterReview` illustrate
+explicit inventory CAS. No action runs automatically in Start/Update. New adjustments select a
+current numeric property and reviewed rule before persisting an intent.
+
+The sample writes a hashed project-key/player-scoped original command using CreateNew, durable
+flush and readback before HTTP; regional hosts are callback fences, not journal identities. An
+uncertain/conflicting mutation remains saved after Refresh. `ApplySavedIntent` preserves its
+original body. If an uncertain purchase's offer changed or disappeared,
+`ApplySavedIntent(confirmOfferChanged:true)` is an explicit game/player confirmation to repeat
+the original ID, allowing the server to replay the retained receipt before today's offer check.
+It never creates a replacement ID. A matching confirmed purchase receipt is flushed **before**
+GET inventory; after GET failure or actor recreation, the saved success path performs GET only.
+`AcknowledgeSavedSuccess` is explicit after inventory recovery, and archives the complete original/result directory in one rename without another network operation.
+After a lost inventory mutation response, explicitly Refresh, inspect the saved original against
+current state, call `ReconcileSavedMutationAfterReview`, then acknowledge. Its journal labels this
+as a player reconciliation, never server-confirmed success; it cannot close an uncertain purchase. Production games own transactional persistence and
+archive retention. WebGL games must supply a game-owned durable browser journal; this filesystem
+sample refuses new writes before HTTP on WebGL. Restore failures must retain identity and pending
+commands; this example never signs up a replacement player.
+
+Sample journals use a persistent exclusive lock handle, released by process termination, rather than
+a stale CreateNew lock marker. ACK renames the complete journal directory atomically, keeping
+original and result together. A confirmed changed-offer purchase with zero item references is
+still recorded under its original operation ID; inventory recovery stays GET-only.

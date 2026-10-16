@@ -6,6 +6,9 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../CloudSDK/Helper/ItemsJson.cs" Link="Production/ItemsJson.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/ItemsResponses.cs" Link="Production/ItemsResponses.cs" />
+    <Compile Include="../../Samples~/Examples/Features/ItemsSampleStore.cs" Link="Production/ItemsSampleStore.cs" />
     <Compile Include="../../CloudSDK/Helper/GroupsJson.cs" Link="Production/GroupsJson.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/GroupsResponses.cs" Link="Production/GroupsResponses.cs" />
     <Compile Include="../../CloudSDK/Helper/FriendsJson.cs" Link="Production/FriendsJson.cs" />

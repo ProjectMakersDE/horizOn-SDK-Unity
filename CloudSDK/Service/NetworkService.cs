@@ -394,6 +394,10 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(InventorySnapshot)) { data = ItemsJson.Inventory(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ItemCatalogPage)) { data = ItemsJson.Catalog(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(PlayerValuesState)) { data = PlayerValuesJson.State(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(PlayerValuesOffers)) { data = PlayerValuesJson.Offers(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(MyGroupsView)) { data = GroupsJson.Mine(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(GroupView)) { data = GroupsJson.Group(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(GroupMembersView)) { data = GroupsJson.Members(responseText) as TResponse; }
@@ -734,10 +738,11 @@ namespace PM.horizOn.Cloud.Service
 
         private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
             || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
-            || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView);
+            || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
+            || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;

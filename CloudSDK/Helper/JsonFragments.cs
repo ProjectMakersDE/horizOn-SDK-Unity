@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
-using UnityEngine;
 
 namespace PM.horizOn.Cloud.Helper
 {
@@ -28,8 +27,7 @@ namespace PM.horizOn.Cloud.Helper
         }
         public static string String(string json)
         {
-            var reader = new JsonFragments(json); reader.ReadString(); reader.End();
-            return JsonUtility.FromJson<StringValue>("{\"value\":" + json + "}").value;
+            var reader = new JsonFragments(json); string value = reader.ReadString(); reader.End(); return value;
         }
         private Dictionary<string, string> ReadObject(int depth)
         {
@@ -37,7 +35,7 @@ namespace PM.horizOn.Cloud.Helper
             if (Take('}')) return result;
             do
             {
-                Space(); int keyStart = _at; ReadString(); string key = String(_json.Substring(keyStart, _at - keyStart)); Expect(':');
+                string key = ReadString(); Expect(':');
                 Space(); int start = _at; ReadValue(depth + 1);
                 if (result.Count >= 2048 || result.ContainsKey(key)) throw new FormatException("JSON duplicate/key limit");
                 result.Add(key, _json.Substring(start, _at - start));
@@ -72,20 +70,40 @@ namespace PM.horizOn.Cloud.Helper
                     _at += match.Length; return;
             }
         }
-        private void ReadString()
+        private string ReadString()
         {
-            Expect('"');
+            Expect('"'); var decoded = new StringBuilder();
             while (_at < _json.Length)
             {
                 char value = _json[_at++];
-                if (value == '"') return;
+                if (value == '"')
+                {
+                    string result = decoded.ToString();
+                    for (int i = 0; i < result.Length; i++)
+                    {
+                        if (char.IsHighSurrogate(result[i])) { if (++i >= result.Length || !char.IsLowSurrogate(result[i])) throw new FormatException("JSON unpaired surrogate"); }
+                        else if (char.IsLowSurrogate(result[i])) throw new FormatException("JSON unpaired surrogate");
+                    }
+                    return result;
+                }
                 if (value < 32) throw new FormatException("JSON control character");
-                if (value != '\\') continue;
+                if (value != '\\') { decoded.Append(value); continue; }
                 if (_at >= _json.Length) throw new FormatException("JSON escape missing");
                 char escaped = _json[_at++];
-                if ("\"\\/bfnrt".IndexOf(escaped) >= 0) continue;
+                switch (escaped)
+                {
+                    case '"': decoded.Append('"'); continue; case '\\': decoded.Append('\\'); continue; case '/': decoded.Append('/'); continue;
+                    case 'b': decoded.Append('\b'); continue; case 'f': decoded.Append('\f'); continue;
+                    case 'n': decoded.Append('\n'); continue; case 'r': decoded.Append('\r'); continue; case 't': decoded.Append('\t'); continue;
+                }
                 if (escaped != 'u' || _at + 4 > _json.Length) throw new FormatException("JSON escape invalid");
-                for (int i = 0; i < 4; i++) if (!Uri.IsHexDigit(_json[_at++])) throw new FormatException("JSON unicode escape invalid");
+                int code = 0;
+                for (int i = 0; i < 4; i++)
+                {
+                    char hex = _json[_at++]; if (!Uri.IsHexDigit(hex)) throw new FormatException("JSON unicode escape invalid");
+                    code = code * 16 + (hex <= '9' ? hex - '0' : char.ToLowerInvariant(hex) - 'a' + 10);
+                }
+                decoded.Append((char)code);
             }
             throw new FormatException("JSON string unterminated");
         }
@@ -94,6 +112,5 @@ namespace PM.horizOn.Cloud.Helper
         private void Space() { while (_at < _json.Length && (_json[_at] == ' ' || _json[_at] == '\r' || _json[_at] == '\n' || _json[_at] == '\t')) _at++; }
         private void End() { Space(); if (_at != _json.Length) throw new FormatException("JSON trailing content"); }
         private static void CheckDepth(int depth) { if (depth > 24) throw new FormatException("JSON nesting limit"); }
-        [Serializable] private sealed class StringValue { public string value = null; }
     }
 }
