@@ -104,7 +104,9 @@ namespace PM.horizOn.Cloud.Service
         public Func<string, object, Task<object>> RespondAsync { get; set; }
         public string SessionToken { get; private set; }
         public string ActiveHost { get; private set; }
-        public string ApiKey { get; set; } = "statistics-project";
+        private string _apiKey = "statistics-project";
+        internal long ContextGeneration { get; private set; }
+        public string ApiKey { get => _apiKey; set { if (_apiKey != value) ContextGeneration++; _apiKey = value; } }
         public bool LastUseSessionToken { get; private set; }
         public int RequestCount { get; private set; }
 
@@ -121,10 +123,10 @@ namespace PM.horizOn.Cloud.Service
         public Task<NetworkResponse<T>> GetAsync<T>(string endpoint, bool useSessionToken = false) where T : class
             => PostAsync<T>(endpoint, null, useSessionToken);
 
-        public void SetSessionToken(string token) => SessionToken = token;
-        public void ClearSessionToken() => SessionToken = null;
+        public void SetSessionToken(string token) { if (SessionToken != token) ContextGeneration++; SessionToken = token; }
+        public void ClearSessionToken() => SetSessionToken(null);
         public string GetSessionToken() => SessionToken;
-        public void SetActiveHost(string host) => ActiveHost = host;
+        public void SetActiveHost(string host) { if (ActiveHost != host) ContextGeneration++; ActiveHost = host; }
         public string GetActiveHost() => ActiveHost;
         public string GetApiKey() => ApiKey;
     }
