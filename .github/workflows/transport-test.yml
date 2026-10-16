@@ -54,6 +54,9 @@ jobs:
           mkdir -p .unity-ci-project/Assets/SharedObjectsSample
           cp Samples~/Examples/Features/SharedObjectsExample.cs Samples~/Examples/Features/SharedObjectsSampleStore.cs .unity-ci-project/Assets/SharedObjectsSample/
 
+          mkdir -p .unity-ci-project/Assets/MatchesSample
+          cp Samples~/Examples/Features/MatchesExample.cs Samples~/Examples/Features/MatchesSampleStore.cs .unity-ci-project/Assets/MatchesSample/
+
       - name: Run actual Unity Editor transport tests
         id: unity-tests
         uses: game-ci/unity-test-runner@v4

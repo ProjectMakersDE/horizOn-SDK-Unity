@@ -12,12 +12,15 @@ using PM.horizOn.Cloud.Service;
 using UnityEngine;
 using PM.horizOn.Cloud.Transport;
 
+if (MatchesJournalContractTests.TryRunChild(args)) return;
 if (SharedObjectsJournalContractTests.TryRunChild(args)) return;
 if (ItemsJournalContractTests.TryRunChild(args)) return;
 if (GroupsJournalContractTests.TryRunChild(args)) return;
 GroupsJournalContractTests.Run();
 SharedObjectsJournalContractTests.Run();
 ItemsJournalContractTests.Run();
+MatchesContractTests.Run();
+MatchesJournalContractTests.Run();
 
 const string host = "http://127.0.0.1:18722/";
 using var listener = new HttpListener();

@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| ⏳ **Matches** | `MatchesManager` | Explicit asynchronous turns, immutable reports and original ranked-run recovery |
 | 🧩 **Shared Objects** | `SharedObjectsManager` | Opaque bytes, indexed bounded queries and explicit original-revision writes |
 | 🎒 **Items** | `ItemsManager` | Bounded catalog, unique inventory and explicit revision-fenced equip/adjust/discard |
 | 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
@@ -150,6 +151,7 @@ Attach one to an empty GameObject and press Play.
 | Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
 | Achievements | `AchievementsExample.cs` (progress, manual unlock, pending handoff and saved Inbox claim) |
 | Friends | `FriendsExample.cs` (explicit lookup, saved original actions and reconciliation) |
+| Matches | `MatchesExample.cs`, `MatchesSampleStore.cs` (two-player original intents, reports and guarded ranked runs) |
 | Items | `ItemsExample.cs`, `ItemsSampleStore.cs` (durable original purchase/CAS and GET-only recovery) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
@@ -1099,3 +1101,81 @@ Validated Actions generic/defense starts and future ranked starts share one star
 explicitly discarded before a different logical run starts. Discard invalidates a late reply;
 it never releases an in-flight HTTP owner. Run adoption is fenced by actual network generation,
 host, project, player and session, including A→B→A transitions.
+
+
+## Matches (TASK-1013, Develop)
+
+Use `MatchesManager.Instance` with the existing signed-in
+`UserManager.Instance.CurrentUser.UserId`. Restore a stored anonymous identity before offering
+signup; failed restore must never replace that player. The manager requires the matching Bearer
+session and project key. It creates no identity, poller, automatic page, timeout action or report.
+
+All methods return `Task<MatchesResult<T>>` (`PM.horizOn.Cloud.Objects.Network.Responses`), with
+`IsSuccess`, `Data`, `ErrorCode`, `Error`, actual `HttpStatusCode` (zero for local failures), and an
+opaque `Identity`/`RetryAfterSeconds` for read cadence. Switch on error codes, never message text.
+
+| Method | Typed data |
+| --- | --- |
+| `GetMatches(userId, recovery: false)` | `MyMatches` (`revision`, `active`, `invites`, `recent`, `limits`) |
+| `GetLimits(userId)` | `MatchLimitsView` (`config`, `limits`, `capabilities`) |
+| `FindOpenMatches(userId, minStrength, maxStrength, limit: 20, cursor: null)` | `MatchPage` |
+| `GetMatch(userId, matchId, recovery: false)` | `MatchRead` (`match`, `serverTime`, `pollAfterSeconds`) |
+| `CreateMatch(userId, expectedPlayerRevision, MatchCreateInput)` | `MatchCreated` (`match`, `playerRevision`) |
+| `JoinMatch/DeclineInvite/AdvanceTimeout/LeaveMatch/CancelMatch(userId, matchId, expectedRevision)` | `MatchRead` |
+| `StartMatch(userId, matchId, expectedRevision, turnOrder)` | `MatchRead` |
+| `SubmitTurn(userId, matchId, expectedRevision, byte[] data, finish: false)` | `MatchRead` |
+| `ReportResult(userId, matchId, finalStateRevision, byte[] result, winnerIds)` | `MatchReported` (`match`, `replayed`) |
+| `StartRankedRun(userId, matchId, finalStateRevision)` | Existing `ValidatedRun` |
+
+First explicitly read the player ledger and a selected Match, then persist the full original
+action before sending. Creation uses the original **player ledger** revision; the seven ordinary
+actions use the original **Match** revision. Every Matches write makes one transport attempt,
+including global429 and503. On uncertainty keep the same request, bytes and revision. Reports
+keep the frozen final-state revision, result bytes and winner IDs even after later Match revisions.
+The SDK canonicalizes/sorts winner IDs without changing their membership. It never trusts a
+client winner, adds rewards locally or silently substitutes a new revision.
+
+`MatchView.data` is an opaque `byte[]`, alongside exact canonical `dataBase64`. An invitation or
+removal projection has **null** data; an accepted empty state is `byte[0]`. Report bytes similarly
+appear as `result`/`resultBase64`. Safe integer revisions/strength stay `long`, including the full
+±9,007,199,254,740,991 range. Names preserve valid Unicode and NUL. `recent` can contain an ongoing
+Match when this player already forfeited. Disputed/unconfirmed outcomes and `notificationPending`
+remain visible; the latter is server notification metadata, not a grant or a reason to claim locally.
+
+Read calls serialize. Respect server `pollAfterSeconds` and the game screen lifecycle. An opaque
+next cursor is one explicit next-page action, including an empty candidate page with a cursor;
+there is no automatic pagination. `GetMatches/GetMatch(recovery: true)` is an explicit uncertain
+original reconciliation read. `GetCached<T>(identity)` returns a defensive copy. `ClearCache()`
+invalidates content/queued responses while retaining bounded cadence/revision/server-time fences.
+Host, project, user, session, network-instance and ABA/generation changes fence late responses.
+Optional realtime `matches:{matchId}` is invalidation metadata; explicitly reread HTTP on event or
+reconnect. simpleServer supports the ordinary REST paths and advertises `matchesRanked=false`
+and `realtime=false`; unsupported ranked operations return501 `FEATURE_NOT_SUPPORTED`.
+
+`StartRankedRun` shares the existing VA start/submit lease with generic starts and Shared Objects
+defense. It cannot overwrite a current or in-flight ticket, including during callbacks; discard
+invalidates adoption without releasing in-flight ownership. A confirmed ranked Match resumes
+only its original server run. `RUN_EXPIRED`/`RUN_ALREADY_USED` never create another run.
+`GetCurrentRankedRun(userId, matchId, finalStateRevision)` reads only a matching actual local
+binding. Submit through `ValidatedActionsManager.SubmitValidated` using the same persisted score
+and input log, then apply only returned state. VA's existing transport retries retain that tuple.
+
+Import `MatchesExample` and `MatchesSampleStore` from the Examples sample and set the stable
+project UUID. The executable explicit-action recipe covers ledger/Match review, create/join/start,
+turns, reports, ranked start/submit and reconciliation. Its exclusive OS handle spans preparation,
+HTTP, result persistence and exact reviewed-hash acknowledgement. Journal scope is project key
+plus player, so regional host/session changes do not erase the original. An uncertain create is
+never sent again: a complete explicitly reviewed, stable **strictly newer** player ledger must
+fence its old CAS. This resolves uncertainty without guessing that any candidate Match was this
+request. A fresh, explicitly rejected create can instead be reviewed/acknowledged only for known
+nonapplying feature errors and their actual400/401/403/404/422/501 status;503, transaction conflict
+and unknown responses remain unresolved. Lost leave/decline acknowledgement needs signed
+`MATCH_NOT_FOUND`, absence from the player ledger and a strictly advanced original player revision.
+
+The sample saves the full original ranked run ID/score/input log before VA submit. Conflicting
+replacement data, partial/corrupt/interrupted results and another live actor/process block sends.
+Complete interrupted results recover before HTTP. Explicit acknowledgement renames the entire
+original/result journal atomically and cannot erase a newer original reviewed by another actor.
+These are tested process-death recovery properties, not a power-loss/filesystem durability claim.
+WebGL mutations require game-owned durable browser storage; the sample fails closed without it.
+Local native/protocol evidence does not imply a deployed game, hosted SDK E2E or release.

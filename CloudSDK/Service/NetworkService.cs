@@ -410,6 +410,13 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MyMatches)) { data = MatchesJson.Mine(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchLimitsView)) { data = MatchesJson.LimitView(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchPage)) { data = MatchesJson.Page(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchRead)) { data = MatchesJson.Read(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchCreated)) { data = MatchesJson.Created(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchReported)) { data = MatchesJson.Reported(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchRankedRunResponse)) { data = MatchesJson.RankedRun(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(SharedCollectionPage)) { data = SharedObjectsJson.Collections(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(SharedUsage)) { data = SharedObjectsJson.Usage(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(SharedObjectRead)) { data = SharedObjectsJson.Read(responseText) as TResponse; }
@@ -770,12 +777,13 @@ namespace PM.horizOn.Cloud.Service
             || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
             || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
             || typeof(T) == typeof(ValidatedRun) || typeof(T) == typeof(ValidatedSubmitResult) || typeof(T) == typeof(PlayerState) || typeof(T) == typeof(EvidenceUploadResult)
+            || typeof(T) == typeof(MyMatches) || typeof(T) == typeof(MatchLimitsView) || typeof(T) == typeof(MatchPage) || typeof(T) == typeof(MatchRead) || typeof(T) == typeof(MatchCreated) || typeof(T) == typeof(MatchReported) || typeof(T) == typeof(MatchRankedRunResponse)
             || typeof(T) == typeof(SharedCollectionPage) || typeof(T) == typeof(SharedUsage) || typeof(T) == typeof(SharedObjectRead)
             || typeof(T) == typeof(SharedQueryResult) || typeof(T) == typeof(SharedWriteResult) || typeof(T) == typeof(SharedDeleteResult)
             || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;
