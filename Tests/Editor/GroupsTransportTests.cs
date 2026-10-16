@@ -64,7 +64,7 @@ namespace PM.horizOn.Cloud.Tests
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);
             var first=new GameObject("[GroupsExampleTest]").AddComponent(type);var second=new GameObject("[GroupsExampleTest]").AddComponent(type);
             foreach(var actor in new[]{first,second})type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
-            var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{
                 await Reply(Manager.GetGroups(User),Mine());
                 var incoming=_listener.GetContextAsync();var create=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(first,new object[]{"Guild","","open",GroupJsonData.FromJson(Data)});var c=await Timeout(incoming);
@@ -74,20 +74,20 @@ namespace PM.horizOn.Cloud.Tests
                 Assert.That(File.ReadAllText(path),Is.EqualTo(original));
                 NetworkService.Instance.SetActiveHost(Host+"/other");NetworkService.Instance.SetActiveHost(Host);
                 incoming=_listener.GetContextAsync();var replay=(Task)type.GetMethod("ApplySavedIntent").Invoke(second,null);c=await Timeout(incoming);body=await new StreamReader(c.Request.InputStream).ReadToEndAsync();Assert.That(body,Does.Contain("\"expectedPlayerRevision\":0"));Assert.That(body,Does.Contain(Data));await Respond(c,Mutation());await replay;
-                Assert.That(File.Exists(path+".success"),Is.True);Assert.That(File.ReadAllText(path),Is.EqualTo(original));
-                type.GetMethod("AcknowledgeSavedSuccess").Invoke(second,null);Assert.That(File.Exists(path),Is.False);Assert.That(File.Exists(path+".success"),Is.False);Assert.That(Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+".*.acknowledged").Length,Is.EqualTo(2));
-            }finally{foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+"*"))File.Delete(file);}
+                Assert.That(File.Exists(ResultPath(path)),Is.True);Assert.That(File.ReadAllText(path),Is.EqualTo(original));
+                type.GetMethod("AcknowledgeSavedSuccess").Invoke(second,null);Assert.That(File.Exists(path),Is.False);Assert.That(File.Exists(ResultPath(path)),Is.False);Assert.That(Archives(path).Length,Is.EqualTo(1));
+            }finally{CleanupJournal(path);}
         }
         [Test]public async Task ActualSampleRejectsUnselectedPendingIntentAndCorruptStorageBeforeAnyMutation()
         {
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
-            var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{
                 await Reply(Manager.GetGroups(User),Mine());var incoming=_listener.GetContextAsync();var review=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail(data:null));await review;
                 await (Task)type.GetMethod("SaveActionAfterReview").Invoke(actor,new object[]{"accept-invite",null,RequestId,null});Assert.That(File.Exists(path),Is.False,"no current matching invitation means no new intent");
-                Directory.CreateDirectory(Application.persistentDataPath);File.WriteAllText(path,"{\"revision\":1.0000000000000001}");
+                Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,"{\"revision\":1.0000000000000001}");
                 Assert.ThrowsAsync<IOException>(async()=>await (Task)type.GetMethod("ApplySavedIntent").Invoke(actor,null));Assert.That(File.ReadAllText(path),Does.Contain("1.0000000000000001"));
-            }finally{foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+"*"))File.Delete(file);}
+            }finally{CleanupJournal(path);}
         }
         [TestCase("host")][TestCase("project")][TestCase("session")]
         public async Task SampleCannotUseReviewFromEarlierContextAfterAba(string kind)
@@ -96,28 +96,28 @@ namespace PM.horizOn.Cloud.Tests
             var incoming=_listener.GetContextAsync();var review=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail());await review;
             if(kind=="host"){NetworkService.Instance.SetActiveHost(Host+"/other");NetworkService.Instance.SetActiveHost(Host);}else if(kind=="project"){_config.SetApiKey("other");_config.SetApiKey("fixture-groups");}else{NetworkService.Instance.SetSessionToken("other");NetworkService.Instance.SetSessionToken("session-"+User);}
             await(Task)type.GetMethod("SaveMetadataAfterReview").Invoke(actor,new object[]{"Changed","","open",GroupJsonData.Empty});
-            Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
         }
         [Test]public async Task EarlierReviewCannotRestoreSelectionWhenTheNewerGroupFails()
         {
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
             var incoming=_listener.GetContextAsync();var first=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});var c=await Timeout(incoming);var second=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Peer});await Respond(c,Detail());await first;await Respond(await Timeout(_listener.GetContextAsync()),"{\"code\":\"GROUP_NOT_FOUND\"}",404);await second;
-            await(Task)type.GetMethod("SaveActionAfterReview").Invoke(actor,new object[]{"delete",null,null,null});Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            await(Task)type.GetMethod("SaveActionAfterReview").Invoke(actor,new object[]{"delete",null,null,null});Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
         }
         [Test]public async Task NewPendingCommandRequiresTheSameGroupVersionAsItsSelectedEntry()
         {
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
             string entry="{\"groupId\":\""+Group+"\",\"requestId\":\""+RequestId+"\",\"issuerId\":\""+Peer+"\",\"createdAt\":\""+Time+"\",\"group\":"+Detail(1,data:null)+"}";
             await Reply(Manager.GetGroups(User),Mine().Replace("\"incomingInvites\":[]","\"incomingInvites\":["+entry+"]"));var incoming=_listener.GetContextAsync();var review=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail(2,data:null));await review;
-            await(Task)type.GetMethod("SaveActionAfterReview").Invoke(actor,new object[]{"accept-invite",null,RequestId,null});Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            await(Task)type.GetMethod("SaveActionAfterReview").Invoke(actor,new object[]{"accept-invite",null,RequestId,null});Assert.That(File.Exists(Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json")),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
         }
         [Test]public async Task ReadableOriginalCannotReplayWithoutDurableWriteAccess()
         {
-            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{await Reply(Manager.GetGroups(User),Mine());var incoming=_listener.GetContextAsync();var create=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(actor,new object[]{"Guild","","open",GroupJsonData.Empty});await Respond(await Timeout(incoming),"{\"code\":\"INBOX_FULL\"}",409);await create;var original=File.ReadAllText(path);
                 using(var blocker=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)){Assert.That(File.ReadAllText(path),Is.EqualTo(original));Assert.ThrowsAsync<IOException>(async()=>await(Task)type.GetMethod("ApplySavedIntent").Invoke(actor,null));}
                 Assert.That(File.ReadAllText(path),Is.EqualTo(original));var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
-            }finally{foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+"*"))File.Delete(file);}
+            }finally{CleanupJournal(path);}
         }
         [Test]public async Task ActualTwoPlayerSampleCreatesInvitesAcceptsPromotesTransfersAndLeavesWithDurableAcknowledgements()
         {
@@ -137,31 +137,133 @@ namespace PM.horizOn.Cloud.Tests
                 await Run(a,"SaveActionAfterReview",new object[]{"role",Peer,null,"officer"},Result(1,User,View(4)));Ack(a);
                 await Run(a,"SaveActionAfterReview",new object[]{"transfer",Peer,null,null},Result(1,User,View(5,"member",Peer)));Ack(a);
                 await Run(a,"SaveActionAfterReview",new object[]{"leave",null,null,null},Result(2,User,"null"));Ack(a);
-                Assert.That(Manager.CurrentGroups.groups,Is.Empty);Assert.That(Directory.GetFiles(Application.persistentDataPath,Prefix(User)+".*.acknowledged").Length,Is.EqualTo(10));Assert.That(Directory.GetFiles(Application.persistentDataPath,Prefix(Peer)+".*.acknowledged").Length,Is.EqualTo(2));
-            }finally{foreach(var user in new[]{User,Peer})foreach(var file in Directory.GetFiles(Application.persistentDataPath,Prefix(user)+"*"))File.Delete(file);}
+                Assert.That(Manager.CurrentGroups.groups,Is.Empty);Assert.That(Directory.GetDirectories(Application.persistentDataPath,Prefix(User)+".journal.*.acknowledged").Length,Is.EqualTo(5));Assert.That(Directory.GetDirectories(Application.persistentDataPath,Prefix(Peer)+".journal.*.acknowledged").Length,Is.EqualTo(1));
+            }finally{foreach(var user in new[]{User,Peer})CleanupJournal(Path.Combine(Application.persistentDataPath,Prefix(user)+".journal/intent.json"));}
         }
         [Test]public async Task RepeatedIdenticalNoopCanBeAcknowledgedWithoutArchiveCollision()
         {
-            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{var incoming=_listener.GetContextAsync();var review=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail());await review;
                 for(int i=0;i<2;i++){incoming=_listener.GetContextAsync();var update=(Task)type.GetMethod("SaveMetadataAfterReview").Invoke(actor,new object[]{"Seagull","","invite",GroupJsonData.FromJson(Data)});await Respond(await Timeout(incoming),Mutation());await update;type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);Assert.That(File.Exists(path),Is.False);}
-                Assert.That(Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+".*.acknowledged").Length,Is.EqualTo(4));
-            }finally{foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+"*"))File.Delete(file);}
+                Assert.That(Archives(path).Length,Is.EqualTo(2));
+            }finally{CleanupJournal(path);}
         }
         [Test]public async Task ReadableSuccessReceiptRequiresDurableWriteAccessBeforeAcknowledgement()
         {
-            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{await Reply(Manager.GetGroups(User),Mine());var incoming=_listener.GetContextAsync();var create=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(actor,new object[]{"Guild","","open",GroupJsonData.Empty});await Respond(await Timeout(incoming),Mutation());await create;
-                using(var blocker=new FileStream(path+".success",FileMode.Open,FileAccess.Read,FileShare.Read)){Assert.That(File.ReadAllText(path+".success"),Is.Not.Empty);var error=Assert.Throws<TargetInvocationException>(()=>type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null));Assert.That(error.InnerException,Is.InstanceOf<IOException>());}
-                Assert.That(File.Exists(path),Is.True);Assert.That(File.Exists(path+".success"),Is.True);type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);Assert.That(File.Exists(path),Is.False);
-            }finally{foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(path)+"*"))File.Delete(file);}
+                using(var blocker=new FileStream(ResultPath(path),FileMode.Open,FileAccess.Read,FileShare.Read)){Assert.That(File.ReadAllText(ResultPath(path)),Is.Not.Empty);var error=Assert.Throws<TargetInvocationException>(()=>type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null));Assert.That(error.InnerException,Is.InstanceOf<IOException>());}
+                Assert.That(File.Exists(path),Is.True);Assert.That(File.Exists(ResultPath(path)),Is.True);type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);Assert.That(File.Exists(path),Is.False);
+            }finally{CleanupJournal(path);}
         }
         [Test]public async Task MutationReceiptStaysInOriginalProjectAndCannotAttachReviewToChangedSampleProject()
         {
-            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);var projectField=type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic);projectField.SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");var other=Path.Combine(Application.persistentDataPath,"groups-"+Group+"-"+User+".json");Assert.That(File.Exists(path),Is.False);
+            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);var projectField=type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic);projectField.SetValue(actor,Peer);var path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");var other=Path.Combine(Application.persistentDataPath,"groups-"+Group+"-"+User+".json.journal/intent.json");Assert.That(File.Exists(path),Is.False);
             try{await Reply(Manager.GetGroups(User),Mine());var incoming=_listener.GetContextAsync();var create=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(actor,new object[]{"Guild","","open",GroupJsonData.Empty});var c=await Timeout(incoming);projectField.SetValue(actor,Group);await Respond(c,Mutation());await create;
-                Assert.That(File.Exists(path+".success"),Is.True);Assert.That(File.Exists(other),Is.False);await(Task)type.GetMethod("SaveMetadataAfterReview").Invoke(actor,new object[]{"Changed","","open",GroupJsonData.Empty});Assert.That(File.Exists(other),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
-            }finally{foreach(var prefix in new[]{path,other})foreach(var file in Directory.GetFiles(Application.persistentDataPath,Path.GetFileName(prefix)+"*"))File.Delete(file);}
+                Assert.That(File.Exists(ResultPath(path)),Is.True);Assert.That(File.Exists(other),Is.False);await(Task)type.GetMethod("SaveMetadataAfterReview").Invoke(actor,new object[]{"Changed","","open",GroupJsonData.Empty});Assert.That(File.Exists(other),Is.False);var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            }finally{foreach(var prefix in new[]{path,other})CleanupJournal(prefix);}
+        }
+        [Test]public async Task DeadOwnerMarkerDoesNotBlockAndConfirmedReplayMakesNoHttpRequest()
+        {
+            string legacy=LegacyPath(),path=JournalPath();Directory.CreateDirectory(Application.persistentDataPath);File.WriteAllText(legacy+".lock","terminated owner");
+            var actor=SampleActor();var type=actor.GetType();
+            try{
+                await Reply(Manager.GetGroups(User),Mine());var task=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(actor,new object[]{"Guild","","open",GroupJsonData.Empty});
+                await Respond(await Timeout(_listener.GetContextAsync()),Mutation());await task;
+                string original=File.ReadAllText(path),result=File.ReadAllText(ResultPath(path));
+                await(Task)type.GetMethod("ApplySavedIntent").Invoke(SampleActor(),null);
+                Assert.That(File.ReadAllText(path),Is.EqualTo(original));Assert.That(File.ReadAllText(ResultPath(path)),Is.EqualTo(result));
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+                type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);var archives=Archives(path);Assert.That(archives.Length,Is.EqualTo(1));
+                Assert.That(File.ReadAllText(Path.Combine(archives[0],"intent.json")),Is.EqualTo(original));Assert.That(File.ReadAllText(Path.Combine(archives[0],"result.json")),Is.EqualTo(result));
+                Assert.That(File.Exists(legacy+".lock"),Is.True,"lock inode is retained, never used as ownership marker");
+            }finally{CleanupJournal(path);}
+        }
+        [Test]public async Task LegacyPendingMigrationPreservesOriginalRequestIdRevisionAndRawPayload()
+        {
+            string legacy=LegacyPath(),path=JournalPath(),raw=LegacyEnvelope(out var hash);Directory.CreateDirectory(Application.persistentDataPath);File.WriteAllText(legacy,raw);File.WriteAllText(legacy+".lock","crashed old owner");var actor=SampleActor();
+            try{
+                var task=(Task)actor.GetType().GetMethod("ApplySavedIntent").Invoke(actor,null);var c=await Timeout(_listener.GetContextAsync());string body=await new StreamReader(c.Request.InputStream).ReadToEndAsync();
+                Assert.That(c.Request.RawUrl,Does.EndWith("/accept-invite"));Assert.That(body,Does.Contain("\"expectedRevision\":17").And.Contain(RequestId));
+                Assert.That(File.ReadAllText(path),Is.EqualTo(raw));Assert.That(File.ReadAllText(Path.Combine(Path.GetDirectoryName(path),"legacy-intent.json")),Is.EqualTo(raw));Assert.That(File.Exists(legacy),Is.False);
+                await Respond(c,Mutation(18));await task;Assert.That(File.ReadAllText(ResultPath(path)),Does.Contain(hash));actor.GetType().GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);
+            }finally{CleanupJournal(path);}
+        }
+        [TestCase("flat")][TestCase("half-ack")][TestCase("published-before-legacy-move")][TestCase("published-after-original-move")]
+        public async Task LegacyConfirmedOrHalfAcknowledgedRecoveryNeverResendsAndArchivesACompletePair(string phase)
+        {
+            string legacy=LegacyPath(),path=JournalPath(),raw=LegacyEnvelope(out var hash),result=LegacyResult(hash),oldArchive=legacy+"."+hash+".11111111111111111111111111111111.acknowledged";
+            Directory.CreateDirectory(Application.persistentDataPath);File.WriteAllText(phase=="half-ack"?oldArchive:legacy,raw);File.WriteAllText(legacy+".success",result);
+            if(phase.StartsWith("published-",StringComparison.Ordinal)){Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,raw);File.WriteAllText(ResultPath(path),result);}
+            if(phase=="published-after-original-move")File.Move(legacy,Path.Combine(Path.GetDirectoryName(path),"legacy-intent.json"));
+            var actor=SampleActor();
+            try{
+                await(Task)actor.GetType().GetMethod("ApplySavedIntent").Invoke(actor,null);Assert.That(File.ReadAllText(path),Is.EqualTo(raw));Assert.That(File.ReadAllText(ResultPath(path)),Is.EqualTo(result));
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+                actor.GetType().GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);var archives=Archives(path);Assert.That(archives.Length,Is.EqualTo(1));
+                Assert.That(File.ReadAllText(Path.Combine(archives[0],"intent.json")),Is.EqualTo(raw));Assert.That(File.ReadAllText(Path.Combine(archives[0],"result.json")),Is.EqualTo(result));
+                if(phase=="half-ack")Assert.That(File.ReadAllText(oldArchive),Is.EqualTo(raw));
+            }finally{CleanupJournal(path);}
+        }
+        [TestCase("mismatched-result")][TestCase("missing-original")][TestCase("conflicting-current-journal")]
+        public async Task UnknownLegacyStateFailsClosedWithoutOverwritingEitherJournal(string phase)
+        {
+            string legacy=LegacyPath(),path=JournalPath(),raw=LegacyEnvelope(out var hash),result=LegacyResult(phase=="mismatched-result"?new string('a',64):hash);Directory.CreateDirectory(Application.persistentDataPath);
+            if(phase!="missing-original")File.WriteAllText(legacy,raw);File.WriteAllText(legacy+".success",result);
+            if(phase=="conflicting-current-journal"){Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,"foreign original");}
+            var actor=SampleActor();
+            try{
+                Assert.ThrowsAsync<IOException>(async()=>await(Task)actor.GetType().GetMethod("ApplySavedIntent").Invoke(actor,null));
+                Assert.That(File.ReadAllText(legacy+".success"),Is.EqualTo(result));if(phase!="missing-original")Assert.That(File.ReadAllText(legacy),Is.EqualTo(raw));if(phase=="conflicting-current-journal")Assert.That(File.ReadAllText(path),Is.EqualTo("foreign original"));
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            }finally{CleanupJournal(path);}
+        }
+        [Test]public async Task CompetingReplayAndAcknowledgementCannotPassAnActiveSendLease()
+        {
+            string path=JournalPath();var first=SampleActor();var second=SampleActor();var type=first.GetType();
+            try{
+                await Reply(Manager.GetGroups(User),Mine());var task=(Task)type.GetMethod("SaveCreateAfterReview").Invoke(first,new object[]{"Guild","","open",GroupJsonData.Empty});var c=await Timeout(_listener.GetContextAsync());
+                Assert.ThrowsAsync<IOException>(async()=>await(Task)type.GetMethod("ApplySavedIntent").Invoke(second,null));
+                var ack=Assert.Throws<TargetInvocationException>(()=>type.GetMethod("AcknowledgeSavedSuccess").Invoke(second,null));Assert.That(ack.InnerException,Is.InstanceOf<IOException>());
+                await Respond(c,Mutation());await task;await(Task)type.GetMethod("ApplySavedIntent").Invoke(second,null);
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+                type.GetMethod("AcknowledgeSavedSuccess").Invoke(second,null);Assert.That(Archives(path).Length,Is.EqualTo(1));
+            }finally{CleanupJournal(path);}
+        }
+        [TestCase(false)][TestCase(true)]public async Task FullyWrittenUnpublishedSuccessRecoversWithoutHttp(bool noRemainingGroup)
+        {
+            string path=JournalPath(),raw=LegacyEnvelope(out var hash);Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,raw);
+            string temporary=Path.Combine(Path.GetDirectoryName(path),"result.0123456789abcdef0123456789abcdef.writing"),result=JsonUtility.ToJson(new StoredSuccess{intentHash=hash,groupId=noRemainingGroup?null:Group,playerRevision=18});File.WriteAllText(temporary,result);var actor=SampleActor();
+            try{
+                await(Task)actor.GetType().GetMethod("ApplySavedIntent").Invoke(actor,null);Assert.That(File.Exists(temporary),Is.False);Assert.That(File.ReadAllText(ResultPath(path)),Is.EqualTo(result));
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));actor.GetType().GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);
+            }finally{CleanupJournal(path);}
+        }
+        [TestCase("partial")][TestCase("wrong-hash")]
+        public async Task UnknownUnpublishedResultBlocksReplayAndReplacementWithoutDiscardingEvidence(string kind)
+        {
+            string path=JournalPath(),raw=LegacyEnvelope(out var hash);Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,raw);
+            string temporary=Path.Combine(Path.GetDirectoryName(path),"result.0123456789abcdef0123456789abcdef.writing"),result=kind=="partial"?"{\"intentHash\":" :LegacyResult(new string('a',64));File.WriteAllText(temporary,result);var actor=SampleActor();
+            try{
+                Assert.ThrowsAsync<IOException>(async()=>await(Task)actor.GetType().GetMethod("ApplySavedIntent").Invoke(actor,null));Assert.That(File.ReadAllText(temporary),Is.EqualTo(result));Assert.That(File.ReadAllText(path),Is.EqualTo(raw));
+                await Reply(Manager.GetGroups(User),Mine());Assert.ThrowsAsync<IOException>(async()=>await(Task)actor.GetType().GetMethod("SaveCreateAfterReview").Invoke(actor,new object[]{"Replacement","","open",GroupJsonData.Empty}));
+                var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected));
+            }finally{CleanupJournal(path);}
+        }
+        private static Component SampleActor(){var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);return actor;}
+        private static string LegacyPath()=>Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json");
+        private static string JournalPath()=>Path.Combine(LegacyPath()+".journal","intent.json");
+        [Serializable]private class StoredEnvelope{public string payload,sha256;}
+        [Serializable]private class StoredSuccess{public string intentHash,groupId;public long playerRevision;}
+        private static string LegacyEnvelope(out string hash){string payload="{\"projectId\":\""+Peer+"\",\"userId\":\""+User+"\",\"action\":\"accept-invite\",\"groupId\":\""+Group+"\",\"requestId\":\""+RequestId+"\",\"revision\":17}";using(var sha=System.Security.Cryptography.SHA256.Create())hash=BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(payload))).Replace("-","").ToLowerInvariant();return JsonUtility.ToJson(new StoredEnvelope{payload=payload,sha256=hash});}
+        private static string LegacyResult(string hash)=>"{\"intentHash\":\""+hash+"\",\"groupId\":\""+Group+"\",\"playerRevision\":18}";
+        private static string ResultPath(string intent)=>Path.Combine(Path.GetDirectoryName(intent),"result.json");
+        private static string[] Archives(string intent)=>Directory.GetDirectories(Application.persistentDataPath,Path.GetFileName(Path.GetDirectoryName(intent))+".*.acknowledged");
+        private static void CleanupJournal(string intent)
+        {
+            string prefix=Path.GetFileName(Path.GetDirectoryName(intent));
+            foreach(var directory in Directory.GetDirectories(Application.persistentDataPath,prefix+"*"))Directory.Delete(directory,true);
+            foreach(var file in Directory.GetFiles(Application.persistentDataPath,prefix.Replace(".journal","")+"*"))File.Delete(file);
         }
         private static void SetUser(string id){typeof(UserManager).GetField("_currentUser",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(UserManager.Instance,new UserData{UserId=id,AccessToken="session-"+id});NetworkService.Instance.SetSessionToken("session-"+id);}
         private static async Task Respond(HttpListenerContext c,string json,int status=200){c.Response.StatusCode=status;c.Response.ContentType="application/json";byte[] b=System.Text.Encoding.UTF8.GetBytes(json);c.Response.ContentLength64=b.Length;await c.Response.OutputStream.WriteAsync(b,0,b.Length);c.Response.Close();}
