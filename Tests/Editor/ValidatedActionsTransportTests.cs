@@ -352,6 +352,8 @@ namespace PM.horizOn.Cloud.Tests
                 await Respond(context, 200, RunBody);
                 Assert.That(await starting, Is.Not.Null);
 
+                // A new logical run requires explicit acknowledgement/discard of the previous ticket.
+                ValidatedActionsManager.Instance.DiscardRun();
                 incoming = _listener.GetContextAsync();
                 starting = ValidatedActionsManager.Instance.StartRun("weekly", new ValidatedRunContext { initialState = new byte[0] });
                 context = await WithTimeout(incoming, TimeSpan.FromSeconds(5));

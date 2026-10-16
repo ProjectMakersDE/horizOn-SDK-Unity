@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| 🧩 **Shared Objects** | `SharedObjectsManager` | Opaque bytes, indexed bounded queries and explicit original-revision writes |
 | 🎒 **Items** | `ItemsManager` | Bounded catalog, unique inventory and explicit revision-fenced equip/adjust/discard |
 | 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
 | 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
@@ -1055,3 +1056,40 @@ Sample journals use a persistent exclusive lock handle, released by process term
 a stale CreateNew lock marker. ACK renames the complete journal directory atomically, keeping
 original and result together. A confirmed changed-offer purchase with zero item references is
 still recorded under its original operation ID; inventory recovery stays GET-only.
+
+
+### Shared Objects
+
+`SharedObjectsManager.Instance` exposes explicit collection pages, owner usage, point reads,
+typed queries and single-attempt `CreateObject`, `UpdateObject`, `DeleteObject` with the caller's
+original `If-Match` revision. All calls use the signed-in matching player and project key.
+`SharedObjectsResult<T>` carries `IsSuccess`, `Data`, `ErrorCode`, `Error`, an opaque `Identity`
+and `RetryAfterSeconds`. `GetCached<T>(identity)` returns a deep copy. Repeated reads respect
+`pollAfterSeconds` (collection pages default120s); no timer or automatic next page is installed.
+An explicit continuation page remains separate. `ClearCache()` invalidates content and queued
+responses while preserving bounded revision/server-time/cadence fences for the current identity.
+
+Objects expose both exact `dataBase64` and decoded opaque `byte[] data`. Search values are typed
+`SharedScalar` (safe integer or Unicode string), positions use safe64-bit integers; null partitions,
+expiry, empty bytes and embedded NUL are preserved. Never deserialize object bytes as trusted game
+state without your game's own format checks. Query cursors stay opaque and never grant access.
+
+`Samples~/Examples/Features/SharedObjectsExample.cs` is an executable explicit-action recipe:
+collection/rectangle/opponent reads, reviewed create/update, distinct confirmed delete, and frozen
+opponent bytes/digest passed to Validated Actions. Its stable project-key/player journal retains
+one complete original across regional host changes. An OS-exclusive handle owns preparation,
+HTTP and atomic result persistence. A sent CREATE is **never resent**, even after an uncertain
+response or recreation. `GetRecoveryUsage` and restricted own `QueryRecoveryObjects` are explicit
+read-only reconciliation helpers; a complete consistent owner snapshot must permanently fence
+the original usage revision before acknowledgement. Acknowledgement archives original and result
+together; partial/corrupt/conflicting journals block replacements. Production games own archive
+retention and UI review. Browser games must supply durable browser storage: the filesystem sample
+fails before writes in a WebGL player. An unknown defense start remains guarded durably; after a
+process restart that lost its VA ticket, use game-owned restoration/reconciliation instead of
+starting another run. No automatic restore, replacement guest, reward or trusted Inbox send occurs.
+
+Validated Actions generic/defense starts and future ranked starts share one start/submit lease.
+`HasPendingOperation` includes synchronous result callbacks. An existing `CurrentRun` must be
+explicitly discarded before a different logical run starts. Discard invalidates a late reply;
+it never releases an in-flight HTTP owner. Run adoption is fenced by actual network generation,
+host, project, player and session, including A→B→A transitions.

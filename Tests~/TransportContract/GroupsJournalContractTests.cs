@@ -20,7 +20,7 @@ static class GroupsJournalContractTests
         else typeof(GroupsSampleStore).GetMethod("WithLock",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(store,new object[]{(Action)(()=>{if(phase.StartsWith("unpublished-",StringComparison.Ordinal))WriteReceipt();Ready();})});
         return true;
         void WriteReceipt(){var receipt=Activator.CreateInstance(typeof(GroupsSampleStore).GetNestedType("Success",BindingFlags.NonPublic));receipt.GetType().GetField("intentHash").SetValue(receipt,original.Hash);receipt.GetType().GetField("groupId").SetValue(receipt,phase.EndsWith("null-group",StringComparison.Ordinal)?null:User);receipt.GetType().GetField("playerRevision").SetValue(receipt,18L);string json=UnityEngine.JsonUtility.ToJson(receipt);typeof(GroupsSampleStore).GetMethod("WriteNew",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{Path.Combine(root,"groups-"+Project+"-"+User+".json.journal","result.0123456789abcdef0123456789abcdef.writing"),json});}
-            void Ready(){File.WriteAllText(Path.Combine(root,"ready"),original.Hash);using(var f=new FileStream(Path.Combine(root,"ready"),FileMode.Open,FileAccess.Write))f.Flush(true);while(true)Thread.Sleep(50);}
+            void Ready(){File.WriteAllText(Path.Combine(root,"ready.writing"),original.Hash);using(var f=new FileStream(Path.Combine(root,"ready.writing"),FileMode.Open,FileAccess.Write))f.Flush(true);File.Move(Path.Combine(root,"ready.writing"),Path.Combine(root,"ready"));while(true)Thread.Sleep(50);}
     }
     public static void Run()
     {

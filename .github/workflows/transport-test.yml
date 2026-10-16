@@ -51,6 +51,8 @@ jobs:
           cp Samples~/Examples/Features/FriendsExample.cs .unity-ci-project/Assets/FriendsSample/FriendsExample.cs
           mkdir -p .unity-ci-project/Assets/ItemsSample
           cp Samples~/Examples/Features/ItemsExample.cs Samples~/Examples/Features/ItemsSampleStore.cs .unity-ci-project/Assets/ItemsSample/
+          mkdir -p .unity-ci-project/Assets/SharedObjectsSample
+          cp Samples~/Examples/Features/SharedObjectsExample.cs Samples~/Examples/Features/SharedObjectsSampleStore.cs .unity-ci-project/Assets/SharedObjectsSample/
 
       - name: Run actual Unity Editor transport tests
         id: unity-tests
