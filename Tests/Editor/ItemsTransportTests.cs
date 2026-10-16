@@ -309,6 +309,89 @@ namespace PM.horizOn.Cloud.Tests
             }
             finally { CleanupJournal(); }
         }
+        private static Type StoreType => Type.GetType("PM.horizOn.Cloud.Examples.Features.ItemsSampleStore, Assembly-CSharp", true);
+        private static object Store() => Activator.CreateInstance(StoreType, Application.persistentDataPath, Project, User, ApiKey);
+        private static object StoreCall(object store, string method, params object[] args) => StoreType.GetMethod(method).Invoke(store, args);
+        [Test] public async Task ActualTwoActorsCannotOverlapHttpOrAcknowledgeANewerJournal()
+        {
+            Assert.That(File.Exists(JournalPath), Is.False); var first = Actor(); var second = Actor();
+            try
+            {
+                Assert.That(await OneAction(first, "RefreshInventory", Array.Empty<object>(), Inventory(4)), Is.True);
+                var write = Act(first, "SaveEquipAfterReview", Item, true); var held = await Timeout(_listener.GetContextAsync());
+                var pending = _listener.GetContextAsync();
+                Assert.ThrowsAsync<IOException>(async () => await Act(second, "ApplySavedIntent", false));
+                Assert.That(await Task.WhenAny(pending, Task.Delay(100)), Is.Not.SameAs(pending));
+                await Respond(held, Inventory(5)); Assert.That(await Timeout(write), Is.True);
+                // Second actor explicitly observes the first receipt, without another mutation.
+                Assert.That(await Act(second, "ApplySavedIntent", false), Is.True);
+                Assert.That(await Task.WhenAny(pending, Task.Delay(100)), Is.Not.SameAs(pending));
+                Ack(first); Assert.That(File.Exists(JournalPath), Is.False);
+                var newer = Act(first, "SaveEquipAfterReview", Item, false); var c = await Timeout(pending);
+                Assert.That(c.Request.RawUrl, Is.EqualTo("/api/v1/app/items/equip"));
+                Assert.That(await new StreamReader(c.Request.InputStream).ReadToEndAsync(), Does.Contain("\"expectedRevision\":5"));
+                await Respond(c, Inventory(6)); Assert.That(await Timeout(newer), Is.True);
+                var stale = Assert.Throws<TargetInvocationException>(() => Ack(second));
+                Assert.That(stale.InnerException, Is.TypeOf<InvalidOperationException>());
+                Assert.That(File.Exists(JournalPath), Is.True, "stale actor must not acknowledge a newer original/result");
+                Ack(first); Assert.That(File.Exists(JournalPath), Is.False);
+            }
+            finally { CleanupJournal(); }
+        }
+        [Test] public async Task UnpublishedPurchaseReceiptRecoversBeforeAnyReplayAndUsesInventoryGetOnly()
+        {
+            Assert.That(File.Exists(JournalPath), Is.False); var actor = Actor();
+            try
+            {
+                await ReviewOffers(actor); string operation = await SendPurchase(actor, false, true);
+                object store = Store(), prepared = StoreCall(store, "PrepareSend");
+                string hash = (string)prepared.GetType().GetProperty("Hash").GetValue(prepared);
+                StoreCall(store, "SaveSuccess", hash, operation, new[] { new ItemReference { instanceId = Item, itemKey = "sword" } });
+                // Exact publication gap after flushed receipt bytes and before its atomic rename.
+                File.Move(SuccessPath, Path.Combine(JournalDirectory, "result.complete.writing"));
+                UnityEngine.Object.DestroyImmediate(actor.gameObject); actor = Actor();
+                var retry = Act(actor, "ApplySavedIntent", false); var c = await Timeout(_listener.GetContextAsync());
+                Assert.That(c.Request.HttpMethod, Is.EqualTo("GET"));
+                Assert.That(c.Request.RawUrl, Is.EqualTo("/api/v1/app/items?userId=" + User));
+                Assert.That(File.Exists(SuccessPath), Is.True); Assert.That(File.ReadAllText(SuccessPath), Does.Contain(operation));
+                await Respond(c, Inventory(3)); Assert.That(await Timeout(retry), Is.True);
+                Ack(actor); Assert.That(File.Exists(JournalPath), Is.False);
+            }
+            finally { CleanupJournal(); }
+        }
+        [Test] public async Task EqualInventoryRevisionCannotReleaseAnUncertainOriginalCas()
+        {
+            Assert.That(File.Exists(JournalPath), Is.False); var actor = Actor();
+            try
+            {
+                Assert.That(await OneAction(actor, "RefreshInventory", Array.Empty<object>(), Inventory(4)), Is.True);
+                var first = Act(actor, "SaveEquipAfterReview", Item, true); var c = await Timeout(_listener.GetContextAsync());
+                await Respond(c, "{\"code\":\"TEST_UNCERTAIN\"}", 409); Assert.That(await Timeout(first), Is.False);
+                Assert.That(await OneAction(actor, "RefreshInventory", Array.Empty<object>(), Inventory(4)), Is.True);
+                Assert.That((bool)SampleType.GetMethod("ReconcileSavedMutationAfterReview").Invoke(actor, null), Is.False);
+                Assert.That(File.Exists(JournalPath), Is.True); Assert.That(File.Exists(SuccessPath), Is.False);
+                Assert.That(await OneAction(actor, "RefreshInventory", Array.Empty<object>(), Inventory(5)), Is.True);
+                Assert.That((bool)SampleType.GetMethod("ReconcileSavedMutationAfterReview").Invoke(actor, null), Is.True);
+                Ack(actor); Assert.That(File.Exists(JournalPath), Is.False);
+            }
+            finally { CleanupJournal(); }
+        }
+        [Test] public async Task PartialUnpublishedReceiptFailsClosedBeforeAnotherHttpRequest()
+        {
+            Assert.That(File.Exists(JournalPath), Is.False); var actor = Actor();
+            try
+            {
+                Assert.That(await OneAction(actor, "RefreshInventory", Array.Empty<object>(), Inventory(4)), Is.True);
+                var first = Act(actor, "SaveEquipAfterReview", Item, true); var c = await Timeout(_listener.GetContextAsync());
+                await Respond(c, "{\"code\":\"TEST_UNCERTAIN\"}", 409); Assert.That(await Timeout(first), Is.False);
+                File.WriteAllText(Path.Combine(JournalDirectory, "result.partial.writing"), "{\"intentHash\":");
+                var pending = _listener.GetContextAsync();
+                Assert.ThrowsAsync<IOException>(async () => await Act(actor, "ApplySavedIntent", false));
+                Assert.That(await Task.WhenAny(pending, Task.Delay(100)), Is.Not.SameAs(pending));
+                Assert.That(File.Exists(JournalPath), Is.True);
+            }
+            finally { CleanupJournal(); }
+        }
         internal static void SetUser(string user)
         {
             typeof(UserManager).GetField("_currentUser", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(UserManager.Instance, new UserData { UserId = user, AccessToken = "session-" + user });

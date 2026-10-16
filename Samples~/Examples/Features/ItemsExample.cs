@@ -18,7 +18,7 @@ namespace PM.horizOn.Cloud.Examples.Features
     {
         [SerializeField] private string projectId;
         private InventorySnapshot _reviewed;
-        private string _reviewScope, _offersScope, _catalogScope, _inventoryReadForHash;
+        private string _reviewScope, _offersScope, _catalogScope, _inventoryReadForHash, _acknowledgeHash, _acknowledgeScope;
         private bool _busy;
         private int _generation;
         private string User => isActiveAndEnabled && UserManager.Instance.CurrentUser?.IsValid() == true && UserManager.Instance.CurrentUser.AccessToken == HorizonApp.Network.GetSessionToken() ? UserManager.Instance.CurrentUser.UserId : null;
@@ -89,53 +89,60 @@ namespace PM.horizOn.Cloud.Examples.Features
             var store = Store(user); if (!store.HasIntent) return false; _busy = true;
             try
             {
-                var prepared = store.PrepareSend(); var x = prepared.Value; string scope = Scope; var network = HorizonApp.Network;
-                if (store.HasSuccess)
+                using (var lease = store.AcquireSend())
                 {
-                    var receipt = store.ReadSuccess(prepared.Hash);
-                    if (receipt.action != "purchase") return true;
-                    // The purchase was confirmed durably, even if a previous GET failed or this actor restarted.
-                    bool loaded = await RefreshInventory();
-                    if (loaded && Current(scope, network)) _inventoryReadForHash = prepared.Hash;
-                    return loaded;
-                }
-                if (x.action == "purchase")
-                {
-                    var offers = await PlayerValuesManager.Instance.GetOffers(user);
+                    var prepared = lease.Prepared; var x = prepared.Value; string scope = Scope; var network = HorizonApp.Network;
+                    if (prepared.HasSuccess)
+                    {
+                        var receipt = lease.ReadSuccess();
+                        if (receipt.action != "purchase") { _acknowledgeHash = prepared.Hash; _acknowledgeScope = scope; return true; }
+                        // The purchase was confirmed durably, even if a previous GET failed or this actor restarted.
+                        bool loaded = await RefreshInventory();
+                        if (loaded && Current(scope, network)) { _inventoryReadForHash = _acknowledgeHash = prepared.Hash; _acknowledgeScope = scope; }
+                        return loaded;
+                    }
+                    if (x.action == "purchase")
+                    {
+                        var offers = await PlayerValuesManager.Instance.GetOffers(user);
+                        if (!Current(scope, network)) return false;
+                        var offer = offers.IsSuccess ? offers.Data.offers.FirstOrDefault(o => o.key == x.offerKey) : null;
+                        if ((offer == null || !offer.active || OfferHash(offer) != x.offerHash) && !confirmOfferChanged)
+                        { HorizonApp.Log.Warning("Offer changed or unavailable. Keep original ID; confirm the changed terms/replay explicitly."); return false; }
+                        var result = await PlayerValuesManager.Instance.Purchase(user, x.offerKey, x.operationId);
+                        if (!result.IsSuccess) { HorizonApp.Log.Warning("Keep original purchase, including expired/uncertain results: " + result.ErrorCode); return false; }
+                        if (result.State?.operation?.operationId != x.operationId) throw new InvalidOperationException("Purchase echoed another operation; original retained");
+                        // Write and flush the matching receipt BEFORE the fallible inventory GET. No local item synthesis.
+                        lease.SaveSuccess(x.operationId, result.State.operation.items);
+                        if (!Current(scope, network)) return false;
+                        bool loaded = await RefreshInventory(); if (loaded && Current(scope, network)) { _inventoryReadForHash = _acknowledgeHash = prepared.Hash; _acknowledgeScope = scope; }
+                        return loaded;
+                    }
+                    ItemsResult<InventorySnapshot> changed;
+                    switch (x.action)
+                    {
+                        case "equip": changed = await ItemsManager.Instance.SetEquipped(user, x.instanceId, x.revision, x.equipped); break;
+                        case "adjust": changed = await ItemsManager.Instance.AdjustProperties(user, x.instanceId, x.revision, x.changes); break;
+                        case "discard": changed = await ItemsManager.Instance.DiscardItem(user, x.instanceId, x.revision); break;
+                        default: throw new InvalidOperationException("Unknown original Items action");
+                    }
+                    if (!changed.IsSuccess) { HorizonApp.Log.Warning("Keep original instance/revision and reconcile: " + changed.ErrorCode); return false; }
+                    lease.SaveSuccess(null, null);
                     if (!Current(scope, network)) return false;
-                    var offer = offers.IsSuccess ? offers.Data.offers.FirstOrDefault(o => o.key == x.offerKey) : null;
-                    if ((offer == null || !offer.active || OfferHash(offer) != x.offerHash) && !confirmOfferChanged)
-                    { HorizonApp.Log.Warning("Offer changed or unavailable. Keep original ID; confirm the changed terms/replay explicitly."); return false; }
-                    var result = await PlayerValuesManager.Instance.Purchase(user, x.offerKey, x.operationId);
-                    if (!result.IsSuccess) { HorizonApp.Log.Warning("Keep original purchase, including expired/uncertain results: " + result.ErrorCode); return false; }
-                    if (result.State?.operation?.operationId != x.operationId) throw new InvalidOperationException("Purchase echoed another operation; original retained");
-                    // Write and flush the matching receipt BEFORE the fallible inventory GET. No local item synthesis.
-                    store.SaveSuccess(prepared.Hash, x.operationId, result.State.operation.items);
-                    if (!Current(scope, network)) return false;
-                    bool loaded = await RefreshInventory(); if (loaded && Current(scope, network)) _inventoryReadForHash = prepared.Hash;
-                    return loaded;
+                    _reviewed = changed.Data; _reviewScope = _acknowledgeScope = scope; _acknowledgeHash = prepared.Hash; return true;
                 }
-                ItemsResult<InventorySnapshot> changed;
-                switch (x.action)
-                {
-                    case "equip": changed = await ItemsManager.Instance.SetEquipped(user, x.instanceId, x.revision, x.equipped); break;
-                    case "adjust": changed = await ItemsManager.Instance.AdjustProperties(user, x.instanceId, x.revision, x.changes); break;
-                    case "discard": changed = await ItemsManager.Instance.DiscardItem(user, x.instanceId, x.revision); break;
-                    default: throw new InvalidOperationException("Unknown original Items action");
-                }
-                if (!changed.IsSuccess) { HorizonApp.Log.Warning("Keep original instance/revision and reconcile: " + changed.ErrorCode); return false; }
-                store.SaveSuccess(prepared.Hash, null, null);
-                if (!Current(scope, network)) return false;
-                _reviewed = changed.Data; _reviewScope = scope; return true;
             }
             finally { _busy = false; }
         }
         public void AcknowledgeSavedSuccess()
         {
             string user = User; if (user == null || _busy) return;
-            var store = Store(user); var original = store.PrepareSend(); var receipt = store.ReadSuccess(original.Hash);
-            if (receipt.action == "purchase" && (_inventoryReadForHash != original.Hash || _reviewScope != Scope || ItemsManager.Instance.CurrentInventory == null)) throw new InvalidOperationException("Refresh confirmed purchase inventory before acknowledging");
-            store.AcknowledgeSavedSuccess(); _inventoryReadForHash = null;
+            using (var lease = Store(user).AcquireSend())
+            {
+                var original = lease.Prepared; var receipt = lease.ReadSuccess();
+                if (_acknowledgeHash != original.Hash || _acknowledgeScope != Scope) throw new InvalidOperationException("Review the exact current original result before acknowledging");
+                if (receipt.action == "purchase" && (_inventoryReadForHash != original.Hash || _reviewScope != Scope || ItemsManager.Instance.CurrentInventory == null)) throw new InvalidOperationException("Refresh confirmed purchase inventory before acknowledging");
+                lease.AcknowledgeSavedSuccess(); _inventoryReadForHash = _acknowledgeHash = _acknowledgeScope = null;
+            }
         }
         /// <summary>Explicit player/game decision after inspecting refreshed inventory against a saved equip/adjust/discard.
         /// Archives the uncertainty as a reconciliation, never claims the write succeeded and never closes an uncertain purchase.</summary>
@@ -144,10 +151,14 @@ namespace PM.horizOn.Cloud.Examples.Features
             string user = User;
             if (user == null || _busy || _reviewed == null || _reviewScope != Scope || ItemsManager.Instance.CurrentInventory?.revision != _reviewed.revision) return false;
             var store = Store(user); if (!store.HasIntent || store.HasSuccess) return false;
-            var original = store.PrepareSend(); if (original.Value.action == "purchase") return false;
-            store.SaveReconciledOriginal(original.Hash, _reviewed.revision);
-            HorizonApp.Log.Warning("Original Items mutation reconciled by player review; no server success inferred");
-            return true;
+            using (var lease = store.AcquireSend())
+            {
+                var original = lease.Prepared; if (original.Value.action == "purchase" || original.HasSuccess || _reviewed.revision <= original.Value.revision) return false;
+                lease.SaveReconciledOriginal(_reviewed.revision);
+                _acknowledgeHash = original.Hash; _acknowledgeScope = Scope;
+                HorizonApp.Log.Warning("Original Items mutation reconciled by player review; no server success inferred");
+                return true;
+            }
         }
         private bool Current(string scope, NetworkService network) => User != null && scope == Scope && ReferenceEquals(network, HorizonApp.Network);
         private static string OfferHash(PlayerValueOffer offer)
@@ -159,6 +170,6 @@ namespace PM.horizOn.Cloud.Examples.Features
             add(offer.itemRewards.Length.ToString(CultureInfo.InvariantCulture)); foreach (var reward in offer.itemRewards) { add(reward.itemKey); add(reward.quantity.ToString(CultureInfo.InvariantCulture)); }
             return ItemsSampleStore.Hash(b.ToString());
         }
-        private void OnDisable() { _generation++; _reviewed = null; _reviewScope = _offersScope = _catalogScope = null; _inventoryReadForHash = null; }
+        private void OnDisable() { _generation++; _reviewed = null; _reviewScope = _offersScope = _catalogScope = null; _inventoryReadForHash = _acknowledgeHash = _acknowledgeScope = null; }
     }
 }
