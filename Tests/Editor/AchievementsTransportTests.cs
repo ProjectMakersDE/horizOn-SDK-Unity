@@ -60,6 +60,46 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That((await Load(Snapshot(version:'b',definitions:"[]",second:3))).Data.definitions,Is.Empty);
             Assert.That((await Load(Snapshot(version:'b',definitions:"null",second:4))).Data.definitions,Is.Empty);
         }
+        [TestCase("none")] [TestCase("delivered")]
+        public async Task SnapshotAndConditionalCacheKeepNullMetadataAndNonPendingRewards(string state)
+        {
+            var first = await Load(Snapshot(progress:"["+Progress(state:state)+"]"));
+            Assert.That(first.IsSuccess, Is.True);
+            AssertOptionalNulls(first.Data, state);
+            first.Data.definitions[0].rewards.values[0].amount = 1;
+            first.Data.limits.maxDefinitions = 1;
+            first.Data.progress[0].rewardState = "changed";
+            var cached = Manager.CurrentAchievements;
+            AssertOptionalNulls(cached, state);
+            Assert.That(cached.definitions[0].rewards.values[0].amount, Is.EqualTo(9007199254740991L));
+            Assert.That(cached.limits.maxDefinitions, Is.EqualTo(20));
+            Assert.That(cached.progress[0].rewardState, Is.EqualTo(state));
+            var conditional = await Load(Snapshot(definitions:"null", progress:"["+Progress(state:state)+"]", second:2));
+            Assert.That(conditional.IsSuccess, Is.True);
+            AssertOptionalNulls(conditional.Data, state);
+            AssertOptionalNulls(Manager.CurrentAchievements, state);
+        }
+        private static void AssertOptionalNulls(AchievementsSnapshot snapshot, string state)
+        {
+            Assert.That(snapshot.definitions[0].condition, Is.Null, "manual conditions remain absent");
+            Assert.That(snapshot.definitions[0].imageUrl, Is.Null);
+            Assert.That(snapshot.progress[0].pendingReward, Is.Null, "only pending rewards have a frozen reward");
+            if (state == "delivered") Assert.That(snapshot.progress[0].inboxEntryId, Is.EqualTo(Entry));
+            else Assert.That(snapshot.progress[0].inboxEntryId, Is.Null);
+        }
+        [Test] public async Task RewardlessUnlockKeepsNullOutcomeAndProgressInReturnedWrapper()
+        {
+            var incoming = _listener.GetContextAsync();
+            var pending = Manager.Unlock(User, "starter");
+            var definition = Definition().Replace("[{\"key\":\"gold\",\"amount\":9007199254740991}]", "[]");
+            await Respond(await Timeout(incoming), UnlockBody(Snapshot(definitions:"["+definition+"]", progress:"["+Progress(state:"none")+"]"), outcomes:Outcome(state:"none", code:null)));
+            var result = await pending;
+            Assert.That(result.IsSuccess, Is.True);
+            AssertOptionalNulls(result.Data.achievements, "none");
+            Assert.That(result.Data.deliveryResults[0].code, Is.Null);
+            Assert.That(result.Data.deliveryResults[0].inboxEntryId, Is.Null);
+            Assert.That(result.Data.achievements.definitions[0].rewards.values, Is.Empty);
+        }
         [Test] public async Task UnknownMetadataGetsExactlyOneFullReloadAndNeverTrustsCallerVersionAlone()
         {
             var incoming=_listener.GetContextAsync();var pending=Manager.GetAchievements(User,Version('a'));var c=await Timeout(incoming);Assert.That(c.Request.RawUrl,Does.Not.Contain("definitionVersion"));
@@ -96,7 +136,7 @@ namespace PM.horizOn.Cloud.Tests
             var keys=new List<string>{"starter","second"};var incoming=_listener.GetContextAsync();var pending=Manager.DeliverRewards(User,keys);keys[0]="changed";var c=await Timeout(incoming);Assert.That(c.Request.RawUrl,Is.EqualTo("/api/v1/app/achievements/rewards/deliver"));Assert.That(await new StreamReader(c.Request.InputStream).ReadToEndAsync(),Does.Contain("[\"starter\",\"second\"]"));
             var state=Snapshot(3,'b',"["+Definition(amount:"99")+","+Definition("second","99")+"]","["+Progress(state:"delivered")+","+Progress("second")+"]",3);
             await Respond(c,"{\"achievements\":"+state+",\"results\":["+Outcome(state:"delivered",code:null)+","+Outcome("second")+"]}");var r=await pending;
-            Assert.That(r.IsSuccess,Is.True);Assert.That(r.Data.results[1].code,Is.EqualTo("INBOX_FULL"));Assert.That(r.Data.achievements.progress[1].pendingReward.values[0].amount,Is.EqualTo(3));Assert.That(r.Data.achievements.definitions[1].rewards.values[0].amount,Is.EqualTo(99));Assert.That(InboxManager.Instance.CurrentInbox,Is.Null);Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
+            Assert.That(r.IsSuccess,Is.True);Assert.That(r.Data.results[0].code,Is.Null);Assert.That(r.Data.results[1].inboxEntryId,Is.Null);Assert.That(r.Data.achievements.progress[0].pendingReward,Is.Null);Assert.That(r.Data.achievements.definitions[0].condition,Is.Null);Assert.That(r.Data.results[1].code,Is.EqualTo("INBOX_FULL"));Assert.That(r.Data.achievements.progress[1].pendingReward.values[0].amount,Is.EqualTo(3));Assert.That(r.Data.achievements.definitions[1].rewards.values[0].amount,Is.EqualTo(99));Assert.That(InboxManager.Instance.CurrentInbox,Is.Null);Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
         }
         [TestCase("host")] [TestCase("project")] [TestCase("session")] [TestCase("clear")] [TestCase("signout")]
         public async Task LateRepliesAndCachedMetadataCannotCrossIdentityOrInvalidation(string kind)
