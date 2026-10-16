@@ -8,6 +8,7 @@ using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Objects.Data;
 using UnityEngine;
+using PM.horizOn.Cloud.Service;
 
 namespace PM.horizOn.Cloud.Manager
 {
@@ -19,6 +20,7 @@ namespace PM.horizOn.Cloud.Manager
         private PlayerValuesState _state;
         private PlayerValuesOffers _offers;
         private string _identity;
+        private NetworkService _network;
         private long _epoch, _revision = -1, _definition = -1, _serverMillis = -1;
         private long _clockObservedAt;
         public string LastErrorCode { get; private set; }
@@ -70,7 +72,7 @@ namespace PM.horizOn.Cloud.Manager
             if (!IsCurrent(identity, epoch)) return new PlayerValuesResult { ErrorCode = "STALE_RESPONSE", Error = "Session or cache changed" };
             PlayerValuesState state = response.Data;
             if (!response.IsSuccess && !string.IsNullOrEmpty(response.ErrorBody))
-            { try { state = JsonUtility.FromJson<ErrorEnvelope>(PrepareJson(response.ErrorBody))?.state; } catch { state = null; } }
+            { try { var envelope = JsonFragments.Object(response.ErrorBody); state = envelope.TryGetValue("state", out var raw) && raw != "null" ? PlayerValuesJson.State(raw) : null; } catch { state = null; } }
             if (state != null && !AcceptState(state, userId)) return Failure("STALE_RESPONSE");
             if (response.IsSuccess && state == null) return Failure("INVALID_RESPONSE");
             LastErrorCode = response.IsSuccess ? null : response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode);
@@ -103,19 +105,19 @@ namespace PM.horizOn.Cloud.Manager
             return LastErrorCode == null;
         }
         private bool IsCurrent(string identity, long epoch) { SyncIdentity(); return identity == _identity && epoch == _epoch; }
-        private void ResetIdentity() { _identity = null; _epoch++; _state = null; _offers = null; _revision = _definition = _serverMillis = -1; _clockObservedAt = 0; LastErrorCode = null; }
+        private void ResetIdentity() { _identity = null; _network = null; _epoch++; _state = null; _offers = null; _revision = _definition = _serverMillis = -1; _clockObservedAt = 0; LastErrorCode = null; }
         private void SyncIdentity()
         {
-            string identity = UserManager.Instance.CurrentUser?.UserId + "|" + HorizonApp.Network.GetSessionToken() + "|" + HorizonApp.Network.GetApiKey() + "|" + HorizonApp.Network.GetActiveHost();
-            if (identity == _identity) return;
-            ResetIdentity(); _identity = identity;
+            var network = HorizonApp.Network;
+            string identity = UserManager.Instance.CurrentUser?.UserId + "|" + network.GetSessionToken() + "|" + network.GetApiKey() + "|" + network.GetActiveHost() + "|" + network.ContextGeneration;
+            if (ReferenceEquals(network, _network) && identity == _identity) return;
+            ResetIdentity(); _identity = identity; _network = network;
         }
         private PlayerValuesResult Failure(string code) { LastErrorCode = code; return new PlayerValuesResult { ErrorCode = code, Error = code }; }
         private static bool TryMillis(string value, out long millis) { millis = 0; if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)) return false; millis = time.ToUnixTimeMilliseconds(); return true; }
         private static bool ValidOperationId(string value) { var parts = value?.Split(':'); return parts?.Length == 2 && long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var time) && time > 0 && Guid.TryParseExact(parts[1], "D", out _); }
         internal static string PrepareJson(string json) => PlayerValuesJson.Prepare(json);
-        private static T Clone<T>(T value) where T : class => value == null ? null : JsonUtility.FromJson<T>(JsonUtility.ToJson(value));
-        [Serializable] private class ErrorEnvelope { public PlayerValuesState state; }
+        private static T Clone<T>(T value) where T : class => PlayerValuesJson.Clone(value);
         [Serializable] private class PurchaseRequest { public string userId, offerKey, operationId; }
         [Serializable] private class AdjustRequest { public string userId, key, reason, operationId; public long amount; }
     }
