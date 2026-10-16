@@ -1039,15 +1039,21 @@ current numeric property and reviewed rule before persisting an intent.
 The sample writes a hashed project-key/player-scoped original command using CreateNew, durable
 flush and readback before HTTP; regional hosts are callback fences, not journal identities. An
 uncertain/conflicting mutation remains saved after Refresh. `ApplySavedIntent` preserves its
-original body. If an uncertain purchase's offer changed or disappeared,
+original body. A persistent OS-exclusive `SendLease` spans preparation, awaited HTTP and result
+persistence, so another actor or process cannot send the same journal concurrently. Fully flushed
+unpublished result files recover before HTTP; partial/conflicting files block replacement sends. If an uncertain purchase's offer changed or disappeared,
 `ApplySavedIntent(confirmOfferChanged:true)` is an explicit game/player confirmation to repeat
 the original ID, allowing the server to replay the retained receipt before today's offer check.
 It never creates a replacement ID. A matching confirmed purchase receipt is flushed **before**
 GET inventory; after GET failure or actor recreation, the saved success path performs GET only.
-`AcknowledgeSavedSuccess` is explicit after inventory recovery, and archives the complete original/result directory in one rename without another network operation.
+`AcknowledgeSavedSuccess` is explicit after reviewing that exact original result and, for purchases,
+inventory recovery. The same exclusive lease archives the complete original/result directory in
+one rename without another network operation; stale actors cannot acknowledge a newer journal.
 After a lost inventory mutation response, explicitly Refresh, inspect the saved original against
 current state, call `ReconcileSavedMutationAfterReview`, then acknowledge. Its journal labels this
-as a player reconciliation, never server-confirmed success; it cannot close an uncertain purchase. Production games own transactional persistence and
+as a player reconciliation, never server-confirmed success. The reviewed inventory revision must
+be strictly greater than the original CAS revision, permanently fencing a delayed write; equal or
+older snapshots cannot release it. This path cannot close an uncertain purchase. Production games own transactional persistence and
 archive retention. WebGL games must supply a game-owned durable browser journal; this filesystem
 sample refuses new writes before HTTP on WebGL. Restore failures must retain identity and pending
 commands; this example never signs up a replacement player.
