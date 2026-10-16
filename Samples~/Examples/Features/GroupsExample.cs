@@ -77,13 +77,13 @@ namespace PM.horizOn.Cloud.Examples.Features
         }
         private async Task SaveAndApply(GroupsSampleStore.Intent intent)
         {
-            // CreateNew + durable flush refuses a competing/already saved command, even after restart.
+            // The exclusive journal lock and durable flush refuse replacement, even after restart.
             var store=new GroupsSampleStore(Application.persistentDataPath,projectId,intent.userId);store.SaveNew(intent);await ApplySavedIntent();
         }
         public async Task ApplySavedIntent()
         {
             var user=User();if(user==null)return;var store=new GroupsSampleStore(Application.persistentDataPath,projectId,user);if(!store.HasIntent)return;
-            var prepared=store.PrepareSend();var x=prepared.Value;if(x.projectId!=projectId||x.userId!=user)return;string originalHash=prepared.Hash,originalProject=x.projectId;
+            using(var lease=store.AcquireSend()){var prepared=lease.Prepared;if(prepared.HasSuccess){HorizonApp.Log.Info("Confirmed Groups result is saved; explicitly acknowledge it without resending");return;}var x=prepared.Value;if(x.projectId!=projectId||x.userId!=user)return;string originalHash=prepared.Hash,originalProject=x.projectId;
             var n=HorizonApp.Network;long c=n.ContextGeneration;int g=_generation,selection=_reviewSelection;var manager=GroupsManager.Instance;GroupsResult<GroupMutationView> r;
             switch(x.action){
                 case"create":r=await manager.CreateGroup(user,x.revision,x.name,x.description,x.joinMode,GroupJsonData.FromJson(x.dataJson));break;
@@ -100,11 +100,12 @@ namespace PM.horizOn.Cloud.Examples.Features
             }
             if(!Current(user,n,c,g))return;
             if(!r.IsSuccess){HorizonApp.Log.Warning("Keep original command and reconcile explicitly: "+r.ErrorCode);return;}
-            store.SaveSuccess(originalHash,r.Data.group?.id,r.Data.groups.revision);
+            lease.SaveSuccess(r.Data.group?.id,r.Data.groups.revision);
             if(projectId!=originalProject){_reviewed=null;_page=null;_reviewSelection++;return;}
             if(selection==_reviewSelection)SetReviewed(r.Data.group,user,n,c,g);HorizonApp.Log.Info("Groups revision "+r.Data.groups.revision);
             // Show success and let the game/player explicitly acknowledge the durably saved receipt.
             // This example never archives a pending command automatically.
+            }
         }
         private void SetReviewed(GroupView value,string user,NetworkService network,long context,int generation){_reviewed=value;_page=null;_pageSelection++;_reviewUser=user;_reviewNetwork=network;_reviewContext=context;_reviewGeneration=generation;_reviewProject=projectId;}
         private bool ReviewedCurrent()
