@@ -24,8 +24,9 @@ namespace PM.horizOn.Cloud.Service
         private string _activeHost;
         private string _sessionToken;
         private long _contextGeneration, _routingGeneration, _configGeneration;
-        /// <summary>Also detects a host, session or project switched away and back during a request.</summary>
-        internal long ContextGeneration { get { _ = RoutingGeneration; return _contextGeneration; } }
+        /// <summary>Monotonic scope counter for rejecting late game UI callbacks, including a host,
+        /// session or project switched away and back. Contains no credentials.</summary>
+        public long ContextGeneration { get { _ = RoutingGeneration; return _contextGeneration; } }
         internal long RoutingGeneration
         {
             get
@@ -123,6 +124,11 @@ namespace PM.horizOn.Cloud.Service
             return await SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, headers);
         }
 
+        /// <summary>One JSON POST attempt for revision-fenced commands with an uncertain outcome.
+        /// The caller retains the original intent; this never substitutes a new revision.</summary>
+        public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, null, true);
+
         /// <summary>
         /// Send a PUT request to the API.
         /// Same headers, JSON serialization, retries and error handling as <see cref="PostAsync{TResponse}"/>.
@@ -195,7 +201,7 @@ namespace PM.horizOn.Cloud.Service
             string method,
             object requestData,
             bool useSessionToken,
-            IReadOnlyDictionary<string, string> headers) where TResponse : class
+            IReadOnlyDictionary<string, string> headers, bool singleAttempt = false) where TResponse : class
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -215,7 +221,7 @@ namespace PM.horizOn.Cloud.Service
             int attemptCount = 0;
             // Signup creates a server-issued identity; legacy gift redemption has no stable
             // caller ID. An uncertain response must never silently create another operation.
-            bool oneAttempt = method == "POST" && (endpoint == "/api/v1/app/user-management/signup"
+            bool oneAttempt = singleAttempt || method == "POST" && (endpoint == "/api/v1/app/user-management/signup"
                 || endpoint == "/api/v1/app/gift-codes/redeem" && requestData is PM.horizOn.Cloud.Objects.Network.Requests.RedeemGiftCodeRequest gift && string.IsNullOrEmpty(gift.idempotencyId));
             int maxAttempts = oneAttempt ? 1 : _config.MaxRetryAttempts + 1;
 
@@ -384,6 +390,10 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(FriendsSnapshot))
+                        { data = FriendsJson.Snapshot(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(FriendLookup))
+                        { data = FriendsJson.Lookup(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(RedeemGiftCodeResponse))
                         {
                             data = GiftCodeJson.Redeem(responseText) as TResponse;
@@ -714,7 +724,7 @@ namespace PM.horizOn.Cloud.Service
         }
 
         private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
-            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse);
+            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
             ? (data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;

@@ -653,3 +653,4 @@ RateLimitRetryContractTests.Run();
 GiftCodeValuesContractTests.Run();
 await InboxContractTests.Run();
 AchievementsContractTests.Run();
+FriendsContractTests.Run();
