@@ -210,6 +210,8 @@ namespace PM.horizOn.Cloud.Service
             string url = $"{_activeHost}{endpoint}";
             string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
             long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            string requestJson = SerializeRequest(method, requestData);
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
             // Signup creates a server-issued identity; legacy gift redemption has no stable
             // caller ID. An uncertain response must never silently create another operation.
@@ -230,7 +232,7 @@ namespace PM.horizOn.Cloud.Service
 
                 if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
                     return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
-                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken))
                 {
                     ApplyHeaders(request, headers);
 
@@ -253,20 +255,21 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
                             string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
                             // Feature limits with a code (for example RUN_RATE_LIMITED) can last an hour:
                             // they are reported right away instead of being retried.
-                            if (attemptCount < maxAttempts && !IsNonRetryableRateLimitCode(rateLimitCode))
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -281,7 +284,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode);
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode, ReadResponseHeaders(request), request.downloadHandler?.text);
                         }
 
                         // Server errors (5xx) or timeout - retry
@@ -431,6 +434,10 @@ namespace PM.horizOn.Cloud.Service
             }
 
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            binaryData = binaryData == null ? Array.Empty<byte>() : (byte[])binaryData.Clone();
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
             int maxAttempts = _config.MaxRetryAttempts + 1;
 
@@ -445,6 +452,8 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
+                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
                 using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken))
                 {
                     ApplyHeaders(request, headers);
@@ -463,17 +472,19 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
-                            if (attemptCount < maxAttempts)
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -487,7 +498,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode, ReadResponseHeaders(request), request.downloadHandler?.text);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -567,6 +578,10 @@ namespace PM.horizOn.Cloud.Service
             }
 
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            string requestJson = SerializeRequest(method, requestData);
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
             int maxAttempts = _config.MaxRetryAttempts + 1;
 
@@ -581,7 +596,9 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
+                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return BinaryNetworkResponse.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken))
                 {
                     request.SetRequestHeader("Accept", "application/octet-stream");
                     ApplyHeaders(request, headers);
@@ -612,17 +629,19 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
-                            if (attemptCount < maxAttempts)
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -636,7 +655,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode);
+                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode, ReadResponseHeaders(request), rateLimitCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -667,7 +686,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return BinaryNetworkResponse.Failure(errorMessage, responseCode, ReadResponseHeaders(request));
+                        return BinaryNetworkResponse.Failure(errorMessage, responseCode, ReadResponseHeaders(request), ParseErrorCode(request));
                     }
 
                     byte[] responseData = request.downloadHandler.data;
@@ -685,6 +704,16 @@ namespace PM.horizOn.Cloud.Service
             }
 
             return BinaryNetworkResponse.Failure($"Max retry attempts ({maxAttempts}) exceeded");
+        }
+
+        private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
+            ? (data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+        private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
+        {
+            if (headers == null) return null;
+            var copy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in headers) copy[pair.Key] = pair.Value;
+            return copy;
         }
 
         /// <summary>
@@ -722,7 +751,7 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Create a UnityWebRequest with proper headers and body.
         /// </summary>
-        private UnityWebRequest CreateRequest(string url, string method, object requestData, bool useSessionToken)
+        private UnityWebRequest CreateRequest(string url, string method, string requestJson, bool useSessionToken)
         {
             UnityWebRequest request;
 
@@ -733,7 +762,7 @@ namespace PM.horizOn.Cloud.Service
             else if (method == "POST" || method == "PUT")
             {
                 // Use ToJsonExcludeEmpty to avoid sending empty strings that fail API validation
-                string jsonData = requestData != null ? JsonHelper.ToJsonExcludeEmpty(requestData) : "{}";
+                string jsonData = requestJson ?? "{}";
                 LogService.Instance.Info($"Request JSON: {jsonData}");
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
                 request = new UnityWebRequest(url, method);
@@ -806,27 +835,19 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         /// <param name="retryAfterSeconds">Seconds from the Retry-After header (0 if unknown)</param>
         /// <returns>Human-readable error message</returns>
-        internal static string BuildRateLimitMessage(float retryAfterSeconds)
+        internal static string BuildRateLimitMessage(double retryAfterSeconds)
         {
             if (retryAfterSeconds > 0f)
             {
-                return $"Rate limit exceeded (HTTP 429). Try again in {(int)Math.Ceiling(retryAfterSeconds)} seconds.";
+                return $"Rate limit exceeded (HTTP 429). Try again in {Math.Ceiling(retryAfterSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)} seconds.";
             }
             return "Rate limit exceeded (HTTP 429). Try again later.";
         }
 
         /// <summary>
-        /// True for a 429 server code that must not be retried automatically because the wait can
-        /// be long: the validated actions run limits <c>RUN_RATE_LIMITED</c> and
-        /// <c>RUN_CAPACITY_REACHED</c> (up to an hour). A 429 without a code (the account request
-        /// limit) keeps the Retry-After based retries.
+        /// Every nonempty feature-limit code is final for this call. Only codefree account429 retries automatically.
         /// </summary>
-        /// <param name="errorCode">The <c>code</c> of the 429 body, or null</param>
-        internal static bool IsNonRetryableRateLimitCode(string errorCode)
-        {
-            return errorCode == ValidatedActionsErrorCodes.RunRateLimited ||
-                   errorCode == ValidatedActionsErrorCodes.RunCapacityReached;
-        }
+        internal static bool IsNonRetryableRateLimitCode(string errorCode) => RateLimitRetryPolicy.IsFeatureLimit(errorCode);
 
         /// <summary>
         /// Parse error message from request.
@@ -944,6 +965,7 @@ namespace PM.horizOn.Cloud.Service
         public bool Found { get; private set; }
         public byte[] Data { get; private set; }
         public string Error { get; private set; }
+        public string ErrorCode { get; private set; }
         public long StatusCode { get; private set; }
 
         /// <summary>
@@ -980,13 +1002,14 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static BinaryNetworkResponse Failure(string error, long statusCode = 0, IReadOnlyDictionary<string, string> headers = null)
+        public static BinaryNetworkResponse Failure(string error, long statusCode = 0, IReadOnlyDictionary<string, string> headers = null, string errorCode = null)
         {
             return new BinaryNetworkResponse
             {
                 IsSuccess = false,
                 Found = false,
                 Error = error,
+                ErrorCode = errorCode,
                 StatusCode = statusCode,
                 Headers = headers ?? ResponseHeaders.Empty
             };

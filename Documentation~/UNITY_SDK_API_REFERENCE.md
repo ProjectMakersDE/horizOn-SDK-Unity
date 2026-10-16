@@ -2040,7 +2040,7 @@ Helpers: `HasDailyCap`, `RemainingToday` (`long.MaxValue` without a cap), `IsFul
 | 403 | Forbidden | Tier limit, wrong user, check permissions |
 | 404 | Not Found | Resource doesn't exist |
 | 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` on a gift code with grants |
-| 429 | Rate Limited | Wait and retry with backoff |
+| 429 | Rate Limited | Codefree: Retry-After plus0–20% jitter; any nonempty feature code: return immediately |
 
 Player profile errors carry a stable `code` in the JSON body (`COSMETIC_LOCKED`, ...). The
 Unity SDK exposes it as `PlayerProfileManager.Instance.LastErrorCode`; switch on the code,
@@ -2152,3 +2152,21 @@ else
 
 **Version**: 1.9.0
 **Last Updated**: 2026-09-29
+
+
+### Transport rate-limit retries (TASK-996)
+
+All JSON, binary-upload and binary-download transports handle429 consistently. A response
+with any nonempty `code` is a feature limit: return it immediately with the original status,
+code and response headers; do not sleep or retry it. An account limit without a code uses
+`Retry-After` (seconds or any of the three [HTTP-date formats](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats)) plus random0–20% additional delay, rounded up to
+milliseconds. A missing/invalid header uses the configured positive retry delay (at least1s).
+A wait too large for the platform is returned without retrying earlier than the server asked.
+
+Retry limits remain configured by `MaxRetryAttempts`. Original serialized JSON/operation IDs,
+binary bytes and custom headers are frozen before the first request. Retry attempts cannot
+cross a host/project switch or, for authenticated calls, a session change, even if the value
+is switched back. Public reads can finish retrying during a concurrent signin. Binary error
+responses additionally expose `ErrorCode`, with existing `Headers`/`GetHeader()` preserved.
+Non-idempotent signup and legacy gift-code redemption without caller IDs make only one
+transport attempt after an uncertain result. No SDK retry creates a replacement operation ID.

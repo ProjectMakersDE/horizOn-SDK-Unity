@@ -649,5 +649,6 @@ static void Require(bool condition, string name)
     }
 }
 
+RateLimitRetryContractTests.Run();
 GiftCodeValuesContractTests.Run();
 await InboxContractTests.Run();
