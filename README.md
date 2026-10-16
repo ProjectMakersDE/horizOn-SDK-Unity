@@ -951,3 +951,27 @@ Friends and requests expose only public `display.name` and `display.profile` (`a
 Before a mutation, durably store its action, target UUID, original `expectedRevision` (including zero), and the original incoming/outgoing `requestId` for accept/decline/cancel under the matching project/player. Each mutation makes exactly one transport attempt, including global429,5xx and timeout responses. A failed or uncertain result keeps that original intent. Explicitly refresh and reconcile `REVISION_CONFLICT`; never automatically insert the new revision, substitute a different request ID or resend the action after refresh. `FriendsExample.ApplySavedAction` accepts this already stored command and never creates another identity.
 
 `CurrentFriends` is a defensive copy. Calls are serialized; current host/project/session, network-instance generation and cache epoch fence late responses, including switches away and back. `ClearCache()` preserves revision/server-time watermarks. Own-player `friends:<userId>` realtime metadata can invalidate the cache; the game explicitly reloads by HTTP. There is no automatic polling, realtime connection or signup. Lists retained after a downgrade remain readable/removable even if their size exceeds the returned current `limits.maxFriends`; capacity decisions belong to the server. `NetworkService.ContextGeneration` is a read-only scope counter available to game UI callbacks, including the shipped example.
+
+## Groups (TASK-1010, Develop)
+
+`GroupsManager.Instance` uses the current player's `UserManager.Instance.CurrentUser.UserId`, project key and matching Bearer session. Each method returns `GroupsResult<T>` with `IsSuccess`, `Data`, `ErrorCode`, `Error`; `LastErrorCode` is also available. No signup, polling, pagination loop or socket is started.
+
+| Method | Data |
+|---|---|
+| `GetGroups(userId)` | `MyGroupsView` |
+| `GetGroup(userId, groupId)` | `GroupView` |
+| `GetMembers(userId, groupId, afterUserId: null, limit: 50)` | `GroupMembersView` |
+| `GetPending(userId, groupId)` | `GroupPendingSnapshot` |
+| `CreateGroup(userId, expectedPlayerRevision, name, description: "", joinMode: "open", data: null)` | `GroupMutationView` |
+| `UpdateGroup(userId, groupId, expectedRevision, name, description, joinMode, data)` | `GroupMutationView` |
+| `JoinGroup`, `RequestJoin`, `LeaveGroup`, `DeleteGroup` `(userId, groupId, expectedRevision)` | `GroupMutationView` |
+| `InvitePlayer`, `RemoveMember`, `TransferLeadership` `(userId, groupId, expectedRevision, targetUserId)` | `GroupMutationView` |
+| `AcceptInvite`, `DeclineInvite`, `CancelRequest` `(userId, groupId, expectedRevision, requestId)` | `GroupMutationView` |
+| `CancelInvite`, `AcceptRequest`, `DeclineRequest` `(userId, groupId, expectedRevision, targetUserId, requestId)` | `GroupMutationView` |
+| `SetMemberRole(userId, groupId, expectedRevision, targetUserId, role)` | `GroupMutationView` |
+
+Data is `GroupJsonData.FromJson("{...}")`, an immutable original JSON object; `data.Json` preserves arbitrary keys, null and finite numeric lexemes, including integers beyond double precision. Omitted private `GroupView.data` and `myRole` remain null. Pass a received wrapper unchanged when editing other metadata. Creation defaults to `{}`; Update requires a data object. Name/description are UTF-8 bounded, and data is conservatively bounded to 2,048 original UTF-8 bytes/depth16. Nullable public profile names/cosmetic IDs remain null. All DTO/cache copies are separate except immutable JSON wrappers.
+
+All 16 mutations (including PUT) send the frozen original input exactly once, even after429/5xx/timeout. Keep the caller-reviewed revision and exact pending request UUID; no client group UUID or operation ID is generated for creation. On uncertainty, retain the durable original intent and explicitly read/reconcile before another decision. Never replace its revision/request ID automatically. Snapshot/member/pending replies carry their own revision; explicitly restart member pages when it changes. Lists retained after a plan downgrade stay readable; current server limits govern additions. Calls are serialized and host/project/session/generation/epoch fenced. `CurrentGroups` is a defensive own-player snapshot; `ClearCache()` preserves bounded revision/time history. Hosted `groups:{groupId}` carries optional invalidation metadata; explicitly read HTTP after invalidation/reconnect. simpleServer supports REST without hosted realtime.
+
+`GroupsExample` demonstrates explicit two-player UI actions: Refresh, ReviewGroup, one member page, create, invite/accept, officer/leadership transfer and leave/delete. Configure its stable project UUID. `GroupsSampleStore` flushes and verifies original project/player-scoped input before every send, blocks replacement after uncertain results and durably saves successful result identity. `AcknowledgeSavedSuccess` is an explicit game/player action after applying that result; it archives the original and receipt for inspection. Production games own archive retention/transactional persistence. WebGL must supply a game-owned durable browser store; this filesystem sample fails closed there. New pending commands must select a current matching request; saved original replay never substitutes it. Failed restoration never creates a replacement identity.

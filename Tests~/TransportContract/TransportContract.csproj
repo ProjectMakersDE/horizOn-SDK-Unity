@@ -6,6 +6,8 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../CloudSDK/Helper/GroupsJson.cs" Link="Production/GroupsJson.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/GroupsResponses.cs" Link="Production/GroupsResponses.cs" />
     <Compile Include="../../CloudSDK/Helper/FriendsJson.cs" Link="Production/FriendsJson.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/FriendsResponses.cs" Link="Production/FriendsResponses.cs" />
     <Compile Include="../../CloudSDK/Transport/RateLimitRetryPolicy.cs" Link="Production/RateLimitRetryPolicy.cs" />
