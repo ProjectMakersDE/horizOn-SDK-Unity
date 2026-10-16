@@ -22,8 +22,9 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 10. [Player Profile](#player-profile)
 11. [Validated Actions](#validated-actions)
 12. [Statistics](#statistics)
-13. [Data Models](#data-models)
-14. [Error Handling](#error-handling)
+13. [Achievements](#achievements)
+14. [Data Models](#data-models)
+15. [Error Handling](#error-handling)
 
 ---
 
@@ -2172,3 +2173,17 @@ is switched back. Public reads can finish retrying during a concurrent signin. B
 responses additionally expose `ErrorCode`, with existing `Headers`/`GetHeader()` preserved.
 Non-idempotent signup and legacy gift-code redemption without caller IDs make only one
 transport attempt after an uncertain result. No SDK retry creates a replacement operation ID.
+
+## Achievements
+
+**Manager:** `PM.horizOn.Cloud.Manager.AchievementsManager.Instance`. All three app routes require the current project key and the matching current player's Bearer session.
+
+| REST | Unity |
+|---|---|
+| `GET /api/v1/app/achievements?userId=&definitionVersion=` | `Task<AchievementsResult> GetAchievements(string userId, string definitionVersion = null)` |
+| `POST /api/v1/app/achievements/unlock {userId,key}` | `Task<AchievementUnlockResult> Unlock(string userId, string key)` |
+| `POST /api/v1/app/achievements/rewards/deliver {userId,keys}` | `Task<AchievementDeliveryResult> DeliverRewards(string userId, IList<string> keys)` |
+
+Response types in `PM.horizOn.Cloud.Objects.Network.Responses` expose `IsSuccess`, `Data`, `ErrorCode`, `Error`. `AchievementsSnapshot` includes camelCase `userId`, `revision`, `definitionVersion`, `definitions`, `progress`, `limits`, `serverTime`; definition conditions and reward amounts retain `long` safe integers. Unlock data includes `achievements`, `newlyUnlocked`, `replayed`, `deliveryResults`; delivery data includes `achievements`, `results`. Each outcome includes `key`, `state`, `inboxEntryId`, `code`. `state` is `none`, `pending` or `delivered`. A business delivery refusal such as `INBOX_FULL` is a per-key pending outcome, not loss of the accepted reward.
+
+An opaque version can be used conditionally only with matching player/session metadata. Null metadata retains that cache and an empty array clears it. `CurrentAchievements` is a defensive copy. `ClearCache()` preserves anti-rollback revision/time watermarks; identity changes reset scope and fence in-flight replies. There is no automatic fetch, polling or currency addition. Repeat original manual/delivery keys, show pending rewards and explicitly claim delivered entries through Inbox. Use the existing Inbox sample's fresh-selection guard before persisting a new claim; replay only the saved original entry ID after uncertainty. See `Samples~/Examples/Features/AchievementsExample.cs` for explicit actions and statistics integration.

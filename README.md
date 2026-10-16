@@ -145,6 +145,7 @@ Attach one to an empty GameObject and press Play.
 | Player Profile | `PlayerProfileExample.cs` |
 | Statistics | `StatisticsExample.cs`, `StatisticsSampleStore.cs` |
 | Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
+| Achievements | `AchievementsExample.cs` (progress, manual unlock, pending handoff and saved Inbox claim) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -903,3 +904,23 @@ There is no automatic polling or socket connection. A screen waits at least `pol
 PlayerValuesExample now binds pending storage to project/player across regional hosts and migrates original configured-host keys without changing the command. Conflicts and damaged data block replacement. Because portable PlayerPrefs cannot enumerate unknown historical hosts, an existing player with no known pending intent requires game-owned reconciliation before this automatic sample creates another purchase. New players get one demo intent. Cache reads never delete an invalid old anonymous token, and restore failure never creates a replacement identity in these value-bearing samples.
 
 The statistics sample scopes saved batches to the project API key and player. An older projectless pending batch is preserved and blocks a new batch until game-specific reconciliation. Its identity recovery and signup marker are saved before authentication, so a transient restore error or lost SDK token cache cannot silently create another guest.
+
+## Achievements (TASK-1008)
+
+`AchievementsManager.Instance` provides these explicit player-session calls:
+
+| Method | Result |
+|---|---|
+| `GetAchievements(userId, definitionVersion: null)` | `AchievementsResult` |
+| `Unlock(userId, originalKey)` | `AchievementUnlockResult` |
+| `DeliverRewards(userId, originalKeys)` | `AchievementDeliveryResult` |
+
+Each result exposes `IsSuccess`, `Data`, `ErrorCode`, `Error`. Snapshot `Data` contains `userId`, `revision`, opaque `definitionVersion`, `definitions`, `progress`, `limits` and `serverTime`. Unlock `Data` contains `achievements`, `newlyUnlocked`, `replayed` and `deliveryResults`; delivery `Data` contains `achievements` and per-key `results`. Namespaces follow the other managers and response DTOs.
+
+Use the currently authenticated player's `UserManager.Instance.CurrentUser.UserId`; all calls attach that player's Bearer session and current project key. No call signs up, polls or opens a socket. `CurrentAchievements` returns a defensive copy; `ClearCache()` invalidates on matching own-player `achievements:<userId>` realtime metadata or reconnect, followed by an explicit HTTP refresh. Host/project/session changes, including switching away and back, invalidate cached metadata and late results. Revision/time watermarks survive a materialized-cache clear. Calls are serialized.
+
+The version is an opaque64-character token. Only a matching metadata cache is sent conditionally: `definitions:null` retains that exact cache, while `definitions:[]` replaces it. An unknown caller version causes a full request; an unexpected null payload permits one bounded full reload. Hidden locked metadata is absent and becomes visible after its unlock. Versions are never ordered numerically or lexically.
+
+Repeat an uncertain manual unlock with the same key. Repeat delivery with the original one-to-eight unique keys; do not invent client operation/reward IDs. `pending` plus `INBOX_FULL` remains visible, including partial delivery results. `progress.pendingReward` contains the original accepted values/time even after current catalogue rewards change. Delivered rewards point to `inboxEntryId`; achievements never add local currency. The ordinary Inbox claim supplies the complete authoritative Player Values snapshot. A new claim selection uses the guarded `InboxExample.ClaimNewEntry` before durable game-owned storage; saved original claim IDs remain replayable.
+
+`AchievementsExample` shows only explicit screen/button actions for progress, manual unlock, retrying pending handoff and claiming an already saved Inbox entry. Its `RefreshAfterStatistics(report)` responds to a nonempty `newlyUnlocked` list from a committed non-replayed statistics result; a replay triggers no duplicate notification. Persist the original Inbox claim intent by project/player before `ClaimSavedInboxReward`, and retain it on timeout or error. Exact safe64 integer reward/threshold lexemes are validated before conversion; malformed responses cannot replace the cache.

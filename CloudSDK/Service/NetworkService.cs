@@ -334,8 +334,8 @@ namespace PM.horizOn.Cloud.Service
                     try
                     {
                         // Debug log the raw response
-                        if (typeof(TResponse) == typeof(InboxSnapshot) || typeof(TResponse) == typeof(InboxClaimResponse))
-                            LogService.Instance.Info($"Inbox response: {responseText.Length} characters");
+                        if (IsPrivatePlayerResponse<TResponse>())
+                            LogService.Instance.Info($"Private player response: {responseText.Length} characters");
                         else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
 
                         TResponse data;
@@ -378,6 +378,12 @@ namespace PM.horizOn.Cloud.Service
                         {
                             data = PM.horizOn.Cloud.Helper.InboxJson.Claim(responseText) as TResponse;
                         }
+                        else if (typeof(TResponse) == typeof(AchievementsSnapshot))
+                        { data = AchievementsJson.Snapshot(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(AchievementUnlockResponse))
+                        { data = AchievementsJson.Unlock(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
+                        { data = AchievementsJson.Delivery(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(RedeemGiftCodeResponse))
                         {
                             data = GiftCodeJson.Redeem(responseText) as TResponse;
@@ -403,7 +409,8 @@ namespace PM.horizOn.Cloud.Service
                     catch (Exception e)
                     {
                         LogService.Instance.Error($"Failed to deserialize response: {e.Message}");
-                        LogService.Instance.Error($"Response text was: {responseText}");
+                        if (IsPrivatePlayerResponse<TResponse>()) LogService.Instance.Error($"Private player response could not be decoded ({responseText.Length} characters)");
+                        else LogService.Instance.Error($"Response text was: {responseText}");
                         return NetworkResponse<TResponse>.Failure($"Deserialization failed: {e.Message}", request.responseCode);
                     }
                 }
@@ -543,8 +550,8 @@ namespace PM.horizOn.Cloud.Service
 
                     try
                     {
-                        if (typeof(TResponse) == typeof(InboxSnapshot) || typeof(TResponse) == typeof(InboxClaimResponse))
-                            LogService.Instance.Info($"Inbox response: {responseText.Length} characters");
+                        if (IsPrivatePlayerResponse<TResponse>())
+                            LogService.Instance.Info($"Private player response: {responseText.Length} characters");
                         else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
                         TResponse data = JsonUtility.FromJson<TResponse>(responseText);
                         return NetworkResponse<TResponse>.Success(data, request.responseCode, ReadResponseHeaders(request));
@@ -705,6 +712,9 @@ namespace PM.horizOn.Cloud.Service
 
             return BinaryNetworkResponse.Failure($"Max retry attempts ({maxAttempts}) exceeded");
         }
+
+        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
+            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
             ? (data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
