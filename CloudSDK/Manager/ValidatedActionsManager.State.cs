@@ -3,6 +3,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Enums;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Transport;
+using PM.horizOn.Cloud.Service;
 
 namespace PM.horizOn.Cloud.Manager
 {
@@ -20,7 +21,8 @@ namespace PM.horizOn.Cloud.Manager
     public partial class ValidatedActionsManager
     {
         private PlayerState _currentState;
-        private string _currentStateUserId;
+        private string _currentStateUserId, _currentStateScope;
+        private NetworkService _currentStateNetwork;
 
         /// <summary>
         /// Last known server-owned state of the signed-in player: from the last successful
@@ -32,7 +34,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             get
             {
-                if (_currentState != null && !BelongsToCurrentUser(_currentStateUserId))
+                if (_currentState != null && (!BelongsToCurrentUser(_currentStateUserId) || _currentStateScope != null && (_currentStateScope != RunScope() || !ReferenceEquals(_currentStateNetwork, HorizonApp.Network))))
                 {
                     _currentState = null;
                     _currentStateUserId = null;
@@ -62,11 +64,13 @@ namespace PM.horizOn.Cloud.Manager
                 return FailLocally<PlayerState>(localError, "User must be signed in to load the validated actions state");
             }
 
-            var response = await HorizonApp.Network.GetAsync<PlayerState>(
+            var network = HorizonApp.Network; string scope = RunScope();
+            var response = await network.GetAsync<PlayerState>(
                 plan.Endpoint,
                 useSessionToken: plan.UseSessionToken
             );
 
+            if (!ReferenceEquals(network, HorizonApp.Network) || scope != RunScope()) return FailLocally<PlayerState>("STALE_RESPONSE", "Validated state identity changed");
             if (!response.IsSuccess || response.Data == null)
             {
                 LastErrorCode = ResolveErrorCode(response);
@@ -85,8 +89,9 @@ namespace PM.horizOn.Cloud.Manager
             }
 
             HorizonApp.Log.Info($"Validated actions state loaded: {state.values.Length} values ({state.day})");
+            if (!ReferenceEquals(network, HorizonApp.Network) || scope != RunScope()) return FailLocally<PlayerState>("STALE_RESPONSE", "Validated state changed during logging");
             HorizonApp.Events.Publish(EventKeys.ValidatedStateLoaded, state);
-            return state;
+            return ReferenceEquals(network, HorizonApp.Network) && scope == RunScope() ? state : FailLocally<PlayerState>("STALE_RESPONSE", "Validated state changed during callback");
         }
 
         partial void OnStateReceived(ValidatedSubmitResult result)
@@ -112,6 +117,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             _currentState = state;
             _currentStateUserId = userId;
+            _currentStateScope = RunScope(); _currentStateNetwork = HorizonApp.Network;
         }
     }
 }

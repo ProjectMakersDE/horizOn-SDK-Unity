@@ -129,9 +129,21 @@ namespace PM.horizOn.Cloud.Service
         public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
             => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, null, true);
 
+        /// <summary>One JSON POST attempt with a frozen original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData, bool useSessionToken, IReadOnlyDictionary<string, string> headers) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, headers, true);
+
         /// <summary>One complete JSON PUT attempt for an original revision-fenced Groups update.</summary>
         public Task<NetworkResponse<TResponse>> PutOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
             => SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, null, true);
+
+        /// <summary>One complete JSON PUT attempt with an original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> PutOnceAsync<TResponse>(string endpoint, object requestData, bool useSessionToken, IReadOnlyDictionary<string, string> headers) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, headers, true);
+
+        /// <summary>One DELETE attempt with an original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> DeleteOnceAsync<TResponse>(string endpoint, bool useSessionToken = false, IReadOnlyDictionary<string, string> headers = null) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "DELETE", null, useSessionToken, headers, true);
 
         /// <summary>
         /// Send a PUT request to the API.
@@ -217,9 +229,11 @@ namespace PM.horizOn.Cloud.Service
                 return NetworkResponse<TResponse>.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
             string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
             long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
             string requestJson = SerializeRequest(method, requestData);
             headers = SnapshotHeaders(headers);
             int attemptCount = 0;
@@ -240,13 +254,15 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
                     return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
-                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken))
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken, requestApiKey, requestSession, requestTimeout, IsPrivatePlayerResponse<TResponse>()))
                 {
                     ApplyHeaders(request, headers);
 
                     // Send request
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return NetworkResponse<TResponse>.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     // Wait for completion
@@ -394,6 +410,12 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedCollectionPage)) { data = SharedObjectsJson.Collections(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedUsage)) { data = SharedObjectsJson.Usage(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedObjectRead)) { data = SharedObjectsJson.Read(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedQueryResult)) { data = SharedObjectsJson.Query(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedWriteResult)) { data = SharedObjectsJson.Write(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedDeleteResult)) { data = SharedObjectsJson.Delete(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(InventorySnapshot)) { data = ItemsJson.Inventory(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(ItemCatalogPage)) { data = ItemsJson.Catalog(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(PlayerValuesState)) { data = PlayerValuesJson.State(responseText) as TResponse; }
@@ -463,9 +485,11 @@ namespace PM.horizOn.Cloud.Service
                 return NetworkResponse<TResponse>.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
             string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
             long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
             binaryData = binaryData == null ? Array.Empty<byte>() : (byte[])binaryData.Clone();
             headers = SnapshotHeaders(headers);
             int attemptCount = 0;
@@ -482,11 +506,13 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
                     return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
-                using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken))
+                using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken, requestApiKey, requestSession, requestTimeout))
                 {
                     ApplyHeaders(request, headers);
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return NetworkResponse<TResponse>.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -607,9 +633,11 @@ namespace PM.horizOn.Cloud.Service
                 return BinaryNetworkResponse.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
             string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
             long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
             string requestJson = SerializeRequest(method, requestData);
             headers = SnapshotHeaders(headers);
             int attemptCount = 0;
@@ -626,12 +654,14 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                if (requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
                     return BinaryNetworkResponse.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
-                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken))
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken, requestApiKey, requestSession, requestTimeout))
                 {
                     request.SetRequestHeader("Accept", "application/octet-stream");
                     ApplyHeaders(request, headers);
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return BinaryNetworkResponse.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -739,10 +769,13 @@ namespace PM.horizOn.Cloud.Service
         private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
             || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
             || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
+            || typeof(T) == typeof(ValidatedRun) || typeof(T) == typeof(ValidatedSubmitResult) || typeof(T) == typeof(PlayerState) || typeof(T) == typeof(EvidenceUploadResult)
+            || typeof(T) == typeof(SharedCollectionPage) || typeof(T) == typeof(SharedUsage) || typeof(T) == typeof(SharedObjectRead)
+            || typeof(T) == typeof(SharedQueryResult) || typeof(T) == typeof(SharedWriteResult) || typeof(T) == typeof(SharedDeleteResult)
             || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;
@@ -754,29 +787,28 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Create a UnityWebRequest for binary POST with octet-stream content type.
         /// </summary>
-        private UnityWebRequest CreateBinaryPostRequest(string url, byte[] binaryData, bool useSessionToken)
+        private UnityWebRequest CreateBinaryPostRequest(string url, byte[] binaryData, bool useSessionToken, string apiKey, string sessionToken, int timeout)
         {
             UnityWebRequest request = new UnityWebRequest(url, "POST");
             request.uploadHandler = new UploadHandlerRaw(binaryData ?? new byte[0]);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/octet-stream");
 
-            request.timeout = _config.ConnectionTimeoutSeconds;
+            request.timeout = timeout;
 
-            string apiKey = _config.ApiKey;
             if (string.IsNullOrEmpty(apiKey))
             {
                 LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
             }
             else
             {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
+                LogService.Instance.Info("Configured project key added to request headers");
             }
             request.SetRequestHeader("X-API-Key", apiKey);
 
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
+            if (useSessionToken && !string.IsNullOrEmpty(sessionToken))
             {
-                request.SetRequestHeader("Authorization", $"Bearer {_sessionToken}");
+                request.SetRequestHeader("Authorization", $"Bearer {sessionToken}");
                 LogService.Instance.Info("Authorization header added (session token)");
             }
 
@@ -786,7 +818,7 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Create a UnityWebRequest with proper headers and body.
         /// </summary>
-        private UnityWebRequest CreateRequest(string url, string method, string requestJson, bool useSessionToken)
+        private UnityWebRequest CreateRequest(string url, string method, string requestJson, bool useSessionToken, string apiKey, string sessionToken, int timeout, bool privatePayload = false)
         {
             UnityWebRequest request;
 
@@ -798,7 +830,7 @@ namespace PM.horizOn.Cloud.Service
             {
                 // Use ToJsonExcludeEmpty to avoid sending empty strings that fail API validation
                 string jsonData = requestJson ?? "{}";
-                LogService.Instance.Info($"Request JSON: {jsonData}");
+                LogService.Instance.Info(privatePayload ? $"Private player request: {jsonData.Length} characters" : $"Request JSON: {jsonData}");
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
                 request = new UnityWebRequest(url, method);
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -816,23 +848,22 @@ namespace PM.horizOn.Cloud.Service
             }
 
             // Set timeout
-            request.timeout = _config.ConnectionTimeoutSeconds;
+            request.timeout = timeout;
 
             // Set API key header
-            string apiKey = _config.ApiKey;
             if (string.IsNullOrEmpty(apiKey))
             {
                 LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
             }
             else
             {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
+                LogService.Instance.Info("Configured project key added to request headers");
             }
-            foreach (var header in HorizonRequestHeaders.Create(apiKey, _sessionToken, useSessionToken))
+            foreach (var header in HorizonRequestHeaders.Create(apiKey, sessionToken, useSessionToken))
             {
                 request.SetRequestHeader(header.Key, header.Value);
             }
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
+            if (useSessionToken && !string.IsNullOrEmpty(sessionToken))
             {
                 LogService.Instance.Info("Authorization header added (session token)");
             }

@@ -36,7 +36,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             get
             {
-                if (_currentRun != null && !BelongsToCurrentUser(_currentRunUserId))
+                if (_currentRun != null && (!BelongsToCurrentUser(_currentRunUserId) || _currentRunScope != null && (_currentRunScope != RunScope() || !ReferenceEquals(_currentRunNetwork, HorizonApp.Network))))
                 {
                     _currentRun = null;
                     _currentRunUserId = null;
@@ -88,7 +88,8 @@ namespace PM.horizOn.Cloud.Manager
 
         /// <summary>
         /// Start a run: the server issues a single-use ticket with a seed. The run becomes
-        /// <see cref="CurrentRun"/> (a previous run is replaced; its ticket simply expires).
+        /// <see cref="CurrentRun"/>. An existing run or in-flight start/submit blocks another start;
+        /// explicitly discard a reviewed old run before starting a different one.
         /// </summary>
         /// <param name="leaderboardKey">Optional board to bind the ticket to; null or "" leaves it unbound</param>
         /// <param name="context">
@@ -118,28 +119,32 @@ namespace PM.horizOn.Cloud.Manager
                 return FailLocally<ValidatedRun>(localError, message);
             }
 
-            var response = await HorizonApp.Network.PostAsync<ValidatedRun>(
-                ValidatedStartRunPlan.Endpoint,
-                plan.Request,
-                useSessionToken: plan.UseSessionToken
-            );
-
-            if (!response.IsSuccess || response.Data == null || string.IsNullOrEmpty(response.Data.ticket))
+            using (var lease = AcquireRunStart(plan.Request.userId, out string leaseError))
             {
-                LastErrorCode = ResolveErrorCode(response);
-                HorizonApp.Log.Error($"Validated run start failed ({LastErrorCode}): {response.Error}");
-                return null;
+                if (lease == null) return FailLocally<ValidatedRun>(leaseError, "Another validated operation or run is still pending");
+                var response = await lease.Network.PostOnceAsync<ValidatedRun>(
+                    ValidatedStartRunPlan.Endpoint,
+                    plan.Request,
+                    useSessionToken: plan.UseSessionToken
+                );
+
+                if (!lease.IsCurrent) return FailLocally<ValidatedRun>("STALE_RESPONSE", "Validated start identity changed or was discarded");
+                if (!response.IsSuccess || response.Data == null || string.IsNullOrEmpty(response.Data.ticket))
+                {
+                    LastErrorCode = ResolveErrorCode(response);
+                    HorizonApp.Log.Error($"Validated run start failed ({LastErrorCode}): {response.Error}");
+                    return null;
+                }
+
+                ValidatedRun run = response.Data;
+                if (!lease.TryAdoptRun(run)) return FailLocally<ValidatedRun>("STALE_RESPONSE", "Validated start identity changed");
+                LastErrorCode = null;
+
+                HorizonApp.Log.Info($"Validated run started: {run.runId} (board: {(run.HasLeaderboard ? run.leaderboardKey : "none")})");
+                if (!lease.IsCurrent) return FailLocally<ValidatedRun>("STALE_RESPONSE", "Validated start changed during logging");
+                HorizonApp.Events.Publish(EventKeys.ValidatedRunStarted, run);
+                return lease.IsCurrent ? run : FailLocally<ValidatedRun>("STALE_RESPONSE", "Validated start changed during callback");
             }
-
-            ValidatedRun run = response.Data;
-            run.Normalize();
-            _currentRun = run;
-            _currentRunUserId = plan.Request.userId;
-            LastErrorCode = null;
-
-            HorizonApp.Log.Info($"Validated run started: {run.runId} (board: {(run.HasLeaderboard ? run.leaderboardKey : "none")})");
-            HorizonApp.Events.Publish(EventKeys.ValidatedRunStarted, run);
-            return run;
         }
 
         /// <summary>
@@ -159,7 +164,9 @@ namespace PM.horizOn.Cloud.Manager
             string leaderboardKey = null,
             IList<EarnedValue> earned = null)
         {
-            return Submit(score, ComputeInputLogHash(inputLog), inputLog, stage, leaderboardKey, earned);
+            // Keep the same evidence bytes whose hash was submitted, even if the caller reuses its array while HTTP is in flight.
+            byte[] frozen = inputLog == null ? null : (byte[])inputLog.Clone();
+            return Submit(score, ComputeInputLogHash(frozen), frozen, stage, leaderboardKey, earned);
         }
 
         /// <summary>
@@ -188,6 +195,9 @@ namespace PM.horizOn.Cloud.Manager
         /// </summary>
         public void DiscardRun()
         {
+            _runEpoch++;
+            _currentRunScope = null;
+            _currentRunNetwork = null;
             if (_currentRun != null)
             {
                 HorizonApp.Log.Info($"Validated run discarded: {_currentRun.runId}");
@@ -227,68 +237,77 @@ namespace PM.horizOn.Cloud.Manager
                 return FailLocally<ValidatedSubmitResult>(localError, message);
             }
 
-            var response = await HorizonApp.Network.PostAsync<ValidatedSubmitResult>(
-                ValidatedSubmitPlan.Endpoint,
-                plan.Request,
-                useSessionToken: plan.UseSessionToken
-            );
-
-            long status = response.StatusCode;
-            bool runEnded = ValidatedActionsTransportContract.EndsRun(status, response.ErrorCode);
-            if (runEnded)
+            using (var lease = AcquireRunLease(plan.Request.userId, true, out string leaseError))
             {
-                // The ticket is used up (accepted, rejected or failed on the server).
-                ClearRunIfCurrent(run);
-            }
+                if (lease == null) return FailLocally<ValidatedSubmitResult>(leaseError, "Another validated operation is still pending");
+                var response = await lease.Network.PostAsync<ValidatedSubmitResult>(
+                    ValidatedSubmitPlan.Endpoint,
+                    plan.Request,
+                    useSessionToken: plan.UseSessionToken
+                );
 
-            if (response.IsSuccess && response.Data != null)
-            {
-                ValidatedSubmitResult result = response.Data;
-                result.Normalize();
-                LastErrorCode = null;
-
-                HorizonApp.Log.Info((result.HasLeaderboard
-                    ? $"Validated run accepted: {result.runId} on {result.leaderboardKey}, score {result.score}, rank {result.rank}"
-                    : $"Validated run accepted: {result.runId} (no board)") + (result.sus ? " (sus)" : string.Empty));
-
-                if (result.HasLeaderboard)
+                if (!lease.IsCurrent || !ReferenceEquals(_currentRun, run)) return FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit identity changed or was discarded");
+                long status = response.StatusCode;
+                bool runEnded = ValidatedActionsTransportContract.EndsRun(status, response.ErrorCode);
+                if (runEnded)
                 {
-                    // Cached leaderboard pages do not contain the new score yet.
-                    LeaderboardManager.Instance.ClearCache();
+                    // The ticket is used up (accepted, rejected or failed on the server).
+                    ClearRunIfCurrent(run);
                 }
 
-                OnStateReceived(result);
-                if (result.evidence.required)
+                if (response.IsSuccess && response.Data != null)
                 {
-                    OnEvidenceRequested(result, inputLog);
+                    ValidatedSubmitResult result = response.Data;
+                    result.Normalize();
+                    LastErrorCode = null;
+
+                    HorizonApp.Log.Info((result.HasLeaderboard
+                        ? $"Validated run accepted: {result.runId} on {result.leaderboardKey}, score {result.score}, rank {result.rank}"
+                        : $"Validated run accepted: {result.runId} (no board)") + (result.sus ? " (sus)" : string.Empty));
+
+                    if (!lease.IsCurrent) return FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit changed during logging");
+                    if (result.HasLeaderboard)
+                    {
+                        // Cached leaderboard pages do not contain the new score yet.
+                        LeaderboardManager.Instance.ClearCache();
+                    }
+
+                    if (!lease.IsCurrent) return FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit changed before state adoption");
+                    OnStateReceived(result);
+                    if (!lease.IsCurrent) return FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit changed during state callback");
+                    if (result.evidence.required)
+                    {
+                        OnEvidenceRequested(result, inputLog);
+                    }
+
+                    if (!lease.IsCurrent) return FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit changed during evidence dispatch");
+                    HorizonApp.Events.Publish(EventKeys.ValidatedRunSubmitted, result);
+                    return lease.IsCurrent ? result : FailLocally<ValidatedSubmitResult>("STALE_RESPONSE", "Validated submit changed during result callback");
                 }
 
-                HorizonApp.Events.Publish(EventKeys.ValidatedRunSubmitted, result);
-                return result;
-            }
-
-            LastErrorCode = ResolveErrorCode(response);
-            if (LastErrorCode == ValidatedActionsErrorCodes.PlayerBanned)
-            {
-                // Checked before the ticket is used: the run stays, but this board refuses the player.
-                HorizonApp.Log.Error($"Validated submit refused: the player is banned from this leaderboard (run {run.runId} kept, call DiscardRun or submit without a board)");
-            }
-            else
-            {
-                HorizonApp.Log.Error($"Validated submit failed ({LastErrorCode}): {response.Error}");
-            }
-
-            if (ValidatedActionsTransportContract.IsRejection(status))
-            {
-                HorizonApp.Events.Publish(EventKeys.ValidatedRunRejected, new ValidatedRunRejection
+                LastErrorCode = ResolveErrorCode(response);
+                if (LastErrorCode == ValidatedActionsErrorCodes.PlayerBanned)
                 {
-                    code = LastErrorCode,
-                    runId = run.runId,
-                    httpStatus = status,
-                    runCleared = runEnded
-                });
+                    // Checked before the ticket is used: the run stays, but this board refuses the player.
+                    HorizonApp.Log.Error($"Validated submit refused: the player is banned from this leaderboard (run {run.runId} kept, call DiscardRun or submit without a board)");
+                }
+                else
+                {
+                    HorizonApp.Log.Error($"Validated submit failed ({LastErrorCode}): {response.Error}");
+                }
+
+                if (ValidatedActionsTransportContract.IsRejection(status))
+                {
+                    HorizonApp.Events.Publish(EventKeys.ValidatedRunRejected, new ValidatedRunRejection
+                    {
+                        code = LastErrorCode,
+                        runId = run.runId,
+                        httpStatus = status,
+                        runCleared = runEnded
+                    });
+                }
+                return null;
             }
-            return null;
         }
 
         /// <summary>
@@ -309,7 +328,7 @@ namespace PM.horizOn.Cloud.Manager
 
         private void ClearRunIfCurrent(ValidatedRun run)
         {
-            // A StartRun during the request may already have replaced the run; keep that one.
+            // Keep an explicitly replaced/dropped local reference; the shared lease prevents overlapping HTTP starts.
             if (ReferenceEquals(_currentRun, run))
             {
                 _currentRun = null;
