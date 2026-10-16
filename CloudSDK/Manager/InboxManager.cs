@@ -100,7 +100,8 @@ namespace PM.horizOn.Cloud.Manager
         }
         private void SyncIdentity()
         {
-            string identity = UserManager.Instance.CurrentUser?.UserId + "|" + HorizonApp.Network.GetSessionToken() + "|" + HorizonApp.Network.GetApiKey() + "|" + HorizonApp.Network.GetActiveHost();
+            string identity = UserManager.Instance.CurrentUser?.UserId + "|" + HorizonApp.Network.GetSessionToken() + "|" + HorizonApp.Network.GetApiKey() + "|" + HorizonApp.Network.GetActiveHost()
+                + "|" + HorizonApp.Network.ContextGeneration;
             if (_identity == identity) return;
             ResetIdentity(); _identity = identity;
         }

@@ -40,6 +40,11 @@ jobs:
         with:
           lfs: true
 
+      - name: Import the actual Inbox sample for executable sample regressions
+        run: |
+          mkdir -p .unity-ci-project/Assets/InboxSample
+          cp Samples~/Examples/Features/InboxExample.cs .unity-ci-project/Assets/InboxSample/InboxExample.cs
+
       - name: Run actual Unity Editor transport tests
         id: unity-tests
         uses: game-ci/unity-test-runner@v4

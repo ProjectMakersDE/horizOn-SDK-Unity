@@ -6,7 +6,7 @@ using PM.horizOn.Cloud.Manager;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 namespace PM.horizOn.Cloud.Examples.Features
 {
-    /// <summary>Read explicitly on opening the screen. Bind ClaimEntry to a player button, never to refresh.</summary>
+    /// <summary>Read on opening the screen. New selections use ClaimNewEntry; saved claims use ClaimEntry.</summary>
     public class InboxExample : MonoBehaviour
     {
         private string _userId, _broadcastTopic, _snapshotScope;
@@ -48,12 +48,42 @@ namespace PM.horizOn.Cloud.Examples.Features
             }
             else HorizonApp.Log.Warning($"Inbox: {result.ErrorCode}");
         }
+        /// <summary>
+        /// Validate a new selection before the game saves an intent. The synchronous callback must
+        /// durably save/verify this exact entry ID for the current project/player, refuse conflicting
+        /// pending claims and return true only after successful persistence. It must never replace one.
+        /// </summary>
+        public async Task ClaimNewEntry(string selectedEntryId, Func<string, bool> persistOriginalIntent)
+        {
+            if (persistOriginalIntent == null || !CanStartNewClaim(InboxManager.Instance.CurrentInbox, selectedEntryId)) return;
+            int generation = _generation; string scope = Scope();
+            bool saved;
+            try { saved = persistOriginalIntent(selectedEntryId); }
+            catch (Exception) { HorizonApp.Log.Warning("Claim was not sent: intent persistence failed."); return; }
+            // A failed write, invalidation or identity change keeps any saved intent for reconciliation.
+            // Re-read the SDK cache: the screen's display copy is not an authorization source.
+            if (!saved || generation != _generation || scope != Scope()
+                || !CanStartNewClaim(InboxManager.Instance.CurrentInbox, selectedEntryId)) return;
+            await ClaimEntry(selectedEntryId);
+        }
+        private bool CanStartNewClaim(InboxSnapshot snapshot, string entryId)
+        {
+            var user = UserManager.Instance.CurrentUser;
+            if (!isActiveAndEnabled || string.IsNullOrEmpty(_userId) || user == null || !user.IsValid()
+                || user.UserId != _userId || user.AccessToken != HorizonApp.Network.GetSessionToken()
+                || snapshot == null || snapshot.userId != _userId || snapshot.entries == null || string.IsNullOrEmpty(entryId)) return false;
+            foreach (var entry in snapshot.entries)
+                if (entry != null && entry.id == entryId)
+                    return !entry.claimed && entry.attachment?.values != null && entry.attachment.values.Length > 0;
+            return false;
+        }
+        /// <summary>Replay only an already durably saved original entry ID, even if absent or claimed in the current snapshot.</summary>
         public async Task ClaimEntry(string originalEntryId)
         {
             if (string.IsNullOrEmpty(_userId) || !isActiveAndEnabled) return;
             int generation = _generation; string scope = Scope();
-            // The screen persists this original entry ID with the player's action. A timeout
-            // reuses it. The server chooses all rewards; this method never creates a new grant.
+            // The caller already saved this original ID. Never re-run new-selection validation on
+            // a retry: an earlier successful response may have been lost. The server chooses rewards.
             var result = await InboxManager.Instance.Claim(_userId, originalEntryId);
             if (generation != _generation || scope != Scope() || !isActiveAndEnabled) return;
             if (!result.IsSuccess) { HorizonApp.Log.Warning($"Claim retained for retry: {result.ErrorCode}"); return; }
