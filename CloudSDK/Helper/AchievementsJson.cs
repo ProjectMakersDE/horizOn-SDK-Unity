@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using PM.horizOn.Cloud.Manager;
 using PM.horizOn.Cloud.Objects.Network.Responses;
-using UnityEngine;
 namespace PM.horizOn.Cloud.Helper
 {
     /// <summary>Decode names and validate original safe-integer tokens before Unity conversion.</summary>
@@ -98,6 +97,42 @@ namespace PM.horizOn.Cloud.Helper
         { if (!long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n < 0 || n > max) throw new FormatException("Achievement integer invalid"); return n; }
         private static bool Flag(string raw) { if (raw != "true" && raw != "false") throw new FormatException("Achievement boolean invalid"); return raw == "true"; }
         private static bool ValidEntry(string id) => id != null && id.StartsWith("message:", StringComparison.Ordinal) && Guid.TryParseExact(id.Substring(8), "D", out _);
-        internal static T Clone<T>(T source) where T : class => source == null ? null : JsonUtility.FromJson<T>(JsonUtility.ToJson(source));
+        // Unity's inline-class serializer materializes null classes and strings. Copy the
+        // normalized DTOs directly so nullable wire fields keep their meaning in every return path.
+        internal static AchievementsSnapshot Clone(AchievementsSnapshot source) => source == null ? null : new AchievementsSnapshot
+        {
+            userId = source.userId, revision = source.revision, definitionVersion = source.definitionVersion,
+            serverTime = source.serverTime, definitions = CloneDefinitions(source.definitions),
+            progress = Copy(source.progress, Clone),
+            limits = source.limits == null ? null : new AchievementLimits
+            { maxDefinitions = source.limits.maxDefinitions, maxLifetimeKeys = source.limits.maxLifetimeKeys }
+        };
+        internal static AchievementUnlockResponse Clone(AchievementUnlockResponse source) => source == null ? null : new AchievementUnlockResponse
+        {
+            achievements = Clone(source.achievements), newlyUnlocked = Copy(source.newlyUnlocked, value => value),
+            replayed = source.replayed, deliveryResults = Copy(source.deliveryResults, Clone)
+        };
+        internal static AchievementDeliveryResponse Clone(AchievementDeliveryResponse source) => source == null ? null : new AchievementDeliveryResponse
+        { achievements = Clone(source.achievements), results = Copy(source.results, Clone) };
+        internal static AchievementDefinition[] CloneDefinitions(AchievementDefinition[] source) => Copy(source, Clone);
+        private static AchievementDefinition Clone(AchievementDefinition source) => source == null ? null : new AchievementDefinition
+        {
+            key = source.key, name = source.name, description = source.description, imageUrl = source.imageUrl,
+            mode = source.mode, hidden = source.hidden, active = source.active,
+            condition = source.condition == null ? null : new AchievementCondition
+            { statisticKey = source.condition.statisticKey, threshold = source.condition.threshold },
+            rewards = source.rewards == null ? null : new InboxAttachment { values = Copy(source.rewards.values, Clone) }
+        };
+        private static AchievementProgress Clone(AchievementProgress source) => source == null ? null : new AchievementProgress
+        {
+            key = source.key, unlockedAt = source.unlockedAt, rewardState = source.rewardState, inboxEntryId = source.inboxEntryId,
+            pendingReward = source.pendingReward == null ? null : new PendingAchievementReward
+            { issuedAt = source.pendingReward.issuedAt, values = Copy(source.pendingReward.values, Clone) }
+        };
+        private static PlayerValueAmount Clone(PlayerValueAmount source) => source == null ? null : new PlayerValueAmount
+        { key = source.key, amount = source.amount };
+        private static AchievementDeliveryOutcome Clone(AchievementDeliveryOutcome source) => source == null ? null : new AchievementDeliveryOutcome
+        { key = source.key, state = source.state, inboxEntryId = source.inboxEntryId, code = source.code };
+        private static T[] Copy<T>(T[] source, Func<T, T> clone) => source == null ? null : Array.ConvertAll(source, value => clone(value));
     }
 }

@@ -124,7 +124,7 @@ namespace PM.horizOn.Cloud.Manager
             {
                 if (_definitions == null || requestedVersion != data.definitionVersion || _definitionVersion != data.definitionVersion) return "METADATA_REQUIRED";
                 // Opaque versions have only equality semantics, never numeric/lexical ordering.
-                data.definitions = AchievementsJson.Clone(new Definitions { rows = _definitions }).rows;
+                data.definitions = AchievementsJson.CloneDefinitions(_definitions);
             }
             _current = AchievementsJson.Clone(data); _definitions = _current.definitions;
             _definitionVersion = data.definitionVersion; _revision = data.revision; _serverMillis = millis; LastErrorCode = null;
@@ -162,7 +162,6 @@ namespace PM.horizOn.Cloud.Manager
         private AchievementsResult ReadFailure(string code, string error = null) { LastErrorCode = code; return new AchievementsResult { ErrorCode = code, Error = error ?? code }; }
         private AchievementUnlockResult UnlockFailure(string code, string error = null) { LastErrorCode = code; return new AchievementUnlockResult { ErrorCode = code, Error = error ?? code }; }
         private AchievementDeliveryResult DeliveryFailure(string code, string error = null) { LastErrorCode = code; return new AchievementDeliveryResult { ErrorCode = code, Error = error ?? code }; }
-        [Serializable] private sealed class Definitions { public AchievementDefinition[] rows; }
         [Serializable] private sealed class UnlockRequest { public string userId, key; }
         [Serializable] private sealed class DeliveryRequest { public string userId; public string[] keys; }
     }
