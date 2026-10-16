@@ -654,3 +654,5 @@ GiftCodeValuesContractTests.Run();
 await InboxContractTests.Run();
 AchievementsContractTests.Run();
 FriendsContractTests.Run();
+
+GroupsContractTests.Run();

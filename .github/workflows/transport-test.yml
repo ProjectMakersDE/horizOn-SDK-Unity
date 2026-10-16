@@ -45,6 +45,8 @@ jobs:
           cp Samples~/Examples/Features/InboxExample.cs .unity-ci-project/Assets/InboxSample/InboxExample.cs
           mkdir -p .unity-ci-project/Assets/AchievementsSample
           cp Samples~/Examples/Features/AchievementsExample.cs .unity-ci-project/Assets/AchievementsSample/AchievementsExample.cs
+          mkdir -p .unity-ci-project/Assets/GroupsSample
+          cp Samples~/Examples/Features/GroupsExample.cs Samples~/Examples/Features/GroupsSampleStore.cs .unity-ci-project/Assets/GroupsSample/
           mkdir -p .unity-ci-project/Assets/FriendsSample
           cp Samples~/Examples/Features/FriendsExample.cs .unity-ci-project/Assets/FriendsSample/FriendsExample.cs
 

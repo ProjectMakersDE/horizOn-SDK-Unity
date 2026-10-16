@@ -129,6 +129,10 @@ namespace PM.horizOn.Cloud.Service
         public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
             => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, null, true);
 
+        /// <summary>One complete JSON PUT attempt for an original revision-fenced Groups update.</summary>
+        public Task<NetworkResponse<TResponse>> PutOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, null, true);
+
         /// <summary>
         /// Send a PUT request to the API.
         /// Same headers, JSON serialization, retries and error handling as <see cref="PostAsync{TResponse}"/>.
@@ -390,6 +394,11 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MyGroupsView)) { data = GroupsJson.Mine(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupView)) { data = GroupsJson.Group(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupMembersView)) { data = GroupsJson.Members(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupPendingSnapshot)) { data = GroupsJson.Pending(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupMutationView)) { data = GroupsJson.Mutation(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(FriendsSnapshot))
                         { data = FriendsJson.Snapshot(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(FriendLookup))
@@ -724,10 +733,11 @@ namespace PM.horizOn.Cloud.Service
         }
 
         private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
-            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup);
+            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
+            || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;
