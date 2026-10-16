@@ -2187,3 +2187,26 @@ transport attempt after an uncertain result. No SDK retry creates a replacement 
 Response types in `PM.horizOn.Cloud.Objects.Network.Responses` expose `IsSuccess`, `Data`, `ErrorCode`, `Error`. `AchievementsSnapshot` includes camelCase `userId`, `revision`, `definitionVersion`, `definitions`, `progress`, `limits`, `serverTime`; definition conditions and reward amounts retain `long` safe integers. Unlock data includes `achievements`, `newlyUnlocked`, `replayed`, `deliveryResults`; delivery data includes `achievements`, `results`. Each outcome includes `key`, `state`, `inboxEntryId`, `code`. `state` is `none`, `pending` or `delivered`. A business delivery refusal such as `INBOX_FULL` is a per-key pending outcome, not loss of the accepted reward.
 
 An opaque version can be used conditionally only with matching player/session metadata. Null metadata retains that cache and an empty array clears it. `CurrentAchievements` is a defensive copy. `ClearCache()` preserves anti-rollback revision/time watermarks; identity changes reset scope and fence in-flight replies. There is no automatic fetch, polling or currency addition. Repeat original manual/delivery keys, show pending rewards and explicitly claim delivered entries through Inbox. Use the existing Inbox sample's fresh-selection guard before persisting a new claim; replay only the saved original entry ID after uncertainty. See `Samples~/Examples/Features/AchievementsExample.cs` for explicit actions and statistics integration.
+
+
+## Friends
+
+**Manager:** `PM.horizOn.Cloud.Manager.FriendsManager.Instance`. App calls require the matching current player's Bearer session and project key; they do not authenticate or create players.
+
+| REST | Unity |
+|---|---|
+| `GET /api/v1/app/friends?userId=` | `Task<FriendsResult> GetFriends(string userId)` |
+| `GET /api/v1/app/friends/find?userId=&query=` | `Task<FriendLookupResult> FindPlayer(string userId, string query)` |
+| `POST /api/v1/app/friends/request` | `Task<FriendsResult> SendRequest(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/accept` | `Task<FriendsResult> AcceptRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/decline` | `Task<FriendsResult> DeclineRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/cancel` | `Task<FriendsResult> CancelRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/remove` | `Task<FriendsResult> RemoveFriend(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/block` | `Task<FriendsResult> BlockPlayer(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/unblock` | `Task<FriendsResult> UnblockPlayer(string userId, string targetUserId, long expectedRevision)` |
+
+Every action body contains `userId`, `targetUserId`, `expectedRevision`; only accept/decline/cancel additionally contain the original `requestId`. A zero revision is explicit. Self actions, malformed IDs and negative/unsafe revisions fail before HTTP. All seven actions use `NetworkService.PostOnceAsync`, retaining ordinary JSON serialization, headers, session/context fences and error details while suppressing automatic transport retries. Existing `PostAsync` retry behavior is unchanged. Keep the original saved command after an uncertain outcome; a GET and deliberate user reconciliation must precede any new command using a new revision.
+
+Wrappers expose `IsSuccess`, `Data`, `ErrorCode`, `Error`. `FriendsSnapshot` has `userId`, safe64 `revision`, canonical `friendCode`, `friends`, `incoming`, `outgoing`, `blocked`, `limits`, `serverTime`. Friend rows contain `userId`, `since`, public `display`, nullable `lastActiveAt`; request rows contain `userId`, `requestId`, `createdAt`, public `display`; blocks contain only `userId`, `blockedAt`. `FriendLookup` has `userId`, `friendCode`, `display`. Public nullable names/avatar/frame values remain null, and missing activity means unknown, never online. Current limits are authoritative for new additions; retained above-tier lists remain readable. DTOs live in `PM.horizOn.Cloud.Objects.Network.Responses`.
+
+`CurrentFriends` returns independent nested copies. `ClearCache()` keeps anti-rollback revision/time watermarks, while identity changes reset scope and invalidate pending responses. Optional own-player `friends:<userId>` events only invalidate; HTTP refresh is an explicit game lifecycle/button action. No automatic signup, poll or socket connection. `Samples~/Examples/Features/FriendsExample.cs` demonstrates exact lookup, saved original mutations and explicit refresh after conflicts. Its game UI callbacks also fence the public read-only `NetworkService.ContextGeneration` counter.

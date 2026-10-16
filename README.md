@@ -19,6 +19,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
 | 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
 | 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
@@ -146,6 +147,7 @@ Attach one to an empty GameObject and press Play.
 | Statistics | `StatisticsExample.cs`, `StatisticsSampleStore.cs` |
 | Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
 | Achievements | `AchievementsExample.cs` (progress, manual unlock, pending handoff and saved Inbox claim) |
+| Friends | `FriendsExample.cs` (explicit lookup, saved original actions and reconciliation) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -924,3 +926,28 @@ The version is an opaque64-character token. Only a matching metadata cache is se
 Repeat an uncertain manual unlock with the same key. Repeat delivery with the original one-to-eight unique keys; do not invent client operation/reward IDs. `pending` plus `INBOX_FULL` remains visible, including partial delivery results. `progress.pendingReward` contains the original accepted values/time even after current catalogue rewards change. Delivered rewards point to `inboxEntryId`; achievements never add local currency. The ordinary Inbox claim supplies the complete authoritative Player Values snapshot. A new claim selection uses the guarded `InboxExample.ClaimNewEntry` before durable game-owned storage; saved original claim IDs remain replayable.
 
 `AchievementsExample` shows only explicit screen/button actions for progress, manual unlock, retrying pending handoff and claiming an already saved Inbox entry. Its `RefreshAfterStatistics(report)` responds to a nonempty `newlyUnlocked` list from a committed non-replayed statistics result; a replay triggers no duplicate notification. Persist the original Inbox claim intent by project/player before `ClaimSavedInboxReward`, and retain it on timeout or error. Exact safe64 integer reward/threshold lexemes are validated before conversion; malformed responses cannot replace the cache.
+
+
+## Friends (TASK-1009)
+
+Use `FriendsManager.Instance` with the currently signed-in player's `UserManager.Instance.CurrentUser.UserId`. Every call sends the matching Bearer session and current project key. Results expose `IsSuccess`, `Data`, `ErrorCode`, `Error`.
+
+| Method | Result |
+|---|---|
+| `GetFriends(userId)` | `FriendsResult` |
+| `FindPlayer(userId, exactUuidOrHCode)` | `FriendLookupResult` |
+| `SendRequest(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `AcceptRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `DeclineRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `CancelRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `RemoveFriend(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `BlockPlayer(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `UnblockPlayer(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+
+Snapshot `Data` includes camelCase `userId`, `revision`, `friendCode`, `friends`, `incoming`, `outgoing`, `blocked`, `limits`, `serverTime`. Find returns only `userId`, `friendCode`, `display`. Search accepts an exact UUID or canonical `H-` share code; it never trims identifiers or searches names/emails/substrings. UUID bytes in share codes use network order, matching the server.
+
+Friends and requests expose only public `display.name` and `display.profile` (`avatarId`, `frameId`, `badges`). Missing names/cosmetic IDs remain null. A friend's nullable `lastActiveAt` is approximate activity, **not an online flag**; show unknown when absent. Blocked rows contain only `userId` and `blockedAt`. Private/login fields and complete social responses are excluded from raw response logs.
+
+Before a mutation, durably store its action, target UUID, original `expectedRevision` (including zero), and the original incoming/outgoing `requestId` for accept/decline/cancel under the matching project/player. Each mutation makes exactly one transport attempt, including global429,5xx and timeout responses. A failed or uncertain result keeps that original intent. Explicitly refresh and reconcile `REVISION_CONFLICT`; never automatically insert the new revision, substitute a different request ID or resend the action after refresh. `FriendsExample.ApplySavedAction` accepts this already stored command and never creates another identity.
+
+`CurrentFriends` is a defensive copy. Calls are serialized; current host/project/session, network-instance generation and cache epoch fence late responses, including switches away and back. `ClearCache()` preserves revision/server-time watermarks. Own-player `friends:<userId>` realtime metadata can invalidate the cache; the game explicitly reloads by HTTP. There is no automatic polling, realtime connection or signup. Lists retained after a downgrade remain readable/removable even if their size exceeds the returned current `limits.maxFriends`; capacity decisions belong to the server. `NetworkService.ContextGeneration` is a read-only scope counter available to game UI callbacks, including the shipped example.
