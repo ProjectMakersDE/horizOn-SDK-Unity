@@ -71,6 +71,17 @@ namespace PM.horizOn.Cloud.Tests
                 Assert.That(result, Is.Not.Null); Assert.That(result.grantedValues, Is.Empty); Assert.That(result.grantedUnlocks, Is.Empty); Assert.That(result.playerValues, Is.Null); Assert.That(result.replayed, Is.False);
             }
         }
+        [TestCase(false)][TestCase(true)]
+        public async Task PureGiftPayloadSurvivesAnUnrelatedValuesCacheClear(bool explicitId)
+        {
+            int events = 0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed, new Action<RedeemGiftCodeResponse>(_ => events++));
+            var incoming = _listener.GetContextAsync();
+            var pending = explicitId ? Manager.Redeem("PAYLOAD", Intent) : Manager.Redeem("PAYLOAD");
+            var context = await Timeout(incoming); PlayerValuesManager.Instance.ClearCache();
+            await Respond(context, 200, "{\"success\":true,\"giftData\":\"{\\\"item\\\":\\\"sword\\\"}\",\"grantedValues\":[],\"playerValues\":null}");
+            var result = await pending; Assert.That(result, Is.Not.Null); Assert.That(result.giftData, Is.EqualTo("{\"item\":\"sword\"}"));
+            Assert.That(result.playerValues, Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState, Is.Null); Assert.That(Manager.LastErrorCode, Is.Null); Assert.That(events, Is.EqualTo(1));
+        }
         [TestCase("1.25")][TestCase("1e2")][TestCase("9007199254740992")][TestCase("-1")][TestCase("0")][TestCase("\"50\"")]
         public async Task InvalidGrantIntegerNeverReachesPlayerValuesCache(string amount)
         {

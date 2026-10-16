@@ -470,7 +470,9 @@ nullable return value is null.
 `PlayerValuesManager.CurrentState` using the authoritative `playerValues` snapshot before
 publishing `GiftCodeRedeemed`. Never add `grantedValues` to balances locally. State adoption
 rejects an older revision, definition or server clock and a changed session/project/host or
-cleared values cache. The returned snapshot is isolated from the manager cache. Old servers
+cleared values cache. Pure giftData responses without a player-values snapshot remain valid
+after an unrelated values-cache clear. Scope/session changes still invalidate every response.
+The returned snapshot is isolated from the manager cache. Old servers
 that omit the new fields produce `[]`, `null`, and `false` respectively.
 
 Import the Examples sample for `GiftCodesExample` and `GiftCodeSampleStore`: startup restores

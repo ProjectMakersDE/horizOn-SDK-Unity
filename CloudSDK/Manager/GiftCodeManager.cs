@@ -62,14 +62,14 @@ namespace PM.horizOn.Cloud.Manager
                 plan.Request, useSessionToken: plan.UseSessionToken);
             var user = UserManager.Instance.CurrentUser;
             if (!ReferenceEquals(network, HorizonApp.Network) || generation != network.ContextGeneration || epoch != _identityEpoch
-                || valuesEpoch != values.CacheEpoch || user?.UserId != userId || user.AccessToken != token)
+                || user?.UserId != userId || user.AccessToken != token)
                 return Failure("STALE_RESPONSE");
             if (!response.IsSuccess || response.Data == null || !response.Data.success)
                 return Failure(response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode));
             var data = response.Data;
             if (data.playerValues != null)
             {
-                if (!values.AcceptServerState(userId, data.playerValues)) return Failure("STALE_RESPONSE");
+                if (valuesEpoch != values.CacheEpoch || !values.AcceptServerState(userId, data.playerValues)) return Failure("STALE_RESPONSE");
                 data.playerValues = values.CurrentState;
             }
             if (data.grantedUnlocks != null && data.grantedUnlocks.Length > 0) PlayerProfileManager.Instance.ClearCache();
