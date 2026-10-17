@@ -44,7 +44,13 @@ namespace PM.horizOn.Cloud.Examples.Features
             {
                 CurrentInbox = result.Data;
                 // On another lifecycle-driven refresh, wait at least CurrentInbox.pollAfterSeconds.
-                foreach (var entry in CurrentInbox.entries) HorizonApp.Log.Info($"{entry.id}: {entry.textKey}; overdue={entry.overdue}; claimed={entry.claimed}");
+                foreach (var entry in CurrentInbox.entries)
+                {
+                    // Render free text as plain text (disable rich text in your UI). Other entries use localization keys.
+                    string text = entry.TryGetFreeText(out var plainText) ? plainText : entry.textKey;
+                    HorizonApp.Log.Info($"{entry.id}: {text}; overdue={entry.overdue}; claimed={entry.claimed}");
+                    if (entry.TryGetSource(out var source)) HorizonApp.Log.Info($"Source {source.Kind}: {source.SourceId}");
+                }
             }
             else HorizonApp.Log.Warning($"Inbox: {result.ErrorCode}");
         }
@@ -74,7 +80,7 @@ namespace PM.horizOn.Cloud.Examples.Features
                 || snapshot == null || snapshot.userId != _userId || snapshot.entries == null || string.IsNullOrEmpty(entryId)) return false;
             foreach (var entry in snapshot.entries)
                 if (entry != null && entry.id == entryId)
-                    return !entry.claimed && entry.attachment?.values != null && entry.attachment.values.Length > 0;
+                    return entry.CanClaim;
             return false;
         }
         /// <summary>Replay only an already durably saved original entry ID, even if absent or claimed in the current snapshot.</summary>
@@ -90,6 +96,8 @@ namespace PM.horizOn.Cloud.Examples.Features
             CurrentInbox = result.Data.inbox;
             if (result.Data.playerValues != null)
                 foreach (var value in result.Data.playerValues.values) HorizonApp.Log.Info($"Server {value.key}: {value.balance}");
+            // Item returns are references. Refresh the authoritative inventory; never construct a local item from this descriptor.
+            foreach (var item in result.Data.items) HorizonApp.Log.Info($"Returned item {item.itemKey}: {item.instanceId}");
         }
         public void ListenForInvalidations(string projectApiKeyId = null)
         {
