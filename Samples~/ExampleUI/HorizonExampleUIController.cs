@@ -1097,7 +1097,7 @@ namespace PM.horizOn.Cloud.ExampleUI
             }
             else
             {
-                _txtGiftCodeResponse.value = result != null ? $"Redemption failed: {result.message}" : "Redemption failed";
+                _txtGiftCodeResponse.value = result != null ? $"Redemption failed: {result.message}" : $"Redemption unresolved [{GiftCodeManager.Instance.LastErrorCode}]. Original intent retained; retry or reconcile it.";
             }
         }
 
