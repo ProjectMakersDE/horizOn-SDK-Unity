@@ -1021,10 +1021,16 @@ and actual network instance/host/project/player/session/generation plus cache ep
 responses and away/back changes. `ClearCache()` preserves separate inventory/catalog revision and
 server-time watermarks. Current tier limits do not delete retained downgraded state.
 
+Player Values balance/offer lists follow current server configuration without tariff clamps.
+Retired offer-day quotas may be omitted/null and stay unlimited (`purchasesPerDay == -1`).
+Current balances and earned totals remain authoritative after a lower daily cap; compact replay
+never reconstructs historical deltas or item grants.
+
 Player Values DTOs add `offer.itemRewards` (`ItemReward[]{itemKey,quantity}`) and
 `state.operation.items` (`ItemReference[]{instanceId,itemKey}`), defaulting to empty arrays for
-legacy payloads. A retained purchase receipt returns the original references even after offer
-changes or discarded items. Persist one original purchase `operationId` before HTTP, reuse it
+legacy payloads. A fresh purchase returns immediate references; compact replay returns current
+state and empty `applied`/`items`, including after offer changes or discarded items. Persist one
+original purchase `operationId` before HTTP, reuse it
 on uncertain retry and explicitly GET inventory after success. Never synthesize an item, add
 local balance deltas or buy again to recover a failed inventory refresh.
 
