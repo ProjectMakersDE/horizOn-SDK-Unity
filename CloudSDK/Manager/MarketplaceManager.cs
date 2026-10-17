@@ -46,21 +46,21 @@ namespace PM.horizOn.Cloud.Manager
         private static string Query(string user) => "?userId=" + Uri.EscapeDataString(user ?? "");
         private static string N(long n) => n.ToString(CultureInfo.InvariantCulture);
         public Task<MarketplaceResult<MarketplaceLimitsView>> GetLimits(string userId)
-            => Read<MarketplaceLimitsView>(userId, Endpoint + "/limits" + Query(userId), value => value.config.revision >= _configRevision, value => { _configRevision = value.config.revision; _limits = MarketplaceJson.Clone(value); });
+            => Read<MarketplaceLimitsView>(userId, Endpoint + "/limits" + Query(userId), value => true, value => { _configRevision = value.config.revision; _limits = MarketplaceJson.Clone(value); }, value => value.config.revision >= _configRevision);
         public Task<MarketplaceResult<MarketplaceRulesPage>> GetRules(string userId, string after = null, int limit = 50, long? catalogRevision = null)
         {
             if (limit < 1 || limit > 50 || after != null && (!ItemsJson.Key(after) || !catalogRevision.HasValue) || catalogRevision.HasValue && !ItemsJson.Revision(catalogRevision.Value)) return Task.FromResult(Failure<MarketplaceRulesPage>("INVALID_REQUEST"));
             string path = Endpoint + "/rules" + Query(userId) + "&limit=" + N(limit) + (after == null ? "" : "&after=" + Uri.EscapeDataString(after)) + (catalogRevision.HasValue ? "&catalogRevision=" + N(catalogRevision.Value) : "");
             return Read<MarketplaceRulesPage>(userId, path, value =>
             {
-                if (value.rules.Length > limit || value.revision < _configRevision || catalogRevision.HasValue && value.revision != catalogRevision.Value) return false;
+                if (value.rules.Length > limit || catalogRevision.HasValue && value.revision != catalogRevision.Value) return false;
                 string previous = after;
                 foreach (var rule in value.rules) { if (previous != null && string.CompareOrdinal(rule.itemKey, previous) <= 0) return false; previous = rule.itemKey; }
                 return value.nextCursor == null || value.rules.Length > 0 && value.nextCursor == previous;
-            }, value => { _configRevision = value.revision; _rules = MarketplaceJson.Clone(value); });
+            }, value => { _configRevision = value.revision; _rules = MarketplaceJson.Clone(value); }, value => value.revision >= _configRevision);
         }
         public Task<MarketplaceResult<MarketplaceStateView>> GetMarketplace(string userId)
-            => Read<MarketplaceStateView>(userId, Endpoint + Query(userId), value => value.state.userId == userId && value.state.revision >= _stateRevision, value => { _stateRevision = value.state.revision; _state = MarketplaceJson.Clone(value); });
+            => Read<MarketplaceStateView>(userId, Endpoint + Query(userId), value => value.state.userId == userId, value => { _stateRevision = value.state.revision; _state = MarketplaceJson.Clone(value); }, value => value.state.revision >= _stateRevision);
         public Task<MarketplaceResult<MarketplaceListingPage>> QueryListings(string userId, string itemKey = null, long minPrice = 0, long maxPrice = PlayerValuesManager.MaxSafeInteger, string cursor = null, int limit = 50)
         {
             if (limit < 1 || limit > 50 || itemKey != null && !ItemsJson.Key(itemKey) || !ItemsJson.Revision(minPrice) || !ItemsJson.Revision(maxPrice) || minPrice > maxPrice || cursor != null && !MarketplaceJson.Cursor(cursor)) return Task.FromResult(Failure<MarketplaceListingPage>("INVALID_REQUEST"));
@@ -80,7 +80,7 @@ namespace PM.horizOn.Cloud.Manager
         public Task<MarketplaceResult<MarketplaceListingView>> GetListing(string userId, string listingId)
         {
             if (!MarketplaceJson.Uuid(listingId)) return Task.FromResult(Failure<MarketplaceListingView>("INVALID_REQUEST"));
-            return Read<MarketplaceListingView>(userId, Endpoint + "/listings/" + listingId + Query(userId), value => value.listing.id == listingId && (_point?.listing.id != listingId || value.listing.revision >= _point.listing.revision), value => _point = MarketplaceJson.Clone(value));
+            return Read<MarketplaceListingView>(userId, Endpoint + "/listings/" + listingId + Query(userId), value => value.listing.id == listingId, value => _point = MarketplaceJson.Clone(value), value => _point?.listing.id != listingId || value.listing.revision >= _point.listing.revision);
         }
         public Task<MarketplaceResult<MarketplaceOperation>> GetOperation(string userId, string operationId)
         {
@@ -110,9 +110,9 @@ namespace PM.horizOn.Cloud.Manager
             return Request(userId, Endpoint + "/listings/" + listingId + "/retry-return", new MarketplaceJsonRequest("{\"userId\":" + ItemsJson.Quote(userId) + "}"), value => value.listing.id == listingId && value.listing.returnOwnerId == userId, (MarketplaceReturn value) => InvalidateTrade());
         }
         private void InvalidateTrade() { _state = null; _query = null; _point = null; TradingStateInvalidated?.Invoke(); }
-        private Task<MarketplaceResult<T>> Read<T>(string user, string path, Func<T, bool> valid, Action<T> accept = null) where T : class
-            => Request(user, path, null, valid, accept);
-        private async Task<MarketplaceResult<T>> Request<T>(string user, string path, MarketplaceJsonRequest body, Func<T, bool> valid, Action<T> accept) where T : class
+        private Task<MarketplaceResult<T>> Read<T>(string user, string path, Func<T, bool> valid, Action<T> accept = null, Func<T, bool> fresh = null) where T : class
+            => Request(user, path, null, valid, accept, fresh);
+        private async Task<MarketplaceResult<T>> Request<T>(string user, string path, MarketplaceJsonRequest body, Func<T, bool> valid, Action<T> accept, Func<T, bool> fresh = null) where T : class
         {
             if (!Begin(user, out string identity, out long epoch)) return Failure<T>(LastErrorCode);
             await _requests.WaitAsync();
@@ -124,7 +124,7 @@ namespace PM.horizOn.Cloud.Manager
                 if (!response.IsSuccess) return Failure<T>(response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode), response.Error);
                 if (response.Data == null || !valid(response.Data)) return Failure<T>("INVALID_RESPONSE");
                 long millis = MarketplaceJson.Millis(ServerTime(response.Data));
-                if (millis < _serverMillis) return Failure<T>("STALE_RESPONSE");
+                if (millis < _serverMillis || fresh != null && !fresh(response.Data)) return Failure<T>("STALE_RESPONSE");
                 _serverMillis = millis; _clock.Restart(); accept?.Invoke(response.Data);
                 if (!Current(identity, epoch)) return Failure<T>("STALE_RESPONSE");
                 LastErrorCode = null; return new MarketplaceResult<T> { IsSuccess = true, Data = MarketplaceJson.Clone(response.Data) };

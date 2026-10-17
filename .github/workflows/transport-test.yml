@@ -46,6 +46,8 @@ jobs:
           mkdir -p .unity-ci-project/Assets/GiftSample .unity-ci-project/Assets/GiftExampleUI
           cp Samples~/Examples/Features/GiftCodesExample.cs Samples~/Examples/Features/GiftCodeSampleStore.cs .unity-ci-project/Assets/GiftSample/
           cp Samples~/ExampleUI/HorizonExampleUIController.cs Samples~/ExampleUI/HorizonSDKExample.cs Samples~/ExampleUI/HorizonExampleWindow.cs .unity-ci-project/Assets/GiftExampleUI/
+          mkdir -p .unity-ci-project/Assets/MarketplaceSample
+          cp Samples~/Examples/Features/MarketplaceExample.cs Samples~/Examples/Features/MarketplaceSampleStore.cs .unity-ci-project/Assets/MarketplaceSample/
           mkdir -p .unity-ci-project/Assets/InboxSample
           cp Samples~/Examples/Features/InboxExample.cs .unity-ci-project/Assets/InboxSample/InboxExample.cs
           mkdir -p .unity-ci-project/Assets/AchievementsSample

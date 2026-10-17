@@ -123,7 +123,7 @@ namespace PM.horizOn.Cloud.Helper
         }
         internal static bool Matches(MarketplaceIntent original, MarketplaceReceipt receipt)
         {
-            if (original == null || receipt == null || receipt.operationId != original.OperationId || receipt.issuedAt != original.IssuedAt || receipt.kind != original.Kind) return false;
+            if (original == null || receipt == null || receipt.itemReference == null || !Uuid(receipt.listingId) || receipt.operationId != original.OperationId || receipt.issuedAt != original.IssuedAt || receipt.kind != original.Kind) return false;
             var f = Object(original.Json);
             if (original.Kind == "create") return receipt.listingRevision == 1 && receipt.itemReference.instanceId == Text(f["instanceId"]) && receipt.price == Number(f["price"]);
             if (receipt.listingId != original.ListingId || receipt.listingRevision != Number(f["expectedListingRevision"]) + 1) return false;
