@@ -25,7 +25,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public string operationId;
         public bool replayed;
         public PlayerValueAmount[] applied = Array.Empty<PlayerValueAmount>();
-        /// <summary>Original grant references, even after the current offer changes or an instance is discarded.</summary>
+        /// <summary>Immediate fresh-purchase references. Compact replay returns an empty array and current state.</summary>
         public ItemReference[] items = Array.Empty<ItemReference>();
     }
     [Serializable] public class PlayerValuesState
