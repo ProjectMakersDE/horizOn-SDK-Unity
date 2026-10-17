@@ -30,7 +30,7 @@ namespace PM.horizOn.Cloud.Manager
         private readonly Dictionary<string, string> _sourceRuns = new Dictionary<string, string>();
         private readonly Dictionary<string, Refresh> _refresh = new Dictionary<string, Refresh>();
         private readonly Dictionary<string, long> _revisions = new Dictionary<string, long>(), _times = new Dictionary<string, long>();
-        private readonly Queue<string> _cacheOrder = new Queue<string>(), _refreshOrder = new Queue<string>(), _revisionOrder = new Queue<string>(), _timeOrder = new Queue<string>();
+        private readonly Queue<string> _cacheOrder = new Queue<string>(), _refreshOrder = new Queue<string>();
         private sealed class Refresh { internal double At; internal int Seconds; }
         private string _rankedMatch, _rankedRun; private long _rankedFinal;
         internal Func<double> NowSeconds = () => (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
@@ -41,7 +41,7 @@ namespace PM.horizOn.Cloud.Manager
             RegisterEvent<UserData>(EventKeys.UserSignInSuccess, _ => ResetIdentity());
         }
         protected override void OnDisable() { ResetIdentity(); base.OnDisable(); }
-        /// <summary>Invalidate private content and queued responses, retaining bounded revision/time/cadence fences and an actual current ranked-run binding.</summary>
+        /// <summary>Invalidate private content and queued responses, retaining auth-context revision/time fences and bounded cadence hints and an actual current ranked-run binding.</summary>
         public void ClearCache() { SyncIdentity(); _epoch++; InvalidateContent(); }
         public T GetCached<T>(string identity) where T : class
         { SyncIdentity(); return identity != null && _cache.TryGetValue(identity, out var v) && v is T typed ? MatchesJson.Clone(typed) : null; }
@@ -197,8 +197,8 @@ namespace PM.horizOn.Cloud.Manager
                 if(sources.Any(x=>_sourceRuns.TryGetValue(x.Key,out var original)&&!Same(original,x.Value)))return Failure<T>("STALE_RESPONSE",identity:identity);
                 if (_times.TryGetValue(resource, out var previousTime) && time < previousTime
                     || versions.Any(v => _revisions.TryGetValue(v.Key, out var old) && v.Value < old || _times.TryGetValue(v.Key, out var oldTime) && time < oldTime)) return Failure<T>("STALE_RESPONSE", identity: identity);
-                Put(_times, _timeOrder, resource, time, 512);
-                foreach (var v in versions) { Put(_revisions, _revisionOrder, v.Key, v.Value, 512); Put(_times, _timeOrder, v.Key, time, 512); }
+                _times[resource] = time;
+                foreach (var v in versions) { _revisions[v.Key] = v.Value; _times[v.Key] = time; }
                 foreach(var source in sources)_sourceRuns[source.Key]=source.Value;
                 Put(_cache, _cacheOrder, identity, MatchesJson.Clone(data), 8);
                 if (body == null) Put(_refresh, _refreshOrder, identity, new Refresh { At = NowSeconds(), Seconds = Poll(data) }, 512);
@@ -248,7 +248,7 @@ namespace PM.horizOn.Cloud.Manager
         private void ResetIdentity()
         {
             _epoch++; _network = null; _scope = null; InvalidateContent(); _refresh.Clear(); _revisions.Clear(); _times.Clear();
-            _refreshOrder.Clear(); _revisionOrder.Clear(); _timeOrder.Clear(); _rankedMatch = _rankedRun = null; LastErrorCode = null;
+            _refreshOrder.Clear(); _rankedMatch = _rankedRun = null; LastErrorCode = null;
             _sourceRuns.Clear();
         }
         private void InvalidateContent() { _cache.Clear(); _cacheOrder.Clear(); }

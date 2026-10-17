@@ -1348,3 +1348,7 @@ still-protected source. Auth changes clear these local bindings. Their memory
 can grow across reads; no result/item/state history or server record is added.
 
 Group revision/time fences likewise retain only minimal IDs and watermarks until auth changes, including257 retained groups after policy is lowered to1. They hold no copied group content.
+
+Minimal Match revision/time watermarks also survive more than512 retained entries until auth changes. Payload caches and polling-hint caches keep their existing small bounds.
+
+Groups responses aggregate independent BSON records and can duplicate a group in a mutation. A6MiB control-character name needs about36MiB JSON; the same mutation can exceed72MiB. Groups alone parses its already received body/fragments at their actual length, preserving strict field/grammar/depth checks. There is no derived32/96/192MiB aggregate product quota. Available engine/HTTP memory remains a technical client limit; a parse/transport failure must preserve the original for explicit recovery. Other feature frames and small payload caches are unchanged.

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using PM.horizOn.Cloud.Helper;
 using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Service;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using UnityEngine;
 namespace PM.horizOn.Cloud.Tests
@@ -29,6 +30,16 @@ namespace PM.horizOn.Cloud.Tests
             var sent=Act(actor,"SaveRankedAfterPendingResultReview",ConfigMatchId(9000));var c=await Incoming();string original=await Body(c);Assert.That(original,Does.Contain("\"finalStateRevision\":5"));Assert.That(c.Request.RawUrl,Is.EqualTo("/api/v1/app/matches/"+ConfigMatchId(9000)+"/ranked-run"));string path=Path.Combine(Journal(),"intent.json");Assert.That(File.Exists(path),Is.True);string saved=File.ReadAllText(path);await Respond(c,"{\"code\":\"UNAVAILABLE\"}",503);Assert.That(await sent,Is.False);
             UnityEngine.Object.DestroyImmediate(actor.gameObject);actor=Actor();sent=Act(actor,"ApplySavedIntent");c=await Incoming();Assert.That(await Body(c),Is.EqualTo(original));await Respond(c,Run.Replace(RunId,ConfigMatchId(9999)));Assert.That(await sent,Is.False);Assert.That(Manager.LastErrorCode,Is.EqualTo("INVALID_RESPONSE"));Assert.That(ValidatedActionsManager.Instance.CurrentRun,Is.Null);Assert.That(File.ReadAllText(path),Is.EqualTo(saved));
             sent=Act(actor,"ApplySavedIntent");c=await Incoming();Assert.That(await Body(c),Is.EqualTo(original));await Respond(c,Run);Assert.That(await sent,Is.True);Assert.That(ValidatedActionsManager.Instance.CurrentRun.runId,Is.EqualTo(RunId));Assert.That(File.Exists(Path.Combine(Journal(),"result.json")),Is.False,"A run start is not a finished ranked submission");Assert.That(File.ReadAllText(path),Is.EqualTo(saved));
+        }
+        [Test]public async Task MinimalMatchWatermarksSurvive513RetainedEntriesAndNewerStaleResponse()
+        {
+            string rows="["+string.Join(",",Enumerable.Range(0,513).Select(i=>Summary(3,status:"cancelled").Replace("\"finishedAt\":null","\"finishedAt\":\""+Time+"\"").Replace("\"purgeAt\":null","\"purgeAt\":\"2026-10-23T00:00:00Z\"").Replace(Id,ConfigMatchId(20000+i))))+"]";
+            string first=Ledger(7,recent:rows).Replace(Limits,ExtendedLimits);var accepted=await Reply(Manager.GetMatches(User),first);Assert.That(accepted.IsSuccess,Is.True);Assert.That(accepted.Data.recent.Length,Is.EqualTo(513));
+            Manager.ClearCache();
+            var newerButStale=await Reply(Manager.GetMatches(User,true),Ledger(6).Replace(Time,"2026-10-16T00:00:01Z").Replace(Limits,ExtendedLimits));Assert.That(newerButStale.ErrorCode,Is.EqualTo("STALE_RESPONSE"));
+            var olderTime=await Reply(Manager.GetMatches(User,true),Ledger(8).Replace(Time,"2026-10-15T23:59:59Z").Replace(Limits,ExtendedLimits));Assert.That(olderTime.ErrorCode,Is.EqualTo("STALE_RESPONSE"));
+            var oldDetail=await Reply(Manager.GetMatch(User,ConfigMatchId(20000),true),Envelope(View(2)).Replace(Id,ConfigMatchId(20000)).Replace(Time,"2026-10-16T00:00:01Z"));Assert.That(oldDetail.ErrorCode,Is.EqualTo("STALE_RESPONSE"));
+            NetworkService.Instance.SetSessionToken("other");NetworkService.Instance.SetSessionToken("session-"+User);Assert.That((await Reply(Manager.GetMatches(User,true),Ledger(6))).IsSuccess,Is.True);
         }
         [Test] public async Task MaximumStateReadAndDurableUncertainCreateRemainExactAcrossRestartAndSafeAck()
         {
