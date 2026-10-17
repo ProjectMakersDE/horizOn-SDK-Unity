@@ -35,7 +35,8 @@ namespace PM.horizOn.Cloud.Transport
             error = StatisticsErrorCodes.SessionRequired;
             if (!HasSession(user, token)) return false;
             error = StatisticsErrorCodes.InvalidRequest;
-            if (!ValidOperationId(operationId) || updates == null || updates.Count < 1 || updates.Count > 100) return false;
+            // The server owns configurable catalog limits. A retry may also outlive a limit reduction.
+            if (!ValidOperationId(operationId) || updates == null || updates.Count < 1) return false;
             var keys = new HashSet<string>(StringComparer.Ordinal);
             var copy = new StatisticUpdate[updates.Count];
             for (int i = 0; i < updates.Count; i++)

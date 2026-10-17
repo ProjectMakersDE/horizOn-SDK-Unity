@@ -44,7 +44,7 @@ namespace PM.horizOn.Cloud.Examples.Features
                 var value = JsonUtility.FromJson<UpdateStatisticsRequest>(PlayerPrefs.GetString(key));
                 var parts = value?.operationId?.Split(':');
                 if (value?.userId != user || parts?.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var millis)
-                    || millis <= 0 || !Guid.TryParseExact(parts[1], "D", out _) || value.updates == null || value.updates.Length == 0 || value.updates.Length > 100) return false;
+                    || millis <= 0 || !Guid.TryParseExact(parts[1], "D", out _) || value.updates == null || value.updates.Length == 0) return false;
                 var keys = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
                 foreach (var update in value.updates)
                     if (update == null || string.IsNullOrEmpty(update.key) || !keys.Add(update.key) || update.value < -PlayerValuesManager.MaxSafeInteger || update.value > PlayerValuesManager.MaxSafeInteger) return false;

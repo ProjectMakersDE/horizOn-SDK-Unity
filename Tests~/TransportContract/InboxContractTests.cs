@@ -69,7 +69,8 @@ internal static class InboxContractTests
             PlayerPrefs.DeleteKey(oldKey); PlayerPrefs.DeleteKey(stableKey);
         }
         var batch = new PM.horizOn.Cloud.Objects.Network.Requests.UpdateStatisticsRequest { userId = User, operationId = purchase.operationId,
-            updates = new[] { new PM.horizOn.Cloud.Objects.Network.Requests.StatisticUpdate("kills", 3) } };
+            updates = new PM.horizOn.Cloud.Objects.Network.Requests.StatisticUpdate[201] };
+        for (int i = 0; i < batch.updates.Length; i++) batch.updates[i] = new PM.horizOn.Cloud.Objects.Network.Requests.StatisticUpdate("stat" + i, i);
         string legacyBatchKey = "horizOn_statistics_pending_" + User;
         PlayerPrefs.SetString(legacyBatchKey, JsonUtility.ToJson(batch));
         Check(!PM.horizOn.Cloud.Examples.Features.StatisticsSampleStore.TryLoad("other-project", User, out _) && PlayerPrefs.HasKey(legacyBatchKey), "projectless statistics batch blocks and remains intact");

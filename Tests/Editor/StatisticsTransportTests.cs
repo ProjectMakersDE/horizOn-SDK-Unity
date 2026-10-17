@@ -92,6 +92,46 @@ namespace PM.horizOn.Cloud.Tests
         }
 
         [Test]
+        public async Task AdminCatalogAbove100_RemainsReadableAndOriginalBatchReplaysAfterReduction()
+        {
+            var updates = new StatisticUpdate[201];
+            var definitions = new string[201];
+            var values = new string[201];
+            for (int i = 0; i < 201; i++)
+            {
+                updates[i] = new StatisticUpdate("stat" + i, i);
+                definitions[i] = "{\"key\":\"stat" + i + "\",\"name\":\"Stat\",\"mode\":\"sum\",\"reset\":\"none\"}";
+                values[i] = "{\"key\":\"stat" + i + "\",\"value\":" + i + ",\"hasValue\":true}";
+            }
+            var manager = StatisticsManager.Instance;
+            string operation = manager.CreateOperationId();
+            var incoming = _listener.GetContextAsync();
+            var sending = manager.UpdateStatistics(updates, operation);
+            var request = await Receive(incoming);
+            string original;
+            using (var reader = new StreamReader(request.Request.InputStream)) original = await reader.ReadToEndAsync();
+            Assert.That(original, Does.Contain("\"key\":\"stat200\""));
+            string response = "{\"userId\":\"statistics-user\",\"definitionVersion\":1,\"revision\":1,\"definitions\":[" +
+                string.Join(",", definitions) + "],\"values\":[" + string.Join(",", values) +
+                "],\"operationId\":\"" + operation + "\",\"operationWindow\":{\"serverTimeUnixMillis\":" +
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ",\"maxAgeSeconds\":86400,\"maxFutureSkewSeconds\":30},\"newlyUnlocked\":[]}";
+            await Respond(request, 200, response);
+            var first = await sending;
+            Assert.That(first, Is.Not.Null);
+            Assert.That(first.definitions.Length, Is.EqualTo(201));
+            Assert.That(first.values.Length, Is.EqualTo(201));
+            incoming = _listener.GetContextAsync();
+            sending = manager.UpdateStatistics(updates, operation);
+            request = await Receive(incoming);
+            using (var reader = new StreamReader(request.Request.InputStream))
+                Assert.That(await reader.ReadToEndAsync(), Is.EqualTo(original));
+            await Respond(request, 200, Snapshot(1, 0, operation, version: 2).Replace("\"newlyUnlocked\":[]", "\"newlyUnlocked\":[],\"replayed\":true"));
+            var replay = await sending;
+            Assert.That(replay.replayed, Is.True);
+            Assert.That(replay.definitions.Length, Is.EqualTo(1));
+        }
+
+        [Test]
         public async Task LocalValidationAndInitialization_NeverSendRequests()
         {
             var unexpected = _listener.GetContextAsync();
