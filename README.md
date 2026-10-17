@@ -1265,7 +1265,7 @@ transport limitation, not a database-size or product-quota claim. Original item
 properties, embedded NUL/Unicode and safe integers remain exact. Nullable fields
 use the explicit Marketplace codec; Unity `JsonUtility` is not its wire decoder.
 
-Import `MarketplaceExample.cs` and `MarketplaceSampleStore.cs` from the Examples
+Import `MarketplaceExample.cs`, `MarketplaceSampleStore.cs` and `MarketplaceQuickstart.cs` from the Examples
 sample. Set the real stable project UUID in `projectId`, retain the normal existing
 SDK session, and call the explicit screen methods to read config/rules/inventory or
 a listing. `ReviewCreate`, `ReviewBuy` and `ReviewCancel` freeze displayed terms;

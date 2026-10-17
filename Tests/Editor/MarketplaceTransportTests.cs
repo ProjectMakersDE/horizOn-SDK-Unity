@@ -112,8 +112,9 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That(await Invoke("RecoverOriginalOperation"), Is.False); Assert.That(Saved(Seller, out known).OperationId, Is.EqualTo(Unknown)); Assert.That(known, Is.False);
             // Fixture-only removal of an artificial unresolved intent; sample exposes no such acknowledgement.
             File.Delete(Directory.GetFiles(_directory, "*.json").Single());
-            Player(Buyer); Assert.That(Manager.CurrentMarketplace, Is.Null); Assert.That((await Manager.GetListing(Buyer, L2)).IsSuccess, Is.True); Assert.That(Review("ReviewBuy", L2), Is.True);
-            Assert.That(await Invoke("ConfirmReviewedTrade"), Is.False); var buy = Saved(Buyer, out known); Assert.That(known, Is.False);
+            Player(Buyer); Assert.That(Manager.CurrentMarketplace, Is.Null); var quickstart = AppDomain.CurrentDomain.GetAssemblies().Select(x => x.GetType("PM.horizOn.Cloud.Examples.Features.MarketplaceQuickstart")).First(x => x != null);
+            Assert.That((await (Task<MarketplaceResult<MarketplaceListingView>>)quickstart.GetMethod("ReadOneListing").Invoke(null, new object[] { _sample, L2 })).IsSuccess, Is.True);
+            Assert.That(await (Task<bool>)quickstart.GetMethod("BuyReviewedListing").Invoke(null, new object[] { _sample, L2 }), Is.False); var buy = Saved(Buyer, out known); Assert.That(known, Is.False);
             Actor(); Assert.That(await Invoke("RetryPending"), Is.True); Assert.That(HasPending(Buyer), Is.False); Assert.That(ItemsManager.Instance.CurrentInventory.instances, Is.Empty);
             string issued = DateTimeOffset.FromUnixTimeMilliseconds(Manager.ServerNowMilliseconds).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
             Assert.That((await Manager.BuyListing(Buyer, Listing, Unknown, issued, 1, 101, "1coin.gold")).ErrorCode, Is.EqualTo("LISTING_UNAVAILABLE"));
