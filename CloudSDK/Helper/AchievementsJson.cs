@@ -29,7 +29,7 @@ namespace PM.horizOn.Cloud.Helper
             var f = JsonFragments.Object(json);
             var result = new AchievementUnlockResponse { achievements = Snapshot(f["achievements"]), replayed = Flag(f["replayed"]),
                 newlyUnlocked = Rows(f["newlyUnlocked"], 1, Key, k => k), deliveryResults = Rows(f["deliveryResults"], 1, Outcome, r => r.key) };
-            if (result.replayed && result.newlyUnlocked.Length != 0) throw new FormatException("Replayed achievement cannot be new");
+            if (result.newlyUnlocked.Length != (result.replayed ? 0 : 1)) throw new FormatException("Replayed achievement cannot be new");
             return result;
         }
         public static AchievementDeliveryResponse Delivery(string json)
@@ -60,7 +60,7 @@ namespace PM.horizOn.Cloud.Helper
             var result = new AchievementProgress { key = Key(f["key"]), rewardState = State(f["rewardState"]), inboxEntryId = OptionalText(f, "inboxEntryId") };
             if (result.rewardState == "complete")
             {
-                if (OptionalText(f, "unlockedAt") != null) throw new FormatException("Compact achievement has no unlock date");
+                if (!f.TryGetValue("unlockedAt", out var unlockedAt) || unlockedAt != "null") throw new FormatException("Compact achievement has no unlock date");
             }
             else result.unlockedAt = Instant(f["unlockedAt"]);
             if (f.TryGetValue("pendingReward", out var pending) && pending != "null")

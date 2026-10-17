@@ -76,7 +76,7 @@ namespace PM.horizOn.Cloud.Manager
                 if (!response.IsSuccess) return UnlockFailure(ErrorCode(response), response.Error);
                 var data = response.Data;
                 if (data?.achievements == null || data.newlyUnlocked == null || data.deliveryResults == null
-                    || (data.replayed && data.newlyUnlocked.Length != 0) || data.newlyUnlocked.Length > 1
+                    || data.newlyUnlocked.Length != (data.replayed ? 0 : 1)
                     || (data.newlyUnlocked.Length == 1 && data.newlyUnlocked[0] != key)
                     || (data.deliveryResults.Length > 0 && !MatchesOutcomes(data.deliveryResults, new[] { key }))) return UnlockFailure("INVALID_RESPONSE");
                 if (data.deliveryResults.Length == 0)

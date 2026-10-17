@@ -20,6 +20,11 @@ internal static class AchievementsContractTests
         Check(compact.progress[0].unlockedAt==null&&compact.progress[0].pendingReward==null&&compact.progress[0].rewardState=="complete","compact permanent unlock has no fabricated date or reward copy");
         foreach(var invalid in new[]{complete.Replace("\"unlockedAt\":null","\"unlockedAt\":\"2026-10-16T00:00:00Z\""),complete.Replace("\"rewardState\":\"complete\"","\"rewardState\":\"pending\"")})
         {bool refused=false;try{AchievementsJson.Snapshot(snapshot.Replace("\"progress\":[]","\"progress\":["+invalid+"]"));}catch{refused=true;}Check(refused,"compact and legacy formats cannot be mixed");}
+        string compactSnapshot=snapshot.Replace("\"progress\":[]","\"progress\":["+complete+"]");
+        string fresh="{\"achievements\":"+compactSnapshot+",\"newlyUnlocked\":[\"starter\"],\"replayed\":false,\"deliveryResults\":[]}";
+        Check(AchievementsJson.Unlock(fresh).deliveryResults.Length==0,"compact unlock contains no delivery outcome");
+        bool missingUnlock=false;try{AchievementsJson.Unlock(fresh.Replace("[\"starter\"]","[]"));}catch{missingUnlock=true;}
+        Check(missingUnlock,"fresh unlock must name exactly one newly unlocked key");
         string definitions=string.Join(",",Enumerable.Range(0,701).Select(i=>definition.Replace("starter","k"+i)));
         string progress=string.Join(",",Enumerable.Range(0,701).Select(i=>complete.Replace("starter","k"+i)));
         string raised=snapshot.Replace("\"definitions\":["+definition+"]","\"definitions\":["+definitions+"]").Replace("\"progress\":[]","\"progress\":["+progress+"]")
