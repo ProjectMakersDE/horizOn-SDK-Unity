@@ -15,6 +15,7 @@ internal static class InboxContractTests
     private static string Snapshot(long revision = 1, string cursor = "one", bool unchanged = false, int second = 1) => "{\"userId\":\"" + User + "\",\"cursor\":\"" + cursor + "\",\"revision\":" + revision + ",\"broadcastRevision\":1,\"serverTime\":\"2026-10-16T00:00:" + second.ToString("D2") + "Z\",\"pollAfterSeconds\":120,\"unchanged\":" + (unchanged ? "true" : "false") + ",\"entries\":" + (unchanged ? "[]" : "[{\"id\":\"" + Entry + "\",\"kind\":\"message\",\"type\":\"gift\",\"textKey\":\"gift.ready\",\"reference\":\"source\",\"createdAt\":\"2026-10-16T00:00:00Z\",\"expiresAt\":\"2026-11-16T00:00:00Z\",\"overdue\":false,\"read\":false,\"claimed\":false,\"parameters\":{\"name\":\"Gold \\\"coins\\\" \\\\ path\\n⚡\",\"text\":\"\\\"amount\\\":9007199254740992\"},\"attachment\":{\"values\":[{\"key\":\"gold\",\"amount\":9007199254740991}]}}]") + ",\"counts\":{\"gift\":{\"total\":1,\"unread\":1,\"claimable\":1}},\"limits\":{\"targeted\":10,\"broadcasts\":10}}";
     public static async Task Run()
     {
+        CompactContracts();
         var parsed = InboxJson.Snapshot(Snapshot());
         Check(parsed.counts["gift"].claimable == 1 && parsed.entries[0].parameters["name"] == "Gold \"coins\" \\ path\n⚡", "dictionary escapes preserved");
         Check(parsed.entries[0].attachment.values[0].amount == PlayerValuesManager.MaxSafeInteger, "safe reward exact");
@@ -89,5 +90,60 @@ internal static class InboxContractTests
         PlayerPrefs.DeleteKey("horizOn_statistics_identity_started");
         Console.WriteLine("Inbox JSON, bounded refresh queue, cache watermarks and anonymous identity contracts passed.");
     }
+    private static string WithEntries(string rows, string limits = null)
+    {
+        string original = Snapshot();
+        var fields = JsonFragments.Object(original);
+        return original.Replace("\"entries\":" + fields["entries"], "\"entries\":" + rows)
+            .Replace("\"limits\":" + fields["limits"], "\"limits\":" + (limits ?? "{\"targeted\":1,\"broadcasts\":1,\"freeTexts\":1,\"freeTextBytes\":512,\"freeTextRetentionDays\":30}"));
+    }
+    private static string SourceEntry(string type, string key, string reference, string parameters, string attachment = "null") =>
+        "{\"id\":\"" + Entry + "\",\"kind\":\"message\",\"type\":\"" + type + "\",\"textKey\":\"" + key + "\",\"reference\":\"" + reference + "\",\"createdAt\":\"2030-01-01T00:00:00Z\",\"expiresAt\":\"2026-11-16T00:00:00Z\",\"overdue\":false,\"read\":false,\"claimed\":false,\"parameters\":" + parameters + ",\"attachment\":" + attachment + "}";
+    private static void CompactContracts()
+    {
+        string text = new string('ä', 256);
+        var plain = InboxJson.Snapshot(WithEntries("[" + SourceEntry("free_text", "horizon.inbox.free_text", "", "{\"text\":\"" + text + "\"}") + "]"));
+        Check(InboxJson.Snapshot(WithEntries("[]", "{\"targeted\":1000,\"broadcasts\":2000,\"freeTexts\":20,\"freeTextBytes\":512,\"freeTextRetentionDays\":30}")).limits.broadcasts == 2000, "raised admin limits parse");
+        Check(plain.limits.freeTextBytes == 512 && plain.limits.freeTextRetentionDays == 30 && plain.entries[0].TryGetFreeText(out var decoded) && decoded == text, "configured UTF8 free text and reverse clock dates");
+        string row = JsonFragments.Array(JsonFragments.Object(Snapshot())["entries"])[0];
+        var retained = new string[551];
+        for (int i = 0; i < retained.Length; i++) retained[i] = row.Replace(Entry, "message:" + Guid.NewGuid().ToString("D"));
+        Check(InboxJson.Snapshot(WithEntries("[" + string.Join(",", retained) + "]")).entries.Length == 551, "retained entries survive lower limits and old fixed bound");
+        Check(InboxJson.Snapshot(Snapshot(PlayerValuesManager.MaxSafeInteger)).revision == PlayerValuesManager.MaxSafeInteger, "safe maximum revision remains exact");
+        foreach (string bad in new[] { "1e3", "9007199254740992", "\"1\"" }) Refuses(Snapshot().Replace("\"revision\":1", "\"revision\":" + bad), "unsafe revision");
+        Refuses(WithEntries("[" + row + "," + row + "]"), "duplicate entry identity");
+        Refuses(WithEntries("[" + row.Replace(Entry, "message: " + User) + "]"), "entry UUID cannot be trimmed");
+        string item = "{\"values\":[],\"itemReturn\":{\"listingId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}}";
+        var cases = new[] {
+            new[] { "friend_request", "horizon.friends.request", "{\"userId\":\"" + User + "\"}" },
+            new[] { "friend_accept", "horizon.friends.accept", "{\"userId\":\"" + User + "\"}" },
+            new[] { "group_invite", "horizon.groups.invite", "{\"groupId\":\"" + User + "\"}" },
+            new[] { "group_request", "horizon.groups.request", "{\"groupId\":\"" + User + "\"}" },
+            new[] { "group_accept-invite", "horizon.groups.accept-invite", "{\"groupId\":\"" + User + "\"}" },
+            new[] { "group_accept-request", "horizon.groups.accept-request", "{\"groupId\":\"" + User + "\"}" },
+            new[] { "match_turn", "horizon.matches.your_turn", "{\"matchId\":\"" + User + "\",\"revision\":\"9007199254740991\"}" },
+            new[] { "marketplace", "marketplace.item_return", "{}" }
+        };
+        foreach (var c in cases)
+        {
+            string source = SourceEntry(c[0], c[1], User, c[2], c[0] == "marketplace" ? item : "null");
+            var parsed = InboxJson.Snapshot(WithEntries("[" + source + "]"));
+            Check(parsed.entries[0].TryGetSource(out var reference) && reference.SourceId == User, "typed source " + c[0]);
+            Refuses(WithEntries("[" + source.Replace("\"reference\":\"" + User + "\"", "\"reference\":\"bad\"") + "]"), "invalid source identity");
+        }
+        string market = SourceEntry("marketplace", "marketplace.item_return", User, "{}", item);
+        var oldAcceptance = InboxJson.Snapshot(WithEntries("[" + SourceEntry("group_accept-invite", "horizon.groups.accept-invite", "00000000-0000-4000-8000-000000001007", "{\"groupId\":\"" + User + "\"}") + "]"));
+        Check(oldAcceptance.entries[0].TryGetSource(out var oldGroup) && oldGroup.GroupId == User && oldGroup.SourceId != User, "legacy acceptance retains original request reference and group navigation");
+        var returned = InboxJson.Snapshot(WithEntries("[" + market + "]"));
+        Check(returned.entries[0].CanClaim && returned.entries[0].attachment.values.Length == 0, "item-only attachment is claimable");
+        Check(InboxJson.Clone(plain).entries[0].attachment == null && !InboxJson.Clone(InboxJson.Snapshot(WithEntries("[" + row.Replace("9007199254740991", "1").Replace("[{\"key\":\"gold\",\"amount\":1}]", "[]") + "]"))).entries[0].CanClaim, "optional reward presence survives clone");
+        var copy = InboxJson.Clone(returned); copy.entries[0].attachment.itemReturn.itemKey = "changed";
+        Check(returned.entries[0].attachment.itemReturn.itemKey == "sword", "item descriptor deep clone");
+        foreach (string bad in new[] { market.Replace("\"itemKey\":\"sword\"", "\"itemKey\":\"sword\",\"unknown\":1"), market.Replace("\"values\":[]", "\"values\":[],\"unknown\":1"), market.Replace("\"instanceId\":\"" + User + "\"", "\"instanceId\":\"bad\"") }) Refuses(WithEntries("[" + bad + "]"), "unsupported valuable content");
+        string state = "{\"userId\":\"" + User + "\",\"day\":\"2026-10-16\",\"revision\":1,\"definitionVersion\":1,\"values\":[],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:00Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
+        string claim = "{\"entryId\":\"" + Entry + "\",\"replayed\":true,\"inbox\":" + WithEntries("[]") + ",\"playerValues\":" + state + ",\"items\":[{\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}]}";
+        Check(InboxJson.Claim(claim).items.Length == 1, "claim keeps returned references");
+    }
+    private static void Refuses(string json, string message) { bool refused = false; try { InboxJson.Snapshot(json); } catch { refused = true; } Check(refused, message); }
     private static void Check(bool value, string message) { if (!value) throw new Exception("Inbox contract failed: " + message); }
 }

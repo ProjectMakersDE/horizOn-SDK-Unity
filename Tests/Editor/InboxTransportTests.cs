@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Linq;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using PM.horizOn.Cloud.Core;
@@ -42,6 +43,77 @@ namespace PM.horizOn.Cloud.Tests
         private static string Values(long revision = 1) => "{\"userId\":\"" + User + "\",\"definitionVersion\":1,\"revision\":" + revision + ",\"day\":\"2026-10-16\",\"values\":[{\"key\":\"gold\",\"balance\":10,\"earnedToday\":10,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:10Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
         private async Task<InboxResult> Load(string body)
         { var incoming = _listener.GetContextAsync(); var pending = Manager.GetInbox(User); await Respond(await Timeout(incoming), 200, body); return await pending; }
+        private static string WithEntries(string rows, long revision = 1)
+        {
+            string json = Snapshot(revision);
+            int start = json.IndexOf("\"entries\":", StringComparison.Ordinal) + "\"entries\":".Length;
+            int end = json.IndexOf(",\"counts\":", start, StringComparison.Ordinal);
+            return json.Substring(0, start) + rows + json.Substring(end).Replace("\"limits\":{\"targeted\":10,\"broadcasts\":10}",
+                "\"limits\":{\"targeted\":1,\"broadcasts\":1,\"freeTexts\":4,\"freeTextBytes\":512,\"freeTextRetentionDays\":30}");
+        }
+        private static string SourceEntry(string type, string key, string reference, string parameters, string attachment = "null") =>
+            "{\"id\":\"" + Entry + "\",\"kind\":\"message\",\"type\":\"" + type + "\",\"textKey\":\"" + key + "\",\"reference\":\"" + reference + "\",\"createdAt\":\"2030-01-01T00:00:00Z\",\"expiresAt\":\"2026-11-16T00:00:00Z\",\"overdue\":false,\"read\":false,\"claimed\":false,\"parameters\":" + parameters + ",\"attachment\":" + attachment + "}";
+        [Test] public async Task ConfiguredFreeTextAndRetainedEntriesRemainReadableAfterLimitsAreLowered()
+        {
+            string text = new string('ä', 256);
+            string row = SourceEntry("free_text", "horizon.inbox.free_text", "", "{\"text\":\"" + text + "\"}");
+            string rows = "[" + string.Join(",", Enumerable.Range(0, 551).Select(_ => row.Replace(Entry, "message:" + Guid.NewGuid().ToString("D")))) + "]";
+            var result = await Load(WithEntries(rows, 9007199254740991L));
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.entries.Length, Is.EqualTo(551));
+            Assert.That(result.Data.limits.freeTextBytes, Is.EqualTo(512)); Assert.That(result.Data.limits.freeTexts, Is.EqualTo(4));
+            Assert.That(result.Data.entries[0].TryGetFreeText(out var decoded), Is.True); Assert.That(decoded, Is.EqualTo(text));
+            Assert.That(Manager.CurrentInbox.revision, Is.EqualTo(9007199254740991L));
+        }
+        [TestCase("friend_request", "horizon.friends.request", "userId", InboxSourceKind.FriendRequest)]
+        [TestCase("friend_accept", "horizon.friends.accept", "userId", InboxSourceKind.FriendAccepted)]
+        [TestCase("group_invite", "horizon.groups.invite", "groupId", InboxSourceKind.GroupInvitation)]
+        [TestCase("group_request", "horizon.groups.request", "groupId", InboxSourceKind.GroupRequest)]
+        [TestCase("group_accept-invite", "horizon.groups.accept-invite", "groupId", InboxSourceKind.GroupInvitationAccepted)]
+        [TestCase("group_accept-request", "horizon.groups.accept-request", "groupId", InboxSourceKind.GroupRequestAccepted)]
+        [TestCase("match_turn", "horizon.matches.your_turn", "matchId", InboxSourceKind.MatchTurn)]
+        public async Task TypedSourcesPreserveOriginalEntryIdentity(string type, string key, string parameter, InboxSourceKind expected)
+        {
+            string parameters = "{\"" + parameter + "\":\"" + User + "\"" + (type == "match_turn" ? ",\"revision\":\"9007199254740991\"" : "") + "}";
+            var result = await Load(WithEntries("[" + SourceEntry(type, key, User, parameters) + "]"));
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.entries[0].id, Is.EqualTo(Entry));
+            Assert.That(result.Data.entries[0].TryGetSource(out var source), Is.True); Assert.That(source.Kind, Is.EqualTo(expected));
+            Assert.That(source.SourceId, Is.EqualTo(User));
+        }
+        [Test] public async Task ItemReturnIsClaimableAndClaimReplayPreservesOnlyAuthoritativeReferences()
+        {
+            string attachment = "{\"values\":[],\"itemReturn\":{\"listingId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}}";
+            var loaded = await Load(WithEntries("[" + SourceEntry("marketplace", "marketplace.item_return", User, "{}", attachment) + "]"));
+            Assert.That(loaded.IsSuccess, Is.True); Assert.That(loaded.Data.entries[0].CanClaim, Is.True);
+            Assert.That(loaded.Data.entries[0].TryGetSource(out var source), Is.True); Assert.That(source.Kind, Is.EqualTo(InboxSourceKind.MarketReturn));
+            loaded.Data.entries[0].attachment.itemReturn.itemKey = "changed";
+            Assert.That(Manager.CurrentInbox.entries[0].attachment.itemReturn.itemKey, Is.EqualTo("sword"));
+            for (int i = 0; i < 2; i++)
+            {
+                var incoming = _listener.GetContextAsync(); var claim = Manager.Claim(User, Entry);
+                await Respond(await Timeout(incoming), 200, "{\"entryId\":\"" + Entry + "\",\"replayed\":" + (i == 1 ? "true" : "false")
+                    + ",\"inbox\":" + WithEntries("[]", 100 + i) + ",\"playerValues\":" + Values()
+                    + ",\"items\":[{\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}]}");
+                var result = await claim; Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.items.Length, Is.EqualTo(1));
+                Assert.That(result.Data.items[0].instanceId, Is.EqualTo(User)); Assert.That(PlayerValuesManager.Instance.CurrentState.values[0].balance, Is.EqualTo(10));
+            }
+        }
+        [Test] public async Task LegacyGroupAcceptanceKeepsRequestReferenceAndGroupNavigation()
+        {
+            var result = await Load(WithEntries("[" + SourceEntry("group_accept-request", "horizon.groups.accept-request", "00000000-0000-4000-8000-000000001007", "{\"groupId\":\"" + User + "\"}") + "]"));
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.entries[0].TryGetSource(out var source), Is.True);
+            Assert.That(source.GroupId, Is.EqualTo(User)); Assert.That(source.SourceId, Is.Not.EqualTo(User));
+        }
+        [TestCase("revision")] [TestCase("source")] [TestCase("attachment")] [TestCase("item")]
+        public async Task MalformedSourceAndValuableContentCannotReplaceTheCache(string malformed)
+        {
+            string attachment = "{\"values\":[],\"itemReturn\":{\"listingId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}}";
+            string json = WithEntries("[" + SourceEntry("marketplace", "marketplace.item_return", User, "{}", attachment) + "]");
+            if (malformed == "revision") json = json.Replace("\"revision\":1", "\"revision\":9007199254740992");
+            if (malformed == "source") json = json.Replace("\"reference\":\"" + User + "\"", "\"reference\":\"bad\"");
+            if (malformed == "attachment") json = json.Replace("\"values\":[]", "\"values\":[],\"unknownReward\":1");
+            if (malformed == "item") json = json.Replace("\"itemKey\":\"sword\"", "\"itemKey\":\"sword\",\"unknownReward\":1");
+            Assert.That((await Load(json)).ErrorCode, Is.EqualTo("INVALID_RESPONSE")); Assert.That(Manager.CurrentInbox, Is.Null);
+        }
         [Test] public async Task SnapshotUsesBearerAndPreservesDictionaryStringsAndSafeRewards()
         {
             var incoming = _listener.GetContextAsync(); var pending = Manager.GetInbox(User); var context = await Timeout(incoming);

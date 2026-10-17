@@ -80,7 +80,8 @@ namespace PM.horizOn.Cloud.Manager
         {
             if (data == null || !string.Equals(data.userId, userId, StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(data.cursor) || data.cursor.Length > 128
                 || data.pollAfterSeconds <= 0 || data.revision < _revision || data.broadcastRevision < _broadcastRevision || data.revision < 0 || data.broadcastRevision < 0
-                || data.entries == null || data.entries.Length > 550 || data.limits == null || !DateTimeOffset.TryParse(data.serverTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)
+                || data.revision > PlayerValuesManager.MaxSafeInteger || data.broadcastRevision > PlayerValuesManager.MaxSafeInteger
+                || data.entries == null || data.limits == null || !DateTimeOffset.TryParse(data.serverTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var time)
                 || time.ToUnixTimeMilliseconds() < _serverMillis) return false;
             if (data.unchanged)
             {
@@ -113,7 +114,7 @@ namespace PM.horizOn.Cloud.Manager
         private static bool ValidEntry(string value)
         {
             if (value == null) return false; var parts = value.Split(':');
-            return parts.Length == 2 && (parts[0] == "message" || parts[0] == "broadcast") && Guid.TryParseExact(parts[1], "D", out _);
+            return parts.Length == 2 && (parts[0] == "message" || parts[0] == "broadcast") && FriendsJson.IsUuid(parts[1]);
         }
         [Serializable] private sealed class ActionRequest { public string userId, entryId; }
     }

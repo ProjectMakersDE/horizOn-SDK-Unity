@@ -60,12 +60,12 @@ namespace PM.horizOn.Cloud.Tests
         private static string Snapshot(bool after = false) =>
             "{\"userId\":\"" + User + "\",\"cursor\":\"" + (after ? "after" : "before") + "\",\"revision\":" + (after ? 2 : 1) + ",\"broadcastRevision\":1,\"serverTime\":\"2026-10-16T00:00:0" + (after ? 2 : 1) + "Z\",\"pollAfterSeconds\":120,\"unchanged\":false,\"entries\":["
             + Entry(Reward, after) + "," + Entry(Information, values: false) + "," + Entry(Claimed, true) + "],\"counts\":{},\"limits\":{\"targeted\":10,\"broadcasts\":10}}";
-        private async Task Refresh()
+        private async Task Refresh(string body = null)
         {
             var incoming = _listener.GetContextAsync(); var pending = Invoke("Refresh");
             var context = await Timeout(incoming);
             Assert.That(context.Request.Headers["Authorization"], Is.EqualTo("Bearer fixture-session"));
-            await Respond(context, Snapshot()); await pending;
+            await Respond(context, body ?? Snapshot()); await pending;
             Assert.That(InboxManager.Instance.CurrentInbox, Is.Not.Null);
         }
         private async Task NoRequest(Task action)
@@ -145,14 +145,26 @@ namespace PM.horizOn.Cloud.Tests
             await ConfirmClaim(await Timeout(incoming), Reward, true); await pending;
             Assert.That(InboxManager.Instance.LastErrorCode, Is.Null);
         }
-        private static async Task ConfirmClaim(HttpListenerContext context, string saved, bool replayed)
+        [Test] public async Task ItemOnlyReturnPersistsItsOriginalIntentBeforeTheActualSampleClaims()
+        {
+            string item = Entry(Reward, values: false).Replace("\"values\":[]", "\"values\":[],\"itemReturn\":{\"listingId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}")
+                .Replace("\"type\":\"gift\"", "\"type\":\"marketplace\"").Replace("\"reference\":\"owned\"", "\"reference\":\"" + User + "\"")
+                .Replace("\"textKey\":\"gift.ready\"", "\"textKey\":\"marketplace.item_return\"");
+            await Refresh(Snapshot().Replace(Entry(Reward), item));
+            string saved = null; var incoming = _listener.GetContextAsync();
+            var pending = Invoke("ClaimNewEntry", Reward, new Func<string, bool>(id => { saved = id; return true; }));
+            await ConfirmClaim(await Timeout(incoming), saved, false, true); await pending;
+            Assert.That(InboxManager.Instance.LastErrorCode, Is.Null);
+        }
+        private static async Task ConfirmClaim(HttpListenerContext context, string saved, bool replayed, bool returnedItem = false)
         {
             Assert.That(saved, Is.EqualTo(Reward)); Assert.That(context.Request.RawUrl, Is.EqualTo("/api/v1/app/inbox/claim"));
             var body = await new StreamReader(context.Request.InputStream).ReadToEndAsync();
             Assert.That(body, Does.Contain("\"entryId\":\"" + Reward + "\""));
             Assert.That(context.Request.Headers["Authorization"], Is.EqualTo("Bearer fixture-session"));
             string values = "{\"userId\":\"" + User + "\",\"definitionVersion\":1,\"revision\":1,\"day\":\"2026-10-16\",\"values\":[{\"key\":\"gold\",\"balance\":1,\"earnedToday\":1,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:02Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
-            await Respond(context, "{\"entryId\":\"" + Reward + "\",\"replayed\":" + (replayed ? "true" : "false") + ",\"inbox\":" + Snapshot(true) + ",\"playerValues\":" + values + "}");
+            await Respond(context, "{\"entryId\":\"" + Reward + "\",\"replayed\":" + (replayed ? "true" : "false") + ",\"inbox\":" + Snapshot(true) + ",\"playerValues\":" + values
+                + (returnedItem ? ",\"items\":[{\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}]" : "") + "}");
         }
         private static async Task<T> Timeout<T>(Task<T> task)
         { if (await Task.WhenAny(task, Task.Delay(5000)) != task) throw new TimeoutException(); return await task; }
