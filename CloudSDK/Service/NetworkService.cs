@@ -410,6 +410,12 @@ namespace PM.horizOn.Cloud.Service
                         { data = AchievementsJson.Unlock(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
                         { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatLimitsView)) { data = ChatJson.Limits(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatOpened)) { data = ChatJson.Opened(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatSynced)) { data = ChatJson.Synced(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatSent)) { data = ChatJson.Sent(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatOperation)) { data = ChatJson.Operation(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatReported)) { data = ChatJson.Reported(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(MyMatches)) { data = MatchesJson.Mine(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(MatchLimitsView)) { data = MatchesJson.LimitView(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(MatchPage)) { data = MatchesJson.Page(responseText) as TResponse; }
@@ -773,7 +779,8 @@ namespace PM.horizOn.Cloud.Service
             return BinaryNetworkResponse.Failure($"Max retry attempts ({maxAttempts}) exceeded");
         }
 
-        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
+        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(ChatLimitsView) || typeof(T) == typeof(ChatOpened) || typeof(T) == typeof(ChatSynced) || typeof(T) == typeof(ChatSent) || typeof(T) == typeof(ChatOperation) || typeof(T) == typeof(ChatReported)
+            || typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
             || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
             || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
             || typeof(T) == typeof(ValidatedRun) || typeof(T) == typeof(ValidatedSubmitResult) || typeof(T) == typeof(PlayerState) || typeof(T) == typeof(EvidenceUploadResult)
@@ -783,7 +790,7 @@ namespace PM.horizOn.Cloud.Service
             || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is ChatJsonRequest chat ? chat.Json : data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;

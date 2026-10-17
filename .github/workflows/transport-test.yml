@@ -28,7 +28,9 @@ jobs:
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
       - name: Check WebGL realtime bridge
-        run: node Tests~/WebGLRealtimeBridge.test.cjs
+        run: |
+          node Tests~/WebGLRealtimeBridge.test.cjs
+          node Tests~/WebGLChatStorage.test.cjs
 
   unity-editor-transport:
     runs-on: ubuntu-latest
@@ -56,6 +58,9 @@ jobs:
 
           mkdir -p .unity-ci-project/Assets/MatchesSample
           cp Samples~/Examples/Features/MatchesExample.cs Samples~/Examples/Features/MatchesSampleStore.cs .unity-ci-project/Assets/MatchesSample/
+
+          mkdir -p .unity-ci-project/Assets/ChatSample
+          cp Samples~/Examples/Features/ChatExample.cs .unity-ci-project/Assets/ChatSample/ChatExample.cs
 
       - name: Run actual Unity Editor transport tests
         id: unity-tests

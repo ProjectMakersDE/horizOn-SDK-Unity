@@ -1179,3 +1179,55 @@ original/result journal atomically and cannot erase a newer original reviewed by
 These are tested process-death recovery properties, not a power-loss/filesystem durability claim.
 WebGL mutations require game-owned durable browser storage; the sample fails closed without it.
 Local native/protocol evidence does not imply a deployed game, hosted SDK E2E or release.
+
+
+### Chat and device history
+
+`ChatManager.Instance` provides `GetLimits`, `OpenChannel`, `SyncChannel`,
+`SendMessage`, `GetOperation`, and `ReportMessage`. Hosted Chat is available in
+all plans including Free. simpleServer reports Chat/realtime as unsupported.
+
+`WatchChannel(userId, channelId)` listens to metadata over realtime and fetches
+only missing message bodies over authorized HTTP. `GetFeed(channelId)` returns
+the current server window: up to20 messages in project chat, up to15 messages
+for30seconds in private/group chat. Offline/revoked subscriptions hide this
+window. There is no polling fallback for Chat. `SyncChannel` is an explicit
+REST snapshot and also works without a connected socket. Pass its complete
+previous result to request only missing messages.
+
+Successfully received or confirmed sent messages are copied to device history.
+`ReadLocalHistory(channelId, before: null, limit: 50)` returns the newest delivered
+messages first and an opaque next-page cursor (maximum100 per page). Server
+expiry, epoch changes, logout and permission changes do not erase these copies.
+`ClearLocalHistory(channelId)` and `ClearAllLocalHistory()` are explicit local
+deletions. Files are isolated by API key and player beneath
+`Application.persistentDataPath/horizon/chat`, with hashed directories and no
+stored access token or plaintext API key. No hidden history count limit applies.
+
+`GetServerTime()` advances the latest accepted server timestamp with a monotonic clock
+for a new send. It returns null until a successful Chat response.
+
+`FeedChanged`, `LocalHistoryChanged`, `LocalHistoryFailed` and `ChannelError`
+separate live state from local persistence. An I/O error leaves a successful
+server send successful and never resends it. Corrupt/partial local records are
+reported, never silently overwritten. Native history uses an append log and a
+small ID/hash/offset index, loaded once per channel and extended by new records.
+Pagination is local delivery order, not a global original-timestamp sort.
+
+Every write is sent once, including429/503. Preserve the original operation ID,
+server-clock issuedAt and text to investigate an uncertain send. A missing
+`GetOperation` result does not prove the server never accepted it and never
+triggers an automatic new send. See `Samples~/Examples/Features/ChatExample.cs`.
+
+Local native checks include a separate-process archive restart, actual HTTP
+requests, and a real metadata WebSocket. Start
+`python3 Tests~/ChatSocketFixture/mock_chat_server.py` before the Editor run and
+set `HORIZON_CHAT_FIXTURE_URL=http://127.0.0.1:20124` and
+`HORIZON_CHAT_FIXTURE_WS=ws://127.0.0.1:20125`. The fixture exits after the test.
+These checks do not constitute a hosted deployment or a browser-device test.
+
+WebGL flushes local changes to the browser IndexedDB filesystem explicitly and
+coalesces writes during an in-flight flush. Browser storage errors are reported
+through `LocalHistoryFailed`; they do not resend messages. Browser storage is
+subject to browser quotas and user deletion. The flush bridge has automated
+contract tests; native tests do not prove an exported browser game.
