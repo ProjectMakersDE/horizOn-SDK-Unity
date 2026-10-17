@@ -1346,3 +1346,5 @@ Minimal Match/final-revision→run-ID pairs stay in the current authenticated
 context even with201 distinct pending sources; another read cannot evict a
 still-protected source. Auth changes clear these local bindings. Their memory
 can grow across reads; no result/item/state history or server record is added.
+
+Group revision/time fences likewise retain only minimal IDs and watermarks until auth changes, including257 retained groups after policy is lowered to1. They hold no copied group content.

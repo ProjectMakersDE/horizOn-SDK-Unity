@@ -34,11 +34,12 @@ namespace PM.horizOn.Cloud.Tests
         [Test]public async Task ConfiguredDefaultMemberPageRestartsAfterSizeChangeAndRequiresCurrentAuthLimits()
         {
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
-            var incoming=_listener.GetContextAsync();var task=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail());await Timeout(task);
+            var incoming=_listener.GetContextAsync();var task=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail().Replace("\"memberCount\":21","\"memberCount\":51"));await Timeout(task);
             // The selected detail contains no authoritative operator limits.
             await Timeout((Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false}));
             await Reply(Manager.GetGroups(User),Mine(1).Replace("\"memberPageSize\":50","\"memberPageSize\":51"));
-            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false});var c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("51"));Assert.That(c.Request.QueryString["afterUserId"],Is.Null);await Respond(c,Members(cursor:User));await Timeout(task);
+            string row=JsonFragments.Array(JsonFragments.Object(Members())["members"])[0];string page51=Members(cursor:User).Replace("["+row+"]","["+string.Join(",",Enumerable.Range(0,51).Select(i=>i==50?row:row.Replace(User,"00000000-0000-4000-8000-"+(960+i).ToString("D12")).Replace("\"role\":\"leader\"","\"role\":\"member\"")))+"]");
+            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false});var c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("51"));Assert.That(c.Request.QueryString["afterUserId"],Is.Null);await Respond(c,page51);await Timeout(task);
             await Reply(Manager.GetGroups(User),Mine(1).Replace("\"memberPageSize\":50","\"memberPageSize\":1"));
             incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{true});c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("1"));Assert.That(c.Request.QueryString["afterUserId"],Is.Null,"Old51 cursor cannot continue a new1-sized traversal");await Respond(c,Members(cursor:User));await Timeout(task);
             incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{true});c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("1"));Assert.That(c.Request.QueryString["afterUserId"],Is.EqualTo(User));await Respond(c,Members().Replace("\"userId\":\""+User+"\"","\"userId\":\""+Peer+"\""));await Timeout(task);
@@ -46,6 +47,16 @@ namespace PM.horizOn.Cloud.Tests
             NetworkService.Instance.SetSessionToken("other");NetworkService.Instance.SetSessionToken("session-"+User);
             await Timeout((Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false}));
             var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected),"Old auth-context limits never cause another request");
+        }
+
+        [Test]public async Task Retained257GroupRevisionFloorsSurviveLoweredPolicyUntilAuthChanges()
+        {
+            string retained="["+string.Join(",",Enumerable.Range(0,257).Select(i=>Detail(3,id:ConfigGroupId(i))))+"]";
+            var high=await Reply(Manager.GetGroups(User),Mine(1,groups:retained).Replace("\"maxGroupsPerPlayer\":1","\"maxGroupsPerPlayer\":257"));Assert.That(high.IsSuccess,Is.True);Assert.That(high.Data.groups.Length,Is.EqualTo(257));
+            var lower=await Reply(Manager.GetGroups(User),Mine(2,groups:retained));Assert.That(lower.IsSuccess,Is.True);Assert.That(lower.Data.limits.maxGroupsPerPlayer,Is.EqualTo(1));Assert.That(lower.Data.groups.Length,Is.EqualTo(257));
+            var stale=await Reply(Manager.GetGroup(User,ConfigGroupId(0)),Detail(2,id:ConfigGroupId(0)));Assert.That(stale.IsSuccess,Is.False);Assert.That(stale.ErrorCode,Is.EqualTo("STALE_RESPONSE"));Assert.That(Manager.CurrentGroups.groups[0].revision,Is.EqualTo(3));
+            NetworkService.Instance.SetSessionToken("other");NetworkService.Instance.SetSessionToken("session-"+User);Assert.That(Manager.CurrentGroups,Is.Null);
+            var reset=await Reply(Manager.GetGroup(User,ConfigGroupId(0)),Detail(2,id:ConfigGroupId(0)));Assert.That(reset.IsSuccess,Is.True);
         }
 
         static string ConfigGroupId(int i)=>"20000000-0000-4000-8000-"+i.ToString("D12");

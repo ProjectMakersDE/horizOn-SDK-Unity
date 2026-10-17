@@ -119,8 +119,7 @@ namespace PM.horizOn.Cloud.Manager
             if(_revisions.TryGetValue(key,out var old)&&revision<old||_times.TryGetValue(clockKey,out var previous)&&millis<previous)return"STALE_RESPONSE";
             _revisions[key]=revision;_times[clockKey]=millis;
             if(data is MyGroupsView mine)foreach(var nested in mine.groups){var error=Validate(nested,user,nested.id,null);if(error!=null)return error;}
-            // Keep bounded historical fences; no data/page cache or background enumeration is created.
-            if(_revisions.Count>64){string evict=null;foreach(var id in _revisions.Keys)if(id!="player"&&id!=key){evict=id;break;}if(evict!=null){_revisions.Remove(evict);_times.Remove(evict+":updated");_times.Remove(evict+":server");}}
+            // Minimal revision/time fences remain for the current auth context.
             return null;
         }
         private void RestoreWatermarks(Dictionary<string,long> revisions,Dictionary<string,long> times){_revisions.Clear();_times.Clear();foreach(var x in revisions)_revisions.Add(x.Key,x.Value);foreach(var x in times)_times.Add(x.Key,x.Value);}
