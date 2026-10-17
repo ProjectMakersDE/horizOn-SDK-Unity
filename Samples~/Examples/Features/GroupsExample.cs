@@ -17,7 +17,7 @@ namespace PM.horizOn.Cloud.Examples.Features
     public class GroupsExample:MonoBehaviour
     {
         [SerializeField] private string projectId;
-        private int _generation,_reviewSelection,_pageSelection,_reviewGeneration;private GroupView _reviewed;private GroupMembersView _page;
+        private int _generation,_reviewSelection,_pageSelection,_reviewGeneration,_pageLimit;private GroupView _reviewed;private GroupMembersView _page;
         private NetworkService _reviewNetwork;private long _reviewContext;private string _reviewUser,_reviewProject;
         private string User()=>isActiveAndEnabled&&UserManager.Instance.CurrentUser?.IsValid()==true&&UserManager.Instance.CurrentUser.AccessToken==HorizonApp.Network.GetSessionToken()?UserManager.Instance.CurrentUser.UserId:null;
         private bool Current(string user,NetworkService network,long context,int generation)=>User()==user&&ReferenceEquals(network,HorizonApp.Network)&&context==network.ContextGeneration&&generation==_generation;
@@ -33,13 +33,23 @@ namespace PM.horizOn.Cloud.Examples.Features
             var r=await GroupsManager.Instance.GetGroup(user,groupId);if(!Current(user,n,c,g)||selection!=_reviewSelection||project!=projectId)return;
             if(r.IsSuccess)SetReviewed(r.Data,user,n,c,g);else HorizonApp.Log.Warning(r.ErrorCode);
         }
-        public async Task ReadOneMemberPage(bool next=false)
+        public Task ReadOneMemberPage(bool next=false)
         {
-            var user=User();if(user==null||!ReviewedCurrent()||next&&(_page==null||_page.nextAfterUserId==null))return;
+            var user=User();var own=GroupsManager.Instance.CurrentGroups;
+            if(user==null||own?.userId!=user||own.limits==null||own.limits.memberPageSize<1||own.limits.memberPageSize==int.MaxValue){_page=null;_pageSelection++;HorizonApp.Log.Warning("Read current own Groups limits before member pages");return Task.CompletedTask;}
+            return ReadOneMemberPageWithLimit(own.limits.memberPageSize,next);
+        }
+        public async Task ReadOneMemberPageWithLimit(int limit,bool next=false)
+        {
+            var user=User();if(user==null||!ReviewedCurrent())return;
+            // A differently sized page starts a new sample traversal. Explicit limits
+            // stay unchanged on the wire; never merge an old cursor into that request.
+            if(next&&_page!=null&&_pageLimit!=limit){next=false;_page=null;_pageSelection++;HorizonApp.Log.Info("Member page size changed; restarting from the first page");}
+            if(next&&(_page==null||_page.nextAfterUserId==null))return;
             string group=_reviewed.id,cursor=next?_page.nextAfterUserId:null;long revision=_reviewed.revision;int selection=++_pageSelection,reviewSelection=_reviewSelection;_page=null;
-            var n=HorizonApp.Network;long c=n.ContextGeneration;int g=_generation;var r=await GroupsManager.Instance.GetMembers(user,group,cursor,50);
+            var n=HorizonApp.Network;long c=n.ContextGeneration;int g=_generation;var r=await GroupsManager.Instance.GetMembers(user,group,cursor,limit);
             if(!Current(user,n,c,g)||!ReviewedCurrent()||_reviewed?.id!=group||selection!=_pageSelection||reviewSelection!=_reviewSelection)return;
-            if(!r.IsSuccess||r.Data.revision!=revision){HorizonApp.Log.Warning("Review the group and explicitly restart pages; "+r.ErrorCode);return;}_page=r.Data;
+            if(!r.IsSuccess||r.Data.revision!=revision){HorizonApp.Log.Warning("Review the group and explicitly restart pages; "+r.ErrorCode);return;}_page=r.Data;_pageLimit=limit;
         }
         public async Task SaveCreateAfterReview(string name,string description,string joinMode,GroupJsonData data)
         {
@@ -115,7 +125,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         }
         public void AcknowledgeSavedSuccess(){var user=User();if(user!=null)new GroupsSampleStore(Application.persistentDataPath,projectId,user).AcknowledgeSavedSuccess();}
         private static bool Uuid(string value)=>value!=null&&Regex.IsMatch(value,@"\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z");
-        private static bool MetadataValid(string name,string description,string mode,GroupJsonData data)=>!string.IsNullOrWhiteSpace(name)&&Encoding.UTF8.GetByteCount(name)<=120&&description!=null&&Encoding.UTF8.GetByteCount(description)<=1024&&new[]{"open","request","invite"}.Contains(mode)&&data!=null;
+        private static bool MetadataValid(string name,string description,string mode,GroupJsonData data)=>!string.IsNullOrWhiteSpace(name)&&description!=null&&new[]{"open","request","invite"}.Contains(mode)&&data!=null;
         private void OnDisable(){_generation++;_reviewSelection++;_pageSelection++;_reviewed=null;_page=null;}
     }
 }

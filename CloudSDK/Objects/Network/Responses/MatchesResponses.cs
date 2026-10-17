@@ -2,7 +2,7 @@ using System;
 
 namespace PM.horizOn.Cloud.Objects.Network.Responses
 {
-    [Serializable] public class MatchLimits { public int activeMatches, stateBytes, retainedMatches, pendingInvites; }
+    [Serializable] public class MatchLimits { public const int MaxStateBytes = 14648 * 1024; public int activeMatches, stateBytes, retainedMatches, pendingInvites, settlementMatches, historyRetentionSeconds, rankedSettlementSeconds; }
     [Serializable] public class MatchCapabilities { public bool matches, matchesRanked, realtime; }
     [Serializable] public class MatchConfig { public long revision; public string rankedLeaderboardKey; }
     [Serializable] public class MatchLimitsView
@@ -30,10 +30,12 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public byte[] data;
         public MatchReport[] reports = Array.Empty<MatchReport>(); public bool notificationPending;
     }
+    [Serializable] public class MatchPendingResult { public string matchId, ownRankedRunId, expiresAt; public long finalStateRevision; }
     [Serializable] public class MyMatches
     {
         public string userId, serverTime; public long revision; public MatchLimits limits; public int pollAfterSeconds;
         public MatchSummary[] active = Array.Empty<MatchSummary>(), invites = Array.Empty<MatchSummary>(), recent = Array.Empty<MatchSummary>();
+        public MatchPendingResult[] pendingResults = Array.Empty<MatchPendingResult>();
     }
     [Serializable] public class MatchPage
     {

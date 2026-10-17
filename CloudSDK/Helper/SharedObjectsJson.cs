@@ -42,8 +42,8 @@ namespace PM.horizOn.Cloud.Helper
         private static SharedLimits Limits(string raw)
         {
             var f = Fields(raw, "collections,storageBytes,objectBytes"); long storage = Number(f["storageBytes"]);
-            if (storage < 1048576 || storage > 2147483648L) throw new FormatException("Shared storage bound");
-            return new SharedLimits { collections = Bound(f["collections"], 1, 100), storageBytes = storage, objectBytes = Bound(f["objectBytes"], 1, 65536) };
+            if (storage < 1048576 || storage > 9007199254740991L) throw new FormatException("Shared storage bound");
+            return new SharedLimits { collections = Bound(f["collections"], 1, int.MaxValue), storageBytes = storage, objectBytes = Bound(f["objectBytes"], 1, 1048576) };
         }
         private static SharedDefinition Definition(string raw)
         {
@@ -51,7 +51,7 @@ namespace PM.horizOn.Cloud.Helper
             string name = Text(f["name"], 120); if (string.IsNullOrWhiteSpace(name)) throw new FormatException("Shared name invalid");
             long? ttl = f["ttlSeconds"] == "null" ? (long?)null : Number(f["ttlSeconds"]);
             if (ttl.HasValue && (ttl < 60 || ttl > 2592000)) throw new FormatException("Shared TTL invalid");
-            var d = new SharedDefinition { key = Key(f["key"]), name = name, active = Boolean(f["active"]), readPolicy = Choice(f["readPolicy"], "owner", "friends", "group", "all", "dashboard"), writePolicy = Choice(f["writePolicy"], "owner", "group", "dashboard"), maxObjectBytes = Bound(f["maxObjectBytes"], 1, 65536), maxObjectsPerOwner = Bound(f["maxObjectsPerOwner"], 1, 100), ttlSeconds = ttl, searchFields = Rows(f["searchFields"], 3, SearchField, x => x.key), positionEnabled = Boolean(f["positionEnabled"]), used = Boolean(f["used"]), revision = Number(f["revision"]) };
+            var d = new SharedDefinition { key = Key(f["key"]), name = name, active = Boolean(f["active"]), readPolicy = Choice(f["readPolicy"], "owner", "friends", "group", "all", "dashboard"), writePolicy = Choice(f["writePolicy"], "owner", "group", "dashboard"), maxObjectBytes = Bound(f["maxObjectBytes"], 1, 1048576), maxObjectsPerOwner = Bound(f["maxObjectsPerOwner"], 1, int.MaxValue), ttlSeconds = ttl, searchFields = Rows(f["searchFields"], 3, SearchField, x => x.key), positionEnabled = Boolean(f["positionEnabled"]), used = Boolean(f["used"]), revision = Number(f["revision"]) };
             if (d.readPolicy == "dashboard" && d.writePolicy != "dashboard") throw new FormatException("Shared policy invalid");
             return d;
         }
@@ -72,8 +72,8 @@ namespace PM.horizOn.Cloud.Helper
         internal static SharedObject Object(string raw)
         {
             var f = Fields(raw, "id,collection,ownerId,groupId,revision,dataBase64,search,position,createdAt,updatedAt,expiresAt");
-            string encoded = Text(f["dataBase64"], 87384); byte[] bytes = Convert.FromBase64String(encoded);
-            if (bytes.Length > 65536 || Convert.ToBase64String(bytes) != encoded) throw new FormatException("Shared Base64 invalid");
+            string encoded = Text(f["dataBase64"], 1398104); byte[] bytes = Convert.FromBase64String(encoded);
+            if (bytes.Length > 1048576 || Convert.ToBase64String(bytes) != encoded) throw new FormatException("Shared Base64 invalid");
             var result = new SharedObject { id = Uuid(f["id"]), collection = Key(f["collection"]), ownerId = Uuid(f["ownerId"]), groupId = Nullable(f["groupId"], Uuid), revision = Number(f["revision"]), dataBase64 = encoded, data = bytes, search = Search(f["search"]), position = Position(f["position"]), createdAt = Time(f["createdAt"]), updatedAt = Time(f["updatedAt"]), expiresAt = Nullable(f["expiresAt"], Time) };
             if (result.revision < 1 || Millis(result.updatedAt) < Millis(result.createdAt) || result.expiresAt != null && Millis(result.expiresAt) <= Millis(result.createdAt)) throw new FormatException("Shared object chronology invalid");
             return result;
@@ -86,7 +86,7 @@ namespace PM.horizOn.Cloud.Helper
         internal static SharedUsage Usage(string raw)
         {
             var f = Fields(raw, "userId,collection,revision,count,limits,pollAfterSeconds,serverTime");
-            return new SharedUsage { userId = Uuid(f["userId"]), collection = Key(f["collection"]), revision = Number(f["revision"]), count = Bound(f["count"], 0, 100), limits = Limits(f["limits"]), pollAfterSeconds = Poll(f["pollAfterSeconds"]), serverTime = Time(f["serverTime"]) };
+            return new SharedUsage { userId = Uuid(f["userId"]), collection = Key(f["collection"]), revision = Number(f["revision"]), count = Bound(f["count"], 0, int.MaxValue), limits = Limits(f["limits"]), pollAfterSeconds = Poll(f["pollAfterSeconds"]), serverTime = Time(f["serverTime"]) };
         }
         internal static SharedObjectRead Read(string raw)
         {
@@ -130,7 +130,7 @@ namespace PM.horizOn.Cloud.Helper
         }
         internal static string InputJson(string user, SharedObjectInput value, string group, bool create)
         {
-            if (value == null || value.data == null || value.data.Length > 65536 || group != null && !FriendsJson.IsUuid(group)) throw new FormatException("Shared input invalid");
+            if (value == null || value.data == null || value.data.Length > 1048576 || group != null && !FriendsJson.IsUuid(group)) throw new FormatException("Shared input invalid");
             return "{\"userId\":" + ItemsJson.Quote(user) + ",\"dataBase64\":" + ItemsJson.Quote(Convert.ToBase64String(value.data)) + ",\"search\":" + SearchJson(value.search) + ",\"position\":" + PositionJson(value.position) + (create && group != null ? ",\"groupId\":" + ItemsJson.Quote(group) : "") + "}";
         }
         internal static string QueryJson(string user, SharedQuery q)

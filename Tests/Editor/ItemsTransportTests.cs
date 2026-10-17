@@ -392,28 +392,28 @@ namespace PM.horizOn.Cloud.Tests
             }
             finally { CleanupJournal(); }
         }
-        private const string ConfiguredLimits = "{\"catalog\":6000,\"inventory\":250,\"receipts\":80}";
+        private const string ConfiguredLimits = "{\"catalog\":6000,\"inventory\":3000,\"receipts\":80}";
         private static string ConfiguredItemId(int index) => "10000000-0000-4000-8000-" + index.ToString("D12", System.Globalization.CultureInfo.InvariantCulture);
         private static string ConfiguredInventory(long revision, string limits, bool selectedEquipped = false)
         {
-            string rows = string.Join(",", Enumerable.Range(0, 201).Select(i => Instance(selectedEquipped && i == 200).Replace(Item, ConfiguredItemId(i))));
+            string rows = string.Join(",", Enumerable.Range(0, 2051).Select(i => Instance(selectedEquipped && i == 200).Replace(Item, ConfiguredItemId(i))));
             return Inventory(revision, "[" + rows + "]").Replace(Limits, limits);
         }
         [Test] public async Task ConfiguredQuotasAndRetainedInventorySurviveLowering()
         {
             var incoming = _listener.GetContextAsync(); var loaded = Manager.GetInventory(User);
             await Respond(await Timeout(incoming), ConfiguredInventory(1, ConfiguredLimits)); var high = await loaded;
-            Assert.That(high.IsSuccess, Is.True); Assert.That(high.Data.instances.Length, Is.EqualTo(201));
-            Assert.That(high.Data.limits.catalog, Is.EqualTo(6000)); Assert.That(high.Data.limits.inventory, Is.EqualTo(250)); Assert.That(high.Data.limits.receipts, Is.EqualTo(80));
+            Assert.That(high.IsSuccess, Is.True); Assert.That(high.Data.instances.Length, Is.EqualTo(2051));
+            Assert.That(high.Data.limits.catalog, Is.EqualTo(6000)); Assert.That(high.Data.limits.inventory, Is.EqualTo(3000)); Assert.That(high.Data.limits.receipts, Is.EqualTo(80));
             incoming = _listener.GetContextAsync(); loaded = Manager.GetInventory(User);
             await Respond(await Timeout(incoming), ConfiguredInventory(2, Limits)); var lower = await loaded;
-            Assert.That(lower.IsSuccess, Is.True); Assert.That(lower.Data.instances.Length, Is.EqualTo(201)); Assert.That(lower.Data.limits.inventory, Is.EqualTo(10));
-            Assert.That(Manager.CurrentInventory.instances.Length, Is.EqualTo(201), "Lowered quota must not erase retained instances");
+            Assert.That(lower.IsSuccess, Is.True); Assert.That(lower.Data.instances.Length, Is.EqualTo(2051)); Assert.That(lower.Data.limits.inventory, Is.EqualTo(10));
+            Assert.That(Manager.CurrentInventory.instances.Length, Is.EqualTo(2051), "Lowered quota must not erase retained instances");
             incoming = _listener.GetContextAsync(); var equipped = Manager.SetEquipped(User, ConfiguredItemId(200), 2, true); var context = await Timeout(incoming);
             string body = await new StreamReader(context.Request.InputStream).ReadToEndAsync();
             Assert.That(body, Does.Contain("\"expectedRevision\":2").And.Contain(ConfiguredItemId(200)).And.Contain("\"equipped\":true"));
             await Respond(context, ConfiguredInventory(3, Limits, true)); var changed = await equipped;
-            Assert.That(changed.IsSuccess, Is.True); Assert.That(changed.Data.instances.Length, Is.EqualTo(201)); Assert.That(changed.Data.instances[200].equipped, Is.True);
+            Assert.That(changed.IsSuccess, Is.True); Assert.That(changed.Data.instances.Length, Is.EqualTo(2051)); Assert.That(changed.Data.instances[200].equipped, Is.True);
         }
         [Test] public async Task ConfiguredCatalogTotalAndOriginalPageRevisionSurviveLowering()
         {

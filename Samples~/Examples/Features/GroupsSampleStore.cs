@@ -26,7 +26,8 @@ namespace PM.horizOn.Cloud.Examples.Features
         public bool HasSuccess=>File.Exists(_result)||File.Exists(_legacy+".success");
         private Envelope ReadEnvelope(string path)
         {
-            string raw=File.ReadAllText(path,Encoding.UTF8);if(Encoding.UTF8.GetByteCount(raw)>32768)throw new IOException("Saved Groups intent exceeds limit");
+            if(new FileInfo(path).Length>64*1024*1024)throw new IOException("Saved Groups intent exceeds transport frame");
+            string raw=File.ReadAllText(path,Encoding.UTF8);if(Encoding.UTF8.GetByteCount(raw)>64*1024*1024)throw new IOException("Saved Groups intent exceeds transport frame");
             var e=JsonUtility.FromJson<Envelope>(raw);if(e?.payload==null||e.sha256!=Hash(e.payload))throw new IOException("Unknown/corrupt Groups intent; reconcile without replacing it");
             ParseIntent(e);return e;
         }
@@ -161,7 +162,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         }
         private static void WriteNew(string path,string json)
         {
-            byte[] bytes=Encoding.UTF8.GetBytes(json);if(bytes.Length>32768)throw new IOException("Groups intent exceeds limit");
+            byte[] bytes=Encoding.UTF8.GetBytes(json);if(bytes.Length>64*1024*1024)throw new IOException("Groups intent exceeds limit");
             using(var f=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None)){f.Write(bytes,0,bytes.Length);f.Flush(true);}
             if(File.ReadAllText(path,Encoding.UTF8)!=json)throw new IOException("Groups storage readback failed");
         }

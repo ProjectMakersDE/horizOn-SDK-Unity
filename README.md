@@ -902,7 +902,7 @@ Use `InboxManager.Instance.GetInbox(userId, since: null)`, `MarkRead(userId, ent
 
 For known system messages, `entry.TryGetSource(out source)` exposes typed Friends, Groups, Match and Market references for navigation. The referenced feature API owns its current state and actions. Custom/legacy messages still expose their original type, reference and parameters. `entry.TryGetFreeText(out text)` returns the separate plain text form; disable rich text/markup in your UI. Other entries use `textKey` and localization parameters. There is no trusted publication route in the client SDK.
 
-`CurrentInbox` returns a defensive copy. Unchanged HTTP snapshots keep cached entries and update polling metadata. Changed snapshots replace the entire cache, including removals. One active refresh and one coalesced follow-up preserve expiry ordering even when revision numbers are equal. Mutations invalidate in-flight reads. Session/project/host and cache epochs reject late answers; revision/server-time watermarks survive ClearCache. A conditional response without cached entries triggers one bounded full reload. JSON payloads are limited to8MiB with bounded depth/arrays. Inbox payload contents are not copied into raw-response logs.
+`CurrentInbox` returns a defensive copy. Unchanged HTTP snapshots keep cached entries and update polling metadata. Changed snapshots replace the entire cache, including removals. One active refresh and one coalesced follow-up preserve expiry ordering even when revision numbers are equal. Mutations invalidate in-flight reads. Session/project/host and cache epochs reject late answers; revision/server-time watermarks survive ClearCache. A conditional response without cached entries triggers one bounded full reload. JSON payloads use the shared 32 MiB technical frame and typed field/depth validation; current operator quotas are not generic array ceilings. Inbox payload contents are not copied into raw-response logs.
 
 Claims reuse the original entry ID after an uncertain response. They never choose rewards or add returned amounts locally. The SDK accepts the complete authorized Player Values snapshot through `PlayerValuesManager.AcceptServerState(userId,state)` and rejects stale state rather than replacing a newer balance. INBOX_FULL/value-limit/UNCLAIMED_REWARD errors remain visible and do not destroy pending attachments. The sample exposes only explicit player-triggered claims.
 
@@ -977,7 +977,7 @@ Before a mutation, durably store its action, target UUID, original `expectedRevi
 | `CancelInvite`, `AcceptRequest`, `DeclineRequest` `(userId, groupId, expectedRevision, targetUserId, requestId)` | `GroupMutationView` |
 | `SetMemberRole(userId, groupId, expectedRevision, targetUserId, role)` | `GroupMutationView` |
 
-Data is `GroupJsonData.FromJson("{...}")`, an immutable original JSON object; `data.Json` preserves arbitrary keys, null and finite numeric lexemes, including integers beyond double precision. Omitted private `GroupView.data` and `myRole` remain null. Pass a received wrapper unchanged when editing other metadata. Creation defaults to `{}`; Update requires a data object. Name/description are UTF-8 bounded, and data is conservatively bounded to 2,048 original UTF-8 bytes/depth16. Nullable public profile names/cosmetic IDs remain null. All DTO/cache copies are separate except immutable JSON wrappers.
+Data is `GroupJsonData.FromJson("{...}")`, an immutable original JSON object; `data.Json` preserves arbitrary keys, null and finite numeric lexemes, including integers beyond double precision. Omitted private `GroupView.data` and `myRole` remain null. Pass a received wrapper unchanged when editing other metadata. Creation defaults to `{}`; Update requires a data object. Current name/description/data-byte/data-depth policies are Admin System Config values. Former 120/1024/2048-byte and depth 16 defaults are not decoder or write ceilings. The Groups decoder uses an iterative grammar with a separate 1024-level technical nesting bound; it preserves retained metadata after policy reductions. Nullable public profile names/cosmetic IDs remain null. All DTO/cache copies are separate except immutable JSON wrappers.
 
 All 16 mutations (including PUT) send the frozen original input exactly once, even after429/5xx/timeout. Keep the caller-reviewed revision and exact pending request UUID; no client group UUID or operation ID is generated for creation. On uncertainty, retain the durable original intent and explicitly read/reconcile before another decision. Never replace its revision/request ID automatically. Snapshot/member/pending replies carry their own revision; explicitly restart member pages when it changes. Lists retained after a plan downgrade stay readable; current server limits govern additions. Calls are serialized and host/project/session/generation/epoch fenced. `CurrentGroups` is a defensive own-player snapshot; `ClearCache()` preserves bounded revision/time history. Hosted `groups:{groupId}` carries optional invalidation metadata; explicitly read HTTP after invalidation/reconnect. simpleServer supports REST without hosted realtime.
 
@@ -1189,12 +1189,48 @@ and unknown responses remain unresolved. Lost leave/decline acknowledgement need
 
 The sample saves the full original ranked run ID/score/input log before VA submit. Conflicting
 replacement data, partial/corrupt/interrupted results and another live actor/process block sends.
-Complete interrupted results recover before HTTP. Explicit acknowledgement renames the entire
-original/result journal atomically and cannot erase a newer original reviewed by another actor.
+Complete interrupted results recover before HTTP. Explicit acknowledgement retires the proven original/result journal atomically and then removes only that new terminal directory. It cannot erase a newer original reviewed by another actor. Existing `*.acknowledged` archives are preserved; a crash between retirement and removal can leave a terminal `.completed` directory for game-owned cleanup. No new completed state archive is maintained.
 These are tested process-death recovery properties, not a power-loss/filesystem durability claim.
 WebGL mutations require game-owned durable browser storage; the sample fails closed without it.
 Local native/protocol evidence does not imply a deployed game, hosted SDK E2E or release.
 
+
+### Operator configuration and compact source references
+
+Friends' four limits and all eleven Group limits are positive Int32 values from
+current Admin System Config. Retained friends, requests, blocks, memberships,
+pending entries and inventory remain readable after lowering a quota; no old
+200/20/100/500/5/2048-element default truncates them. Legacy Friends `since` and
+Friends/Groups pending `createdAt` may be missing or null and remain null.
+Group limits additionally expose `maxPlayerInvitations`, `maxPlayerRequests`,
+`maxNameBytes`, `maxDescriptionBytes` and `maxDataDepth`; `memberPageSize` governs
+server page admission. The sample's `ReadOneMemberPageWithLimit(limit,next)` makes
+an explicit configured page possible; 50 remains a convenience default.
+
+Shared collection/storage/owner counts accept higher configured values. The
+independent opaque-byte contract is 1 MiB decoded per object and per query result,
+with explicit 50-row pages. Exact bytes survive a lower current quota. Sample
+journals admit the complete original payload before sending.
+
+Matches retain all seven limits: `activeMatches`, `stateBytes`, `retainedMatches`,
+`pendingInvites`, `settlementMatches`, `historyRetentionSeconds`,
+`rankedSettlementSeconds`; retained count/history seconds may be zero. The physical
+BSON/Jackson state envelope is 14,648 KiB, separate from current policy. Read lists
+are projected summaries plus `pendingResults` entries containing only `matchId`,
+`finalStateRevision`, nullable `ownRankedRunId`, `expiresAt`. After an explicit
+`ReadLedger`, `SaveRankedAfterPendingResultReview(matchId)` persists that original
+source for the existing retry lifecycle even when full detail expired. Known run
+IDs cannot be replaced by a different fresh response. No result/item reconstruction.
+The 32 MiB technical response/journal frame admits the maximum opaque Match state;
+it is not a claim that every possible unpaginated retained-list cardinality fits.
+Groups journals separately admit 64 MiB for nested original JSON escaping; Shared
+journals admit 2 MiB. The ordinary decoder retains its 24-level transport guard;
+Groups uses the explicit iterative 1024-level path. These bounds are technical,
+independent of System Config admission and database-storage accounting.
+
+Chat channels/sends/reports accept 0 through Int32.MaxValue. Its fixed 20/15-message
+projection and retention/operation protocols are unchanged; there is no App
+all-channel response multiplied by the account's configured channel quota.
 
 ### Chat and device history
 
@@ -1259,7 +1295,7 @@ method creates a player or polls automatically.
 
 The five operator quotas are exact positive Int32 values, including values above
 old tariff defaults. Current state keeps every retained listing/history reference
-even after a quota is lowered. The Marketplace decoder uses the existing 8 MiB
+even after a quota is lowered. The Marketplace decoder uses the shared 32 MiB
 JSON / 24-level transport frame without the generic 2,048-element guard. This is a
 transport limitation, not a database-size or product-quota claim. Original item
 properties, embedded NUL/Unicode and safe integers remain exact. Nullable fields
@@ -1300,3 +1336,19 @@ actor destruction during an uncertain send, original retries, GET-only recovery,
 and original escrow claim followed by discard/replay. The shared .NET source gate
 also kills real journal-owner processes at five persistence boundaries. These
 artificial local tests do not prove a hosted deployment or exported browser game.
+
+The Groups sample's `ReadOneMemberPage()` reads the current auth-bound
+`CurrentGroups.limits.memberPageSize`; missing limits require an explicit own-group
+refresh. A changed size restarts the sample traversal without its old cursor.
+`ReadOneMemberPageWithLimit(limit, next)` preserves the explicit wire parameter.
+
+Minimal Match/final-revision→run-ID pairs stay in the current authenticated
+context even with201 distinct pending sources; another read cannot evict a
+still-protected source. Auth changes clear these local bindings. Their memory
+can grow across reads; no result/item/state history or server record is added.
+
+Group revision/time fences likewise retain only minimal IDs and watermarks until auth changes, including257 retained groups after policy is lowered to1. They hold no copied group content.
+
+Minimal Match revision/time watermarks also survive more than512 retained entries until auth changes. Payload caches and polling-hint caches keep their existing small bounds.
+
+Groups responses aggregate independent BSON records and can duplicate a group in a mutation. A6MiB control-character name needs about36MiB JSON; the same mutation can exceed72MiB. Groups alone parses its already received body/fragments at their actual length, preserving strict field/grammar/depth checks. There is no derived32/96/192MiB aggregate product quota. Available engine/HTTP memory remains a technical client limit; a parse/transport failure must preserve the original for explicit recovery. Other feature frames and small payload caches are unchanged.

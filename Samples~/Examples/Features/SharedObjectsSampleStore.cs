@@ -50,7 +50,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         public static string Hash(string text) { using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(StrictUtf8.GetBytes(text))).Replace("-", "").ToLowerInvariant(); }
         public static Intent NewIntent(string project, string user, string action, string collection, string objectId, string groupId, long revision, SharedObjectInput input)
         {
-            if (action != "delete" && (input == null || input.data == null || input.data.Length > 65536 || input.search == null || input.search.Length > 3 || input.search.Any(s => s == null || s.value == null || s.value.type != SharedScalarType.Integer && s.value.type != SharedScalarType.String))) throw new ArgumentException("Bounded complete Shared Objects input required before journal encoding");
+            if (action != "delete" && (input == null || input.data == null || input.data.Length > 1048576 || input.search == null || input.search.Length > 3 || input.search.Any(s => s == null || s.value == null || s.value.type != SharedScalarType.Integer && s.value.type != SharedScalarType.String))) throw new ArgumentException("Bounded complete Shared Objects input required before journal encoding");
             return new Intent
             {
                 projectId = project.ToLowerInvariant(), userId = user.ToLowerInvariant(), action = action, collection = collection, objectId = objectId, groupId = groupId, revision = revision,
@@ -151,7 +151,7 @@ namespace PM.horizOn.Cloud.Examples.Features
             try
             {
                 var input = x.GetInput();
-                if (input.data.Length > 65536 || Convert.ToBase64String(input.data) != x.dataBase64 || input.search.Any(s => s.value.type == SharedScalarType.String && StrictUtf8.GetByteCount(s.value.stringValue) > 96)) throw new IOException("Shared Objects original bytes invalid");
+                if (input.data.Length > 1048576 || Convert.ToBase64String(input.data) != x.dataBase64 || input.search.Any(s => s.value.type == SharedScalarType.String && StrictUtf8.GetByteCount(s.value.stringValue) > 96)) throw new IOException("Shared Objects original bytes invalid");
             }
             catch (Exception e) when (e is FormatException || e is DecoderFallbackException || e is ArgumentNullException) { throw new IOException("Shared Objects original encoding invalid", e); }
         }
@@ -201,13 +201,13 @@ namespace PM.horizOn.Cloud.Examples.Features
         private void WithLock(Action action) { using (var gate = OpenGate()) { RecoverWritingResult(); action(); } }
         private static void WriteNew(string path, string raw)
         {
-            byte[] bytes = StrictUtf8.GetBytes(raw); if (bytes.Length > 262144) throw new IOException("Shared Objects journal exceeds bound");
+            byte[] bytes = StrictUtf8.GetBytes(raw); if (bytes.Length > 2097152) throw new IOException("Shared Objects journal exceeds bound");
             using (var f = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { f.Write(bytes, 0, bytes.Length); f.Flush(true); }
             if (DurableRead(path) != raw) throw new IOException("Shared Objects durable readback changed");
         }
         private static string DurableRead(string path)
         {
-            if (new FileInfo(path).Length > 262144) throw new IOException("Shared Objects journal exceeds bound");
+            if (new FileInfo(path).Length > 2097152) throw new IOException("Shared Objects journal exceeds bound");
             string raw = File.ReadAllText(path, StrictUtf8);
             using (var f = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) f.Flush(true);
             if (File.ReadAllText(path, StrictUtf8) != raw) throw new IOException("Shared Objects journal changed"); return raw;

@@ -34,7 +34,7 @@ namespace PM.horizOn.Cloud.Manager
         private async Task<GroupsResult<T>> Read<T>(string userId,string groupId,string suffix,string after,int limit)where T:class
         {
             if(!Begin(userId,out var identity,out var epoch))return Failure<T>(LastErrorCode);
-            if((typeof(T)!=typeof(MyGroupsView)&&!FriendsJson.IsUuid(groupId))||(after!=null&&!FriendsJson.IsUuid(after))||limit<1||limit>50)return Failure<T>("INVALID_PAGE");
+            if((typeof(T)!=typeof(MyGroupsView)&&!FriendsJson.IsUuid(groupId))||(after!=null&&!FriendsJson.IsUuid(after))||limit<1||limit==int.MaxValue)return Failure<T>("INVALID_PAGE");
             string path=Endpoint+(groupId==null?"":"/"+Uri.EscapeDataString(groupId))+suffix+"?userId="+Uri.EscapeDataString(userId);
             if(typeof(T)==typeof(GroupMembersView))path+="&limit="+limit.ToString(CultureInfo.InvariantCulture)+(after==null?"":"&afterUserId="+Uri.EscapeDataString(after));
             await _requests.WaitAsync();try{
@@ -60,7 +60,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             if(!Begin(user,out _,out _))return Task.FromResult(Failure<GroupMutationView>(LastErrorCode));
             if(!GroupsJson.Revision(revision))return Task.FromResult(Failure<GroupMutationView>("INVALID_REVISION"));
-            if(group!=null&&!FriendsJson.IsUuid(group)||string.IsNullOrWhiteSpace(name)||Encoding.UTF8.GetByteCount(name)>120||description==null||Encoding.UTF8.GetByteCount(description)>1024||Array.IndexOf(new[]{"open","request","invite"},mode)<0||data==null)return Task.FromResult(Failure<GroupMutationView>("INVALID_GROUP"));
+            if(group!=null&&!FriendsJson.IsUuid(group)||string.IsNullOrWhiteSpace(name)||description==null||Array.IndexOf(new[]{"open","request","invite"},mode)<0||data==null)return Task.FromResult(Failure<GroupMutationView>("INVALID_GROUP"));
             string json="{\"userId\":"+GroupsJson.Quote(user)+",\""+(group==null?"expectedPlayerRevision":"expectedRevision")+"\":"+revision.ToString(CultureInfo.InvariantCulture)+",\"name\":"+GroupsJson.Quote(name)+",\"description\":"+GroupsJson.Quote(description)+",\"joinMode\":"+GroupsJson.Quote(mode)+",\"data\":"+data.Json+"}";
             return Write(user,group,"",new GroupsJsonRequest(json),group!=null);
         }
@@ -119,8 +119,7 @@ namespace PM.horizOn.Cloud.Manager
             if(_revisions.TryGetValue(key,out var old)&&revision<old||_times.TryGetValue(clockKey,out var previous)&&millis<previous)return"STALE_RESPONSE";
             _revisions[key]=revision;_times[clockKey]=millis;
             if(data is MyGroupsView mine)foreach(var nested in mine.groups){var error=Validate(nested,user,nested.id,null);if(error!=null)return error;}
-            // Keep bounded historical fences; no data/page cache or background enumeration is created.
-            if(_revisions.Count>64){string evict=null;foreach(var id in _revisions.Keys)if(id!="player"&&id!=key){evict=id;break;}if(evict!=null){_revisions.Remove(evict);_times.Remove(evict+":updated");_times.Remove(evict+":server");}}
+            // Minimal revision/time fences remain for the current auth context.
             return null;
         }
         private void RestoreWatermarks(Dictionary<string,long> revisions,Dictionary<string,long> times){_revisions.Clear();_times.Clear();foreach(var x in revisions)_revisions.Add(x.Key,x.Value);foreach(var x in times)_times.Add(x.Key,x.Value);}

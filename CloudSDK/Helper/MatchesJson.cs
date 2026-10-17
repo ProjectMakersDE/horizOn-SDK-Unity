@@ -10,10 +10,11 @@ namespace PM.horizOn.Cloud.Helper
     /// <summary>Original JSON lexemes and canonical opaque bytes; never project game state through floats or Unity JSON.</summary>
     internal static class MatchesJson
     {
+        internal const int TransportBytes = 32 * 1024 * 1024; // Technical frame, separate from current System Config and unpaged list cardinality.
         private const string SummaryFields = "id,name,revision,creatorId,capacity,visibility,strength,status,participantIds,invitedIds,forfeitedIds,currentPlayerId,turnDeadline,createdAt,startedAt,finishedAt,purgeAt,finalStateRevision,hasDisagreement,ranked,timeoutDue";
         private static Dictionary<string, string> Fields(string raw, string names)
         {
-            var f = JsonFragments.Object(raw); var required = names.Split(',');
+            var f = JsonFragments.Object(raw, maxBytes: TransportBytes); var required = names.Split(',');
             if (f.Count != required.Length || required.Any(n => !f.ContainsKey(n))) throw new FormatException("Match fields invalid");
             return f;
         }
@@ -50,7 +51,7 @@ namespace PM.horizOn.Cloud.Helper
         { string s = Text(raw, 16384); if (s.Length == 0) throw new FormatException("Match cursor empty"); return s; }
         private static T[] Rows<T>(string raw, int max, Func<string, T> parse, Func<T, string> identity)
         {
-            var a = JsonFragments.Array(raw); if (a.Count > max) throw new FormatException("Match rows bound");
+            var a = JsonFragments.Array(raw, maxBytes: TransportBytes); if (a.Count > max) throw new FormatException("Match rows bound");
             var result = a.Select(parse).ToArray();
             if (result.Select(identity).Distinct(StringComparer.Ordinal).Count() != result.Length) throw new FormatException("Match duplicate identity");
             return result;
@@ -65,8 +66,8 @@ namespace PM.horizOn.Cloud.Helper
         }
         private static MatchLimits Limits(string raw)
         {
-            var f = Fields(raw, "activeMatches,stateBytes,retainedMatches,pendingInvites");
-            return new MatchLimits { activeMatches = Bound(f["activeMatches"], 1, 10), stateBytes = Bound(f["stateBytes"], 1024, 8192), retainedMatches = Bound(f["retainedMatches"], 1, 100), pendingInvites = Bound(f["pendingInvites"], 1, 20) };
+            var f = Fields(raw, "activeMatches,stateBytes,retainedMatches,pendingInvites,settlementMatches,historyRetentionSeconds,rankedSettlementSeconds");
+            return new MatchLimits { activeMatches = Bound(f["activeMatches"], 1, int.MaxValue), stateBytes = Bound(f["stateBytes"], 1, MatchLimits.MaxStateBytes), retainedMatches = Bound(f["retainedMatches"], 0, int.MaxValue), pendingInvites = Bound(f["pendingInvites"], 1, int.MaxValue), settlementMatches = Bound(f["settlementMatches"], 1, int.MaxValue), historyRetentionSeconds = Bound(f["historyRetentionSeconds"], 0, int.MaxValue), rankedSettlementSeconds = Bound(f["rankedSettlementSeconds"], 1, int.MaxValue) };
         }
         internal static MatchLimitsView LimitView(string raw)
         {
@@ -105,7 +106,7 @@ namespace PM.horizOn.Cloud.Helper
             var f = Fields(raw, SummaryFields + ",turnOrder,turnSeconds,timeoutPolicy,dataBase64,reports,reportDeadline,absoluteDeadline,rankedLeaderboardKey,ownRankedRunId,notificationPending");
             var v = (MatchView)Summary(f, new MatchView());
             v.turnOrder = Ids(f["turnOrder"]); v.turnSeconds = Bound(f["turnSeconds"], 60, 604800); v.timeoutPolicy = Choice(f["timeoutPolicy"], "skip", "forfeit");
-            v.dataBase64 = Nullable(f["dataBase64"], x => Text(x, 10924)); v.data = v.dataBase64 == null ? null : Bytes(v.dataBase64, 8192);
+            v.dataBase64 = Nullable(f["dataBase64"], x => Text(x, ((MatchLimits.MaxStateBytes + 2) / 3) * 4)); v.data = v.dataBase64 == null ? null : Bytes(v.dataBase64, MatchLimits.MaxStateBytes);
             v.reports = Rows(f["reports"], 8, Report, r => r.userId); v.reportDeadline = Nullable(f["reportDeadline"], Time); v.absoluteDeadline = Nullable(f["absoluteDeadline"], Time);
             v.rankedLeaderboardKey = Nullable(f["rankedLeaderboardKey"], BoardKey);
             v.ownRankedRunId = Nullable(f["ownRankedRunId"], Uuid); v.notificationPending = Boolean(f["notificationPending"]);
@@ -115,14 +116,20 @@ namespace PM.horizOn.Cloud.Helper
         }
         internal static MyMatches Mine(string raw)
         {
-            var f = Fields(raw, "userId,revision,active,invites,recent,limits,pollAfterSeconds,serverTime");
-            var r = new MyMatches { userId = Uuid(f["userId"]), revision = Number(f["revision"]), active = Rows(f["active"], 10, Summary, x => x.id), invites = Rows(f["invites"], 20, Summary, x => x.id), recent = Rows(f["recent"], 100, Summary, x => x.id), limits = Limits(f["limits"]), pollAfterSeconds = Poll(f["pollAfterSeconds"]), serverTime = Time(f["serverTime"]) };
+            var f = Fields(raw, "userId,revision,active,invites,recent,pendingResults,limits,pollAfterSeconds,serverTime");
+            var r = new MyMatches { userId = Uuid(f["userId"]), revision = Number(f["revision"]), active = Rows(f["active"], int.MaxValue, Summary, x => x.id), invites = Rows(f["invites"], int.MaxValue, Summary, x => x.id), recent = Rows(f["recent"], int.MaxValue, Summary, x => x.id), pendingResults = Rows(f["pendingResults"], int.MaxValue, PendingResult, x => x.matchId), limits = Limits(f["limits"]), pollAfterSeconds = Poll(f["pollAfterSeconds"]), serverTime = Time(f["serverTime"]) };
             if (r.active.Any(x => !x.participantIds.Contains(r.userId) || x.forfeitedIds.Contains(r.userId) || x.status != "lobby" && x.status != "active")
                 || r.invites.Any(x => !x.invitedIds.Contains(r.userId) || x.status != "lobby")
                 || r.recent.Any(x => !x.participantIds.Contains(r.userId))
                 || r.active.Concat(r.invites).Concat(r.recent).Select(x => x.id).Distinct().Count() != r.active.Length + r.invites.Length + r.recent.Length) throw new FormatException("Match player lists invalid");
             // A forfeited player may retain an active match in recent while the other players continue.
             return r;
+        }
+        private static MatchPendingResult PendingResult(string raw)
+        {
+            var f = Fields(raw, "matchId,finalStateRevision,ownRankedRunId,expiresAt");
+            long revision = Number(f["finalStateRevision"]); if (revision < 1) throw new FormatException("Match original final revision invalid");
+            return new MatchPendingResult { matchId = Uuid(f["matchId"]), finalStateRevision = revision, ownRankedRunId = Nullable(f["ownRankedRunId"], Uuid), expiresAt = Time(f["expiresAt"]) };
         }
         internal static MatchPage Page(string raw)
         {
@@ -164,7 +171,7 @@ namespace PM.horizOn.Cloud.Helper
             string[] invites = CanonicalIds(value.inviteeIds, 7); if (invites.Length >= value.capacity || invites.Contains(id)) throw new FormatException("Match invitees invalid");
             return UserJson(id) + ",\"name\":" + name + ",\"capacity\":" + value.capacity.ToString(CultureInfo.InvariantCulture) + ",\"visibility\":" + ItemsJson.Quote(value.visibility) + ",\"strength\":" + value.strength.ToString(CultureInfo.InvariantCulture)
                 + ",\"turnSeconds\":" + value.turnSeconds.ToString(CultureInfo.InvariantCulture) + ",\"timeoutPolicy\":" + ItemsJson.Quote(value.timeoutPolicy) + ",\"ranked\":" + (value.ranked ? "true" : "false")
-                + ",\"dataBase64\":" + Encode(value.data, 8192) + ",\"inviteeIds\":" + IdsJson(invites) + "}";
+                + ",\"dataBase64\":" + Encode(value.data, MatchLimits.MaxStateBytes) + ",\"inviteeIds\":" + IdsJson(invites) + "}";
         }
         internal static string[] CanonicalIds(IEnumerable<string> ids, int max = 8)
         {
@@ -194,9 +201,10 @@ namespace PM.horizOn.Cloud.Helper
             else if (value is MatchCreated c) result = new MatchCreated { match = Clone(c.match), playerRevision = c.playerRevision, pollAfterSeconds = c.pollAfterSeconds, serverTime = c.serverTime };
             else if (value is MatchReported p) result = new MatchReported { match = Clone(p.match), replayed = p.replayed, pollAfterSeconds = p.pollAfterSeconds, serverTime = p.serverTime };
             else if (value is MatchRead m) result = new MatchRead { match = Clone(m.match), pollAfterSeconds = m.pollAfterSeconds, serverTime = m.serverTime };
-            else if (value is MatchLimits l) result = new MatchLimits { activeMatches = l.activeMatches, stateBytes = l.stateBytes, retainedMatches = l.retainedMatches, pendingInvites = l.pendingInvites };
+            else if (value is MatchLimits l) result = new MatchLimits { activeMatches = l.activeMatches, stateBytes = l.stateBytes, retainedMatches = l.retainedMatches, pendingInvites = l.pendingInvites, settlementMatches = l.settlementMatches, historyRetentionSeconds = l.historyRetentionSeconds, rankedSettlementSeconds = l.rankedSettlementSeconds };
             else if (value is MatchLimitsView limitView) result = new MatchLimitsView { limits = Clone(limitView.limits), config = new MatchConfig { revision = limitView.config.revision, rankedLeaderboardKey = limitView.config.rankedLeaderboardKey }, capabilities = new MatchCapabilities { matches = limitView.capabilities.matches, matchesRanked = limitView.capabilities.matchesRanked, realtime = limitView.capabilities.realtime }, pollAfterSeconds = limitView.pollAfterSeconds, serverTime = limitView.serverTime };
-            else if (value is MyMatches mine) result = new MyMatches { userId = mine.userId, revision = mine.revision, active = Array.ConvertAll(mine.active, Clone), invites = Array.ConvertAll(mine.invites, Clone), recent = Array.ConvertAll(mine.recent, Clone), limits = Clone(mine.limits), pollAfterSeconds = mine.pollAfterSeconds, serverTime = mine.serverTime };
+            else if (value is MatchPendingResult source) result = new MatchPendingResult { matchId = source.matchId, finalStateRevision = source.finalStateRevision, ownRankedRunId = source.ownRankedRunId, expiresAt = source.expiresAt };
+            else if (value is MyMatches mine) result = new MyMatches { userId = mine.userId, revision = mine.revision, active = Array.ConvertAll(mine.active, Clone), invites = Array.ConvertAll(mine.invites, Clone), recent = Array.ConvertAll(mine.recent, Clone), pendingResults = Array.ConvertAll(mine.pendingResults, Clone), limits = Clone(mine.limits), pollAfterSeconds = mine.pollAfterSeconds, serverTime = mine.serverTime };
             else if (value is MatchPage page) result = new MatchPage { matches = Array.ConvertAll(page.matches, Clone), nextCursor = page.nextCursor, pollAfterSeconds = page.pollAfterSeconds, serverTime = page.serverTime };
             else if (value is ValidatedRun run) result = new ValidatedRun { runId = run.runId, ticket = run.ticket, seed = run.seed, leaderboardKey = run.leaderboardKey, issuedAt = run.issuedAt, expiresAt = run.expiresAt, expiresInSeconds = run.expiresInSeconds };
             else throw new ArgumentException("Unknown Match snapshot type");

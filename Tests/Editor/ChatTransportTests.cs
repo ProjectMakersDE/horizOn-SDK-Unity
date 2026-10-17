@@ -18,7 +18,7 @@ using UnityEngine;
 namespace PM.horizOn.Cloud.Tests
 {
     [Category("Transport")]
-    public class ChatTransportTests
+    public partial class ChatTransportTests
     {
         const string Host = "http://127.0.0.1:18916", User = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Peer = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
             Channel = "cccccccc-cccc-4ccc-8ccc-cccccccccccc", Epoch = "dddddddd-dddd-4ddd-8ddd-dddddddddddd", Operation = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",

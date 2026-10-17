@@ -122,7 +122,7 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That((await Manager.GetUsage(User, "a\0b")).ErrorCode, Is.EqualTo("INVALID_REQUEST"));
             Assert.That((await Manager.QueryObjects(User, "levels", new SharedQuery { mode = SharedQueryMode.Random, field = "strength", cursor = "old", min = new SharedScalar(), max = new SharedScalar() })).IsSuccess, Is.False);
             Assert.That((await Manager.CreateObject(User, "levels", -1, Input())).IsSuccess, Is.False);
-            var input = Input(); input.data = new byte[65537]; Assert.That((await Manager.CreateObject(User, "levels", 0, input)).IsSuccess, Is.False);
+            var input = Input(); input.data = new byte[1048577]; Assert.That((await Manager.CreateObject(User, "levels", 0, input)).IsSuccess, Is.False);
             input = Input(); input.search[0].value.integerValue = 9007199254740992; Assert.That((await Manager.UpdateObject(User, "levels", Id, 0, input)).IsSuccess, Is.False);
             NetworkService.Instance.ClearSessionToken(); Assert.That((await Manager.GetUsage(User, "levels")).ErrorCode, Is.EqualTo("SESSION_REQUIRED"));
             var incoming = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(incoming, Task.Delay(100)), Is.Not.SameAs(incoming));

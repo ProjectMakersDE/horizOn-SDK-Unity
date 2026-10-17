@@ -38,15 +38,15 @@ namespace PM.horizOn.Cloud.Helper
             var f = JsonFragments.Object(json);
             var result = new FriendsSnapshot { userId = Uuid(f["userId"]), revision = Number(f["revision"]), friendCode = Text(f["friendCode"]), serverTime = Instant(f["serverTime"]) };
             if (result.friendCode != Code(result.userId)) throw new FormatException("Friend code does not identify player");
-            result.friends = Rows(f["friends"], 200, raw =>
+            result.friends = Rows(f["friends"], int.MaxValue, raw =>
             {
                 var x = JsonFragments.Object(raw);
-                return new FriendView { userId = Uuid(x["userId"]), since = Instant(x["since"]), lastActiveAt = x["lastActiveAt"] == "null" ? null : Instant(x["lastActiveAt"]), display = Display(x["display"]) };
+                return new FriendView { userId = Uuid(x["userId"]), since = OptionalInstant(x, "since"), lastActiveAt = x["lastActiveAt"] == "null" ? null : Instant(x["lastActiveAt"]), display = Display(x["display"]) };
             }, r => r.userId, result.userId);
             result.incoming = Requests(f["incoming"], result.userId); result.outgoing = Requests(f["outgoing"], result.userId);
-            result.blocked = Rows(f["blocked"], 100, raw => { var x = JsonFragments.Object(raw); return new BlockedPlayerView { userId = Uuid(x["userId"]), blockedAt = Instant(x["blockedAt"]) }; }, r => r.userId, result.userId);
+            result.blocked = Rows(f["blocked"], int.MaxValue, raw => { var x = JsonFragments.Object(raw); return new BlockedPlayerView { userId = Uuid(x["userId"]), blockedAt = Instant(x["blockedAt"]) }; }, r => r.userId, result.userId);
             var l = JsonFragments.Object(f["limits"]);
-            result.limits = new FriendsLimits { maxFriends = Limit(l["maxFriends"], 200), maxIncomingRequests = Limit(l["maxIncomingRequests"], 20), maxOutgoingRequests = Limit(l["maxOutgoingRequests"], 20), maxBlocked = Limit(l["maxBlocked"], 100) };
+            result.limits = new FriendsLimits { maxFriends = Limit(l["maxFriends"], int.MaxValue), maxIncomingRequests = Limit(l["maxIncomingRequests"], int.MaxValue), maxOutgoingRequests = Limit(l["maxOutgoingRequests"], int.MaxValue), maxBlocked = Limit(l["maxBlocked"], int.MaxValue) };
             // Lists above today's tier limit remain readable and removable after a downgrade.
             return result;
         }
@@ -57,8 +57,8 @@ namespace PM.horizOn.Cloud.Helper
             if (result.friendCode != Code(result.userId)) throw new FormatException("Friend lookup code invalid");
             return result;
         }
-        private static FriendRequestView[] Requests(string json, string own) => Rows(json, 20, raw =>
-        { var x = JsonFragments.Object(raw); return new FriendRequestView { userId = Uuid(x["userId"]), requestId = Uuid(x["requestId"]), createdAt = Instant(x["createdAt"]), display = Display(x["display"]) }; }, r => r.userId, own);
+        private static FriendRequestView[] Requests(string json, string own) => Rows(json, int.MaxValue, raw =>
+        { var x = JsonFragments.Object(raw); return new FriendRequestView { userId = Uuid(x["userId"]), requestId = Uuid(x["requestId"]), createdAt = OptionalInstant(x, "createdAt"), display = Display(x["display"]) }; }, r => r.userId, own);
         private static FriendDisplay Display(string json)
         {
             var f = JsonFragments.Object(json); var p = JsonFragments.Object(f["profile"]);
@@ -76,6 +76,7 @@ namespace PM.horizOn.Cloud.Helper
         private static string Text(string json) => JsonFragments.String(json);
         private static string Optional(string json) => json == "null" ? null : Text(json);
         private static string Uuid(string json) { string value = Text(json); if (!IsUuid(value)) throw new FormatException("Friends UUID invalid"); return Guid.ParseExact(value, "D").ToString("D"); }
+        private static string OptionalInstant(Dictionary<string,string> fields, string key) => !fields.TryGetValue(key, out var raw) || raw == "null" ? null : Instant(raw);
         private static string Instant(string json) { string value = Text(json); if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out _)) throw new FormatException("Friends time invalid"); return value; }
         private static long Number(string raw) { if (!long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out long value) || value < 0 || value > PlayerValuesManager.MaxSafeInteger) throw new FormatException("Friends integer invalid"); return value; }
         private static int Limit(string raw, int max) { long value = Number(raw); if (value < 1 || value > max) throw new FormatException("Friends limit invalid"); return (int)value; }
