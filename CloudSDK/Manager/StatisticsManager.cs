@@ -79,6 +79,9 @@ namespace PM.horizOn.Cloud.Manager
             string owner = _userId, token = _token, host = _host, apiKey = _apiKey;
             long epoch = _cacheEpoch;
             LastSubmittedOperationId = operationId;
+            // A report may atomically unlock achievements and credit values, even when its reply is lost.
+            PlayerValuesManager.Instance.ClearCache();
+            AchievementsManager.Instance.ClearCache();
             var response = await HorizonApp.Network.PostAsync<StatisticsSnapshot>(StatisticsTransportContract.Endpoint, body, useSessionToken: true);
             if (!SameScope(owner, token, host, apiKey, epoch)) return Fail<StatisticsSnapshot>(LastErrorCode);
             if (!response.IsSuccess) return NetworkFailure(response);

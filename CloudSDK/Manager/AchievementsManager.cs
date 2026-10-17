@@ -12,7 +12,7 @@ using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Service;
 namespace PM.horizOn.Cloud.Manager
 {
-    /// <summary>Explicit player achievements. Rewards are delivered to Inbox and credited only by its claim.</summary>
+    /// <summary>Permanent unlocks with atomic server-side rewards. Legacy pending Inbox rewards remain readable.</summary>
     public class AchievementsManager : BaseManager<AchievementsManager>
     {
         private const string Endpoint = "/api/v1/app/achievements";
@@ -69,14 +69,21 @@ namespace PM.horizOn.Cloud.Manager
             {
                 if (!IsCurrent(identity, epoch)) return UnlockFailure("STALE_RESPONSE");
                 _current = null;
+                // The request can commit even if its response is lost. A later read retrieves authoritative balances.
+                PlayerValuesManager.Instance.ClearCache();
                 var response = await HorizonApp.Network.PostAsync<AchievementUnlockResponse>(Endpoint + "/unlock", command, true);
                 if (!IsCurrent(identity, epoch)) return UnlockFailure("STALE_RESPONSE");
                 if (!response.IsSuccess) return UnlockFailure(ErrorCode(response), response.Error);
                 var data = response.Data;
                 if (data?.achievements == null || data.newlyUnlocked == null || data.deliveryResults == null
-                    || (data.replayed && data.newlyUnlocked.Length != 0) || data.newlyUnlocked.Length > 1
+                    || data.newlyUnlocked.Length != (data.replayed ? 0 : 1)
                     || (data.newlyUnlocked.Length == 1 && data.newlyUnlocked[0] != key)
-                    || !MatchesOutcomes(data.deliveryResults, new[] { key })) return UnlockFailure("INVALID_RESPONSE");
+                    || (data.deliveryResults.Length > 0 && !MatchesOutcomes(data.deliveryResults, new[] { key }))) return UnlockFailure("INVALID_RESPONSE");
+                if (data.deliveryResults.Length == 0)
+                {
+                    var unlocked = Array.Find(data.achievements.progress ?? Array.Empty<AchievementProgress>(), item => item.key == key);
+                    if (unlocked == null || (!data.replayed && unlocked.rewardState != "complete")) return UnlockFailure("INVALID_RESPONSE");
+                }
                 string error = Accept(data.achievements, userId, null);
                 if (error != null) return UnlockFailure(error == "METADATA_REQUIRED" ? "INVALID_RESPONSE" : error);
                 InvalidateDeliveredInbox(data.deliveryResults);
@@ -86,7 +93,7 @@ namespace PM.horizOn.Cloud.Manager
             }
             finally { _requests.Release(); }
         }
-        /// <summary>Explicitly repeat the original at-most-eight pending keys; never locally credit rewards.</summary>
+        /// <summary>Compatibility status read for at most eight original keys. Compact rewards need no delivery or claim.</summary>
         public async Task<AchievementDeliveryResult> DeliverRewards(string userId, IList<string> keys)
         {
             if (!Begin(userId, out var identity, out var epoch)) return DeliveryFailure(LastErrorCode);

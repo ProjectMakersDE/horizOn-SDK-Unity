@@ -37,7 +37,16 @@ namespace PM.horizOn.Cloud.Base
 {
     public abstract class BaseManager<T> where T : class
     {
-        public static T Instance { get; private set; }
+        private static T _instance;
+        public static T Instance
+        {
+            get
+            {
+                if (_instance == null) ((BaseManager<T>)(object)Activator.CreateInstance<T>()).Init();
+                return _instance;
+            }
+            private set { _instance = value; }
+        }
 
         public virtual bool Init()
         {
@@ -48,6 +57,7 @@ namespace PM.horizOn.Cloud.Base
 
         protected virtual void OnInit() { }
         protected virtual void RegisterEvents() { }
+        protected virtual void OnDisable() { }
         protected void RegisterEvent<TData>(EventKeys key, Action<TData> handler) { }
     }
 }

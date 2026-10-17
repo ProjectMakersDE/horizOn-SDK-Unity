@@ -17,10 +17,10 @@ namespace PM.horizOn.Cloud.Helper
             var f = JsonFragments.Object(json);
             var result = new AchievementsSnapshot { userId = Text(f["userId"]), revision = Number(f["revision"]), definitionVersion = Text(f["definitionVersion"]), serverTime = Instant(f["serverTime"]) };
             if (!Guid.TryParseExact(result.userId, "D", out _) || !ValidVersion(result.definitionVersion)) throw new FormatException("Achievement identity/version invalid");
-            result.definitions = f["definitions"] == "null" ? null : Rows(f["definitions"], 500, Definition, d => d.key);
-            result.progress = Rows(f["progress"], 500, Progress, p => p.key);
+            result.definitions = f["definitions"] == "null" ? null : Rows(f["definitions"], int.MaxValue, Definition, d => d.key);
+            result.progress = Rows(f["progress"], int.MaxValue, Progress, p => p.key);
             var limits = JsonFragments.Object(f["limits"]);
-            result.limits = new AchievementLimits { maxDefinitions = (int)Number(limits["maxDefinitions"], 500), maxLifetimeKeys = (int)Number(limits["maxLifetimeKeys"], 500) };
+            result.limits = new AchievementLimits { maxDefinitions = (int)Number(limits["maxDefinitions"], int.MaxValue), maxLifetimeKeys = (int)Number(limits["maxLifetimeKeys"], int.MaxValue) };
             if (result.limits.maxDefinitions <= 0 || result.limits.maxLifetimeKeys <= 0) throw new FormatException("Achievement limits invalid");
             return result;
         }
@@ -29,7 +29,7 @@ namespace PM.horizOn.Cloud.Helper
             var f = JsonFragments.Object(json);
             var result = new AchievementUnlockResponse { achievements = Snapshot(f["achievements"]), replayed = Flag(f["replayed"]),
                 newlyUnlocked = Rows(f["newlyUnlocked"], 1, Key, k => k), deliveryResults = Rows(f["deliveryResults"], 1, Outcome, r => r.key) };
-            if (result.replayed && result.newlyUnlocked.Length != 0) throw new FormatException("Replayed achievement cannot be new");
+            if (result.newlyUnlocked.Length != (result.replayed ? 0 : 1)) throw new FormatException("Replayed achievement cannot be new");
             return result;
         }
         public static AchievementDeliveryResponse Delivery(string json)
@@ -57,7 +57,12 @@ namespace PM.horizOn.Cloud.Helper
         private static AchievementProgress Progress(string json)
         {
             var f = JsonFragments.Object(json);
-            var result = new AchievementProgress { key = Key(f["key"]), unlockedAt = Instant(f["unlockedAt"]), rewardState = State(f["rewardState"]), inboxEntryId = OptionalText(f, "inboxEntryId") };
+            var result = new AchievementProgress { key = Key(f["key"]), rewardState = State(f["rewardState"]), inboxEntryId = OptionalText(f, "inboxEntryId") };
+            if (result.rewardState == "complete")
+            {
+                if (!f.TryGetValue("unlockedAt", out var unlockedAt) || unlockedAt != "null") throw new FormatException("Compact achievement has no unlock date");
+            }
+            else result.unlockedAt = Instant(f["unlockedAt"]);
             if (f.TryGetValue("pendingReward", out var pending) && pending != "null")
             {
                 var p = JsonFragments.Object(pending);
@@ -89,7 +94,7 @@ namespace PM.horizOn.Cloud.Helper
             return result;
         }
         private static string Key(string json) { string value = Text(json); if (!ValidKey(value)) throw new FormatException("Achievement key invalid"); return value; }
-        private static string State(string json) { string value = Text(json); if (value != "none" && value != "pending" && value != "delivered") throw new FormatException("Achievement reward state invalid"); return value; }
+        private static string State(string json) { string value = Text(json); if (value != "complete" && value != "none" && value != "pending" && value != "delivered") throw new FormatException("Achievement reward state invalid"); return value; }
         private static string Text(string json) => JsonFragments.String(json);
         private static string OptionalText(Dictionary<string, string> fields, string key) => fields.TryGetValue(key, out var raw) && raw != "null" ? Text(raw) : null;
         private static string Instant(string json) { string value = Text(json); if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out _)) throw new FormatException("Achievement time invalid"); return value; }

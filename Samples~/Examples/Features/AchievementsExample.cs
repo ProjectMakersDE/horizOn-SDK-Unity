@@ -30,6 +30,7 @@ namespace PM.horizOn.Cloud.Examples.Features
             if (!Current(userId, generation)) return;
             if (!result.IsSuccess) { HorizonApp.Log.Warning("Keep the original manual key for retry: " + result.ErrorCode); return; }
             Show(result.Data.achievements);
+            // A complete unlock already credited its configured reward atomically. Refresh Player Values on demand.
             if (!result.Data.replayed)
                 foreach (var key in result.Data.newlyUnlocked) HorizonApp.Log.Info("New achievement: " + key);
             foreach (var outcome in result.Data.deliveryResults)
@@ -39,7 +40,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         {
             string userId = CurrentPlayer(); if (userId == null) return;
             int generation = _generation;
-            // At most8 original server-owned achievement keys; no new operation/source IDs.
+            // Compatibility status for legacy records only. New complete unlocks need no delivery/claim.
             var result = await AchievementsManager.Instance.DeliverRewards(userId, originalKeys);
             if (!Current(userId, generation)) return;
             if (!result.IsSuccess) { HorizonApp.Log.Warning("Keep the original delivery keys: " + result.ErrorCode); return; }
@@ -57,6 +58,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         {
             string userId = CurrentPlayer(); if (userId == null) return;
             int generation = _generation;
+            // Legacy Inbox rewards only. New achievement rewards were already credited during unlocking.
             // The game's Inbox UI already durably saved this exact entry ID by project/player.
             // A NEW selection uses InboxExample.ClaimNewEntry before saving. A saved retry can
             // be absent/already claimed; never replace its ID or add the attachment locally.

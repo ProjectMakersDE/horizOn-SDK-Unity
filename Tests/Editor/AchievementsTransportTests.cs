@@ -10,6 +10,7 @@ using PM.horizOn.Cloud.Core;
 using PM.horizOn.Cloud.Manager;
 using PM.horizOn.Cloud.Objects.Data;
 using PM.horizOn.Cloud.Objects.Network.Responses;
+using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Service;
 using UnityEngine;
 namespace PM.horizOn.Cloud.Tests
@@ -35,16 +36,70 @@ namespace PM.horizOn.Cloud.Tests
         {
             _listener?.Close();
             foreach(var go in UnityEngine.Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
-                if(new[]{"[UserManager]","[AchievementsManager]","[InboxManager]","[PlayerValuesManager]","[AchievementsExampleTest]"}.Contains(go.name))UnityEngine.Object.DestroyImmediate(go);
+                if(new[]{"[UserManager]","[AchievementsManager]","[StatisticsManager]","[InboxManager]","[PlayerValuesManager]","[AchievementsExampleTest]"}.Contains(go.name))UnityEngine.Object.DestroyImmediate(go);
             UnityEngine.Object.DestroyImmediate(_config); PlayerPrefs.DeleteKey("horizOn_UserSession"); PlayerPrefs.DeleteKey("horizOn_AnonymousToken"); PlayerPrefs.DeleteKey("task1008_owned_pending_claim");
         }
         private static string Definition(string key="starter",string amount="9007199254740991",bool hidden=false) => "{\"key\":\""+key+"\",\"name\":\"Achievement\",\"description\":\"Visible metadata\",\"imageUrl\":null,\"hidden\":"+(hidden?"true":"false")+",\"active\":true,\"mode\":\"manual\",\"condition\":null,\"rewards\":{\"values\":[{\"key\":\"gold\",\"amount\":"+amount+"}]}}";
         private static string Progress(string key="starter",string state="pending",string amount="3") => "{\"key\":\""+key+"\",\"unlockedAt\":\"2026-10-16T00:00:00Z\",\"rewardState\":\""+state+"\",\"inboxEntryId\":"+(state=="delivered"?"\""+Entry+"\"":"null")+",\"pendingReward\":"+(state=="pending"?"{\"issuedAt\":\"2026-10-16T00:00:00Z\",\"values\":[{\"key\":\"gold\",\"amount\":"+amount+"}]}":"null")+"}";
         private static string Snapshot(long revision=1,char version='a',string definitions=null,string progress="[]",int second=1) => "{\"userId\":\""+User+"\",\"revision\":"+revision+",\"definitionVersion\":\""+Version(version)+"\",\"definitions\":"+(definitions??"["+Definition()+"]")+",\"progress\":"+progress+",\"limits\":{\"maxDefinitions\":20,\"maxLifetimeKeys\":500},\"serverTime\":\"2026-10-16T00:00:"+second.ToString("D2")+"Z\"}";
         private static string Outcome(string key="starter",string state="pending",string code="INBOX_FULL") => "{\"key\":\""+key+"\",\"state\":\""+state+"\",\"inboxEntryId\":"+(state=="delivered"?"\""+Entry+"\"":"null")+",\"code\":"+(code==null?"null":"\""+code+"\"")+"}";
+        private static string Complete(string key="starter") => "{\"key\":\""+key+"\",\"unlockedAt\":null,\"rewardState\":\"complete\",\"inboxEntryId\":null,\"pendingReward\":null}";
         private static string UnlockBody(string snapshot,bool replay=false,string newly="[\"starter\"]",string outcomes=null) => "{\"achievements\":"+snapshot+",\"newlyUnlocked\":"+newly+",\"replayed\":"+(replay?"true":"false")+",\"deliveryResults\":["+(outcomes??Outcome())+"]}";
         private async Task<AchievementsResult> Load(string body,string known=null)
         {var incoming=_listener.GetContextAsync();var pending=Manager.GetAchievements(User,known);await Respond(await Timeout(incoming),body);return await pending;}
+        private async Task SeedValueCache()
+        {
+            var incoming=_listener.GetContextAsync();var state=PlayerValuesManager.Instance.GetState(User);
+            var values="{\"userId\":\""+User+"\",\"definitionVersion\":1,\"revision\":1,\"day\":\"2026-10-16\",\"values\":[{\"key\":\"gold\",\"balance\":10,\"earnedToday\":0,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:00Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
+            await Respond(await Timeout(incoming),values);Assert.That((await state).IsSuccess,Is.True);
+            Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Not.Null);
+        }
+        [Test] public async Task CompactUnlockAndReplayNeedNoInboxClaimAndInvalidatePossiblyCommittedBalances()
+        {
+            await SeedValueCache();
+            for(int i=0;i<2;i++)
+            {
+                var incoming=_listener.GetContextAsync();var unlock=Manager.Unlock(User,"starter");var request=await Timeout(incoming);
+                Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null,"a lost reply must not leave old balances visible");
+                Assert.That(request.Request.RawUrl,Is.EqualTo("/api/v1/app/achievements/unlock"));
+                await Respond(request,UnlockBody(Snapshot(2,'b',progress:"["+Complete()+"]",second:2+i),i==1,i==1?"[]":"[\"starter\"]",outcomes:""));
+                var result=await unlock;Assert.That(result.IsSuccess,Is.True,result.ErrorCode);
+                Assert.That(result.Data.deliveryResults,Is.Empty);Assert.That(result.Data.achievements.progress[0].unlockedAt,Is.Null);
+                Assert.That(result.Data.achievements.progress[0].pendingReward,Is.Null);Assert.That(result.Data.replayed,Is.EqualTo(i==1));
+            }
+            Assert.That(Manager.CurrentAchievements.progress[0].rewardState,Is.EqualTo("complete"));
+            var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(80)),Is.Not.SameAs(unexpected));
+        }
+        [Test] public async Task StatisticReportInvalidatesValueCacheEvenWhenItsCommittedOutcomeCannotBeDecoded()
+        {
+            await SeedValueCache();
+            Assert.That((await Load(Snapshot())).IsSuccess,Is.True);
+            var incoming=_listener.GetContextAsync();
+            var update=StatisticsManager.Instance.UpdateStatistics(new[]{new StatisticUpdate("kills",1)},"1792180800000:"+Guid.NewGuid());
+            var request=await Timeout(incoming);Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
+            Assert.That(Manager.CurrentAchievements,Is.Null);
+            await Respond(request,"{}");Assert.That(await update,Is.Null);
+            Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
+        }
+        [Test] public async Task ActualExampleShowsAtomicUnlockWithoutDeliveryOrClaimRequest()
+        {
+            var type=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetType("PM.horizOn.Cloud.Examples.Features.AchievementsExample")).FirstOrDefault(t=>t!=null);
+            Assert.That(type,Is.Not.Null);
+            var actor=new GameObject("[AchievementsExampleTest]").AddComponent(type);
+            var incoming=_listener.GetContextAsync();var action=(Task)type.GetMethod("UnlockManual").Invoke(actor,new object[]{"starter"});
+            await Respond(await Timeout(incoming),UnlockBody(Snapshot(progress:"["+Complete()+"]"),outcomes:""));await action;
+            Assert.That(Manager.CurrentAchievements.progress[0].rewardState,Is.EqualTo("complete"));
+            var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(80)),Is.Not.SameAs(unexpected));
+        }
+        [Test] public async Task AdminLimitsAbove500AndExistingUnlocksAfterReductionRemainReadable()
+        {
+            string definitions="["+string.Join(",",Enumerable.Range(0,701).Select(i=>Definition("k"+i)))+"]";
+            string progress="["+string.Join(",",Enumerable.Range(0,701).Select(i=>Complete("k"+i)))+"]";
+            var raised=Snapshot(definitions:definitions,progress:progress).Replace("\"maxDefinitions\":20,\"maxLifetimeKeys\":500","\"maxDefinitions\":800,\"maxLifetimeKeys\":1000");
+            var first=await Load(raised);Assert.That(first.IsSuccess,Is.True,first.ErrorCode);Assert.That(first.Data.progress.Length,Is.EqualTo(701));
+            var reduced=await Load(Snapshot(2,'b',definitions,progress,2));Assert.That(reduced.IsSuccess,Is.True,reduced.ErrorCode);
+            Assert.That(reduced.Data.progress.Length,Is.EqualTo(701));Assert.That(reduced.Data.limits.maxDefinitions,Is.EqualTo(20));
+        }
         [Test] public async Task SnapshotUsesBearerAndPreservesMaximumSafeRewardWithoutLeakingMutableCache()
         {
             var incoming=_listener.GetContextAsync();var pending=Manager.GetAchievements(User);var c=await Timeout(incoming);
