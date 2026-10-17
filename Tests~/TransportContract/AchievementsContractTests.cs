@@ -15,6 +15,17 @@ internal static class AchievementsContractTests
             Check(refused,"decoded numeric key refuses unchanged unsafe lexeme");
         }
         bool duplicate=false;try{AchievementsJson.Snapshot(snapshot.Replace("\"revision\":1","\"revision\":1,\"\\u0072evision\":2"));}catch{duplicate=true;}Check(duplicate,"duplicate decoded keys rejected");
+        string complete="{\"key\":\"starter\",\"unlockedAt\":null,\"rewardState\":\"complete\",\"inboxEntryId\":null,\"pendingReward\":null}";
+        var compact=AchievementsJson.Snapshot(snapshot.Replace("\"progress\":[]","\"progress\":["+complete+"]"));
+        Check(compact.progress[0].unlockedAt==null&&compact.progress[0].pendingReward==null&&compact.progress[0].rewardState=="complete","compact permanent unlock has no fabricated date or reward copy");
+        foreach(var invalid in new[]{complete.Replace("\"unlockedAt\":null","\"unlockedAt\":\"2026-10-16T00:00:00Z\""),complete.Replace("\"rewardState\":\"complete\"","\"rewardState\":\"pending\"")})
+        {bool refused=false;try{AchievementsJson.Snapshot(snapshot.Replace("\"progress\":[]","\"progress\":["+invalid+"]"));}catch{refused=true;}Check(refused,"compact and legacy formats cannot be mixed");}
+        string definitions=string.Join(",",Enumerable.Range(0,701).Select(i=>definition.Replace("starter","k"+i)));
+        string progress=string.Join(",",Enumerable.Range(0,701).Select(i=>complete.Replace("starter","k"+i)));
+        string raised=snapshot.Replace("\"definitions\":["+definition+"]","\"definitions\":["+definitions+"]").Replace("\"progress\":[]","\"progress\":["+progress+"]")
+            .Replace("\"maxDefinitions\":20,\"maxLifetimeKeys\":500","\"maxDefinitions\":800,\"maxLifetimeKeys\":1000");
+        Check(AchievementsJson.Snapshot(raised).progress.Length==701,"admin can raise the default lifetime limit");
+        Check(AchievementsJson.Snapshot(raised.Replace("\"maxDefinitions\":800,\"maxLifetimeKeys\":1000","\"maxDefinitions\":20,\"maxLifetimeKeys\":50")).progress.Length==701,"lowered limits preserve existing unlocked state");
         Console.WriteLine("Achievements opaque metadata, exact safe integers and decoded lexeme contracts passed.");
     }
     private static void Check(bool condition,string message){if(!condition)throw new Exception("Achievements contract: "+message);}
