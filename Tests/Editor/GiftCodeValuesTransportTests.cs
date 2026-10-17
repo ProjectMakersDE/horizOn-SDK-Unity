@@ -114,6 +114,34 @@ namespace PM.horizOn.Cloud.Tests
             var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
             await Respond(c,200,Response().Replace("\"count\":\"9007199254740994\"",replacement)); Assert.That(await pending,Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
         }
+        [TestCase("PM.horizOn.Cloud.ExampleUI.HorizonExampleUIController")]
+        [TestCase("PM.horizOn.Cloud.Examples.HorizonSDKExample")]
+        public async Task ActualExampleUIKeepsOnePendingPreparation(string className)
+        {
+            Type type=null; foreach(var assembly in AppDomain.CurrentDomain.GetAssemblies()) { type=assembly.GetType(className); if(type!=null) break; }
+            Assert.That(type,Is.Not.Null,"Native project must import the concrete Example UI consumer");
+            GameObject owner=null;
+            object example;
+            if(typeof(MonoBehaviour).IsAssignableFrom(type)) { owner=new GameObject("[GiftV2UIProbe]"); example=owner.AddComponent(type); }
+            else example=Activator.CreateInstance(type);
+            var method=type.GetMethod("RedeemGiftV2",BindingFlags.NonPublic|BindingFlags.Instance);
+            string key="horizOn_gift_ui_pending_"+GiftCodeIntent.ProjectFingerprint("fixture-gifts")+"_"+User;
+            PlayerPrefs.DeleteKey(key);
+            try
+            {
+                var incoming=_listener.GetContextAsync(); var first=(Task<RedeemGiftCodeResponse>)method.Invoke(example,new object[]{"VALUES"}); var prepare=await Timeout(incoming);
+                Assert.That(prepare.Request.RawUrl,Is.EqualTo("/api/v1/app/gift-codes/validate"));
+                Assert.That(await (Task<RedeemGiftCodeResponse>)method.Invoke(example,new object[]{"OTHER"}),Is.Null,"Concurrent click cannot prepare or replace the unresolved slot");
+                incoming=_listener.GetContextAsync();
+                await Respond(prepare,200,"{\"valid\":true,\"protocolVersion\":2,\"campaignId\":\""+Intent+"\",\"expectedCount\":\"9007199254740993\",\"configRevision\":\"9223372036854775807\"}");
+                var redemption=await Timeout(incoming); Assert.That(redemption.Request.RawUrl,Is.EqualTo("/api/v1/app/gift-codes/redeem"));
+                Assert.That(PlayerPrefs.HasKey(key),Is.True,"Actual consumer saved the original before HTTP consume");
+                var saved=JsonUtility.FromJson<GiftCodeIntent>(PlayerPrefs.GetString(key)); Assert.That(saved.campaignId,Is.EqualTo(Intent)); Assert.That(saved.expectedCount,Is.EqualTo("9007199254740993"));
+                await Respond(redemption,409,"{\"code\":\"MIGRATION_REQUIRED\",\"message\":\"protected\"}"); Assert.That(await first,Is.Null);
+                Assert.That(PlayerPrefs.HasKey(key),Is.True,"Protected/unknown result cannot confirm or remove original");
+            }
+            finally { PlayerPrefs.DeleteKey(key); PlayerPrefs.Save(); if(owner!=null) UnityEngine.Object.DestroyImmediate(owner); }
+        }
         [TestCase("count")][TestCase("configRevision")]
         public async Task FreshResponseMustBindOriginalSequenceAndRevisionBeforeConfirmation(string field)
         {

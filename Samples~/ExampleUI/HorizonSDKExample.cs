@@ -283,7 +283,15 @@ namespace PM.horizOn.Cloud.Examples
             HorizonApp.Log.Info("All caches cleared");
         }
         #endif
+        private bool _giftV2Sending;
         private async System.Threading.Tasks.Task<PM.horizOn.Cloud.Objects.Network.Responses.RedeemGiftCodeResponse> RedeemGiftV2(string code)
+        {
+            if (_giftV2Sending) return null;
+            _giftV2Sending=true;
+            try { return await RedeemGiftV2Owned(code); }
+            finally { _giftV2Sending=false; }
+        }
+        private async System.Threading.Tasks.Task<PM.horizOn.Cloud.Objects.Network.Responses.RedeemGiftCodeResponse> RedeemGiftV2Owned(string code)
         {
             string project=HorizonApp.Network.GetApiKey(), user=UserManager.Instance.CurrentUser?.UserId;
             if (string.IsNullOrEmpty(user)) return null;
