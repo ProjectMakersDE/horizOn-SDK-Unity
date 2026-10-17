@@ -15,7 +15,7 @@ namespace PM.horizOn.Cloud.Helper
         private static readonly Regex CursorPattern = new Regex(@"\A[A-Za-z0-9_-]{1,512}\z");
         private static readonly Type[] Responses = { typeof(MarketplaceLimitsView), typeof(MarketplaceRulesPage), typeof(MarketplaceStateView), typeof(MarketplaceListingPage), typeof(MarketplaceListingView), typeof(MarketplaceWritten), typeof(MarketplaceOperation), typeof(MarketplaceReturn) };
         internal static bool IsResponse<T>() => Array.IndexOf(Responses, typeof(T)) >= 0;
-        // Keep the shared8MiB/depth24 safety frame, without its default2048 collection-element cap.
+        // Shared technical response frame and iterative grammar; no collection-element product clamp.
         private static Dictionary<string, string> Object(string raw) => JsonFragments.Object(raw, int.MaxValue);
         private static string Text(string raw) => JsonFragments.String(raw);
         internal static bool Uuid(string value) => value != null && Guid.TryParseExact(value, "D", out var parsed) && parsed.ToString("D") == value;

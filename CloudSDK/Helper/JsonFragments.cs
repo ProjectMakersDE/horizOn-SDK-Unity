@@ -1,74 +1,112 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace PM.horizOn.Cloud.Helper
 {
-    /// <summary>Bounded JSON fragments preserve integer lexemes and dictionary strings before JsonUtility conversion.</summary>
+    /// <summary>Byte-bounded JSON fragments preserve original integer/string lexemes. Collection quotas belong to feature DTOs.</summary>
     internal sealed class JsonFragments
     {
-        private const int MaxBytes = 8 * 1024 * 1024;
+        private const int MaxBytes = 32 * 1024 * 1024; // Common technical frame; never a product/list quota.
         private static readonly Regex Primitive = new Regex(@"\G(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)");
         private readonly string _json;
         private readonly int _maxElements;
+        private readonly bool _finiteNumbers;
+        private readonly int _maxDepth;
         private int _at;
-        private JsonFragments(string json, int maxElements = 2048)
+        private JsonFragments(string json, int maxElements = int.MaxValue, int maxBytes = MaxBytes, bool finiteNumbers = false, int maxDepth = 24)
         {
-            if (json == null || json.Length > MaxBytes || Encoding.UTF8.GetByteCount(json) > MaxBytes) throw new FormatException("JSON size limit");
+            if (maxBytes < 1 || maxElements < 1 || json == null || json.Length > maxBytes || Encoding.UTF8.GetByteCount(json) > maxBytes) throw new FormatException("JSON size limit");
             _json = json;
             _maxElements = maxElements;
+            _finiteNumbers = finiteNumbers;
+            _maxDepth = maxDepth;
         }
-        public static Dictionary<string, string> Object(string json, int maxElements = 2048)
+        public static Dictionary<string, string> Object(string json, int maxElements = int.MaxValue, int maxBytes = MaxBytes, bool finiteNumbers = false, int maxDepth = 24)
         {
-            var reader = new JsonFragments(json, maxElements); var result = reader.ReadObject(0); reader.End(); return result;
+            var reader = new JsonFragments(json, maxElements, maxBytes, finiteNumbers, maxDepth); var result = reader.ReadObject(); reader.End(); return result;
         }
-        public static List<string> Array(string json, int maxElements = 2048)
+        public static List<string> Array(string json, int maxElements = int.MaxValue, int maxBytes = MaxBytes, int maxDepth = 24)
         {
-            var reader = new JsonFragments(json, maxElements); var result = reader.ReadArray(0); reader.End(); return result;
+            var reader = new JsonFragments(json, maxElements, maxBytes, maxDepth: maxDepth); var result = reader.ReadArray(); reader.End(); return result;
         }
         public static string String(string json)
         {
             var reader = new JsonFragments(json); string value = reader.ReadString(); reader.End(); return value;
         }
-        private Dictionary<string, string> ReadObject(int depth)
+        private Dictionary<string, string> ReadObject()
         {
-            CheckDepth(depth); Expect('{'); var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            Expect('{'); var result = new Dictionary<string, string>(StringComparer.Ordinal);
             if (Take('}')) return result;
             do
             {
                 string key = ReadString(); Expect(':');
-                Space(); int start = _at; ReadValue(depth + 1);
+                Space(); int start = _at; ReadValue();
                 if (result.Count >= _maxElements || result.ContainsKey(key)) throw new FormatException("JSON duplicate/key limit");
                 result.Add(key, _json.Substring(start, _at - start));
                 if (Take('}')) return result;
                 Expect(',');
             } while (true);
         }
-        private List<string> ReadArray(int depth)
+        private List<string> ReadArray()
         {
-            CheckDepth(depth); Expect('['); var result = new List<string>();
+            Expect('['); var result = new List<string>();
             if (Take(']')) return result;
             do
             {
-                Space(); int start = _at; ReadValue(depth + 1);
+                Space(); int start = _at; ReadValue();
                 if (result.Count >= _maxElements) throw new FormatException("JSON array limit");
                 result.Add(_json.Substring(start, _at - start));
                 if (Take(']')) return result;
                 Expect(',');
             } while (true);
         }
-        private void ReadValue(int depth)
+        private sealed class Frame
         {
-            CheckDepth(depth); Space(); if (_at >= _json.Length) throw new FormatException("JSON value missing");
+            internal bool Object, AllowEnd = true, AfterValue;
+            internal int Count, Depth;
+            internal readonly HashSet<string> Keys = new HashSet<string>(StringComparer.Ordinal);
+        }
+        private void ReadValue()
+        {
+            // Configurable group nesting must not consume the managed call stack.
+            // Each frame belongs to bytes already admitted by the independent transport frame.
+            var frames = new Stack<Frame>(); ReadAtom(frames, 1);
+            while (frames.Count != 0)
+            {
+                var frame = frames.Peek(); char close = frame.Object ? '}' : ']';
+                if (frame.AfterValue)
+                {
+                    if (Take(close)) { frames.Pop(); continue; }
+                    Expect(','); frame.AfterValue = false; frame.AllowEnd = false; continue;
+                }
+                if (frame.AllowEnd && Take(close)) { frames.Pop(); continue; }
+                if (++frame.Count > _maxElements) throw new FormatException("JSON collection limit");
+                if (frame.Object)
+                {
+                    string key = ReadString();
+                    if (!frame.Keys.Add(key)) throw new FormatException("JSON duplicate key");
+                    Expect(':');
+                }
+                frame.AfterValue = true; ReadAtom(frames, frame.Depth + 1);
+            }
+        }
+        private void ReadAtom(Stack<Frame> frames, int depth)
+        {
+            if (depth > _maxDepth) throw new FormatException("JSON nesting limit");
+            Space(); if (_at >= _json.Length) throw new FormatException("JSON value missing");
             switch (_json[_at])
             {
-                case '{': ReadObject(depth); return;
-                case '[': ReadArray(depth); return;
+                case '{': _at++; frames.Push(new Frame { Object = true, Depth = depth }); return;
+                case '[': _at++; frames.Push(new Frame { Depth = depth }); return;
                 case '"': ReadString(); return;
                 default:
                     var match = Primitive.Match(_json, _at);
                     if (!match.Success) throw new FormatException("JSON primitive invalid");
+                    if (_finiteNumbers && match.Value != "true" && match.Value != "false" && match.Value != "null"
+                        && (!double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) || double.IsInfinity(number) || double.IsNaN(number))) throw new FormatException("JSON finite number required");
                     _at += match.Length; return;
             }
         }
@@ -113,6 +151,5 @@ namespace PM.horizOn.Cloud.Helper
         private bool Take(char value) { Space(); if (_at >= _json.Length || _json[_at] != value) return false; _at++; return true; }
         private void Space() { while (_at < _json.Length && (_json[_at] == ' ' || _json[_at] == '\r' || _json[_at] == '\n' || _json[_at] == '\t')) _at++; }
         private void End() { Space(); if (_at != _json.Length) throw new FormatException("JSON trailing content"); }
-        private static void CheckDepth(int depth) { if (depth > 24) throw new FormatException("JSON nesting limit"); }
     }
 }

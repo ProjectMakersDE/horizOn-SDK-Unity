@@ -11,7 +11,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public static GroupJsonData Empty => new GroupJsonData("{}");
         public override string ToString() => Json;
     }
-    [Serializable] public class GroupLimits { public int maxMembers, maxGroupsPerPlayer, maxInvitations, maxJoinRequests, maxDataBytes, memberPageSize; }
+    [Serializable] public class GroupLimits { public int maxMembers, maxGroupsPerPlayer, maxInvitations, maxJoinRequests, maxDataBytes, memberPageSize, maxPlayerInvitations, maxPlayerRequests, maxNameBytes, maxDescriptionBytes, maxDataDepth; }
     [Serializable] public class GroupView
     {
         public string id, name, description, joinMode, leaderId, myRole, createdAt, updatedAt;

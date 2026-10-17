@@ -35,6 +35,16 @@ namespace PM.horizOn.Cloud.Examples.Features
         }
         public Task<MatchesResult<MatchPage>> FindOneOpenPage(long min,long max,string cursor=null)=>MatchesManager.Instance.FindOpenMatches(User,min,max,20,cursor);
         public Task<MatchesResult<MatchLimitsView>> ReadLimits()=>MatchesManager.Instance.GetLimits(User);
+        /// <summary>Explicit recovery from the original minimal ledger source after full detail expired.</summary>
+        public Task<bool> SaveRankedAfterPendingResultReview(string matchId)
+        {
+            string user=User; var ledger=ReviewedLedger;
+            if(user==null||_busy||ledger==null||ValidatedActionsManager.Instance.HasActiveRun||ValidatedActionsManager.Instance.HasPendingOperation)return Task.FromResult(false);
+            var source=ledger.pendingResults.SingleOrDefault(x=>string.Equals(x.matchId,matchId,StringComparison.OrdinalIgnoreCase));
+            if(source==null)return Task.FromResult(false);
+            Store(user).SaveNew(MatchesSampleStore.NewAction(projectId,user,"ranked",source.matchId,source.finalStateRevision,ledger.revision));
+            return ApplySavedIntent();
+        }
         public Task<bool> SaveCreateAfterLedgerReview(MatchCreateInput input)
         {
             string user=User;if(user==null||_busy||_ledger==null||_ledgerScope!=Scope)return Task.FromResult(false);

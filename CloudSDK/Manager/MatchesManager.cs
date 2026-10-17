@@ -27,6 +27,8 @@ namespace PM.horizOn.Cloud.Manager
         private string _scope;
         private long _epoch;
         private readonly Dictionary<string, object> _cache = new Dictionary<string, object>();
+        private readonly Dictionary<string, string> _sourceRuns = new Dictionary<string, string>();
+        private readonly Queue<string> _sourceRunOrder = new Queue<string>();
         private readonly Dictionary<string, Refresh> _refresh = new Dictionary<string, Refresh>();
         private readonly Dictionary<string, long> _revisions = new Dictionary<string, long>(), _times = new Dictionary<string, long>();
         private readonly Queue<string> _cacheOrder = new Queue<string>(), _refreshOrder = new Queue<string>(), _revisionOrder = new Queue<string>(), _timeOrder = new Queue<string>();
@@ -73,7 +75,7 @@ namespace PM.horizOn.Cloud.Manager
             try
             {
                 if (!WritableRevision(expectedPlayerRevision)) return Invalid<MatchCreated>();
-                string body = MatchesJson.CreateJson(userId, input); var original = JsonFragments.Object(body);
+                string body = MatchesJson.CreateJson(userId, input); var original = JsonFragments.Object(body, maxBytes: MatchesJson.TransportBytes);
                 return Call<MatchCreated>(userId, "create", Endpoint, body, expectedPlayerRevision,
                     x => x.playerRevision == expectedPlayerRevision + 1 && x.match.revision == 1 && Same(x.match.creatorId, userId) && x.match.status == "lobby"
                         && AuthorizedView(x.match, userId) && x.match.name == JsonFragments.String(original["name"]) && x.match.dataBase64 == JsonFragments.String(original["dataBase64"])
@@ -103,7 +105,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             try
             {
-                string encoded = MatchesJson.Encode(data, 8192);
+                string encoded = MatchesJson.Encode(data, MatchLimits.MaxStateBytes);
                 return Action(userId, matchId, expectedRevision, "turn", ",\"dataBase64\":" + encoded + ",\"finish\":" + (finish ? "true" : "false"), x => ItemsJson.Quote(x.dataBase64) == encoded);
             }
             catch (FormatException) { return Invalid<MatchRead>(); }
@@ -156,7 +158,10 @@ namespace PM.horizOn.Cloud.Manager
                     if (!IsCurrent(scope, epoch) || !lease.IsCurrent) return Failure<ValidatedRun>("STALE_RESPONSE");
                     if (!r.IsSuccess || r.Data == null) return Failure<ValidatedRun>(ResponseCode(r), r.Error, status: r.StatusCode);
                     var adopted = MatchesJson.Clone<ValidatedRun>(r.Data);
+                    string binding=SourceBinding(matchId,finalStateRevision);
+                    if(_sourceRuns.TryGetValue(binding,out var originalRun)&&!Same(originalRun,adopted.runId))return Failure<ValidatedRun>("INVALID_RESPONSE");
                     if (!lease.TryAdoptRun(adopted)) return Failure<ValidatedRun>("STALE_RESPONSE");
+                    Put(_sourceRuns,_sourceRunOrder,binding,adopted.runId,128);
                     _rankedMatch = matchId; _rankedFinal = finalStateRevision; _rankedRun = adopted.runId; InvalidateContent();
                     LastErrorCode = null;
                     HorizonApp.Log.Info("Ranked Match run started");
@@ -189,10 +194,13 @@ namespace PM.horizOn.Cloud.Manager
                 }
                 if (response.Data == null || !valid(response.Data)) return Failure<T>("INVALID_RESPONSE", identity: identity);
                 var data = response.Data; long time = MatchesJson.Millis(ServerTime(data)); var versions = Versions(data);
+                var sources=KnownSources(data).ToArray();
+                if(sources.Any(x=>_sourceRuns.TryGetValue(x.Key,out var original)&&!Same(original,x.Value)))return Failure<T>("STALE_RESPONSE",identity:identity);
                 if (_times.TryGetValue(resource, out var previousTime) && time < previousTime
                     || versions.Any(v => _revisions.TryGetValue(v.Key, out var old) && v.Value < old || _times.TryGetValue(v.Key, out var oldTime) && time < oldTime)) return Failure<T>("STALE_RESPONSE", identity: identity);
                 Put(_times, _timeOrder, resource, time, 512);
                 foreach (var v in versions) { Put(_revisions, _revisionOrder, v.Key, v.Value, 512); Put(_times, _timeOrder, v.Key, time, 512); }
+                foreach(var source in sources)Put(_sourceRuns,_sourceRunOrder,source.Key,source.Value,128);
                 Put(_cache, _cacheOrder, identity, MatchesJson.Clone(data), 8);
                 if (body == null) Put(_refresh, _refreshOrder, identity, new Refresh { At = NowSeconds(), Seconds = Poll(data) }, 512);
                 LastErrorCode = null; return new MatchesResult<T> { IsSuccess = true, Data = MatchesJson.Clone(data), Identity = identity, HttpStatusCode = response.StatusCode };
@@ -200,6 +208,15 @@ namespace PM.horizOn.Cloud.Manager
             finally { _requests.Release(); }
         }
         private static bool AuthorizedView(MatchView match, string user) => match.participantIds.Any(x => Same(x, user)) ? match.data != null : match.invitedIds.Any(x => Same(x, user)) && match.data == null;
+        private static string SourceBinding(string match,long revision)=>match.ToLowerInvariant()+":"+N(revision);
+        private static IEnumerable<KeyValuePair<string,string>> KnownSources(object data)
+        {
+            if(data is MyMatches ledger)
+                foreach(var source in ledger.pendingResults)
+                    if(source.ownRankedRunId!=null)yield return new KeyValuePair<string,string>(SourceBinding(source.matchId,source.finalStateRevision),source.ownRankedRunId);
+            if(data is MatchRead read&&read.match.ownRankedRunId!=null&&read.match.finalStateRevision.HasValue)
+                yield return new KeyValuePair<string,string>(SourceBinding(read.match.id,read.match.finalStateRevision.Value),read.match.ownRankedRunId);
+        }
         private static IEnumerable<MatchSummary> Summaries(object data) => data is MyMatches m ? m.active.Concat(m.invites).Concat(m.recent) : data is MatchPage p ? p.matches : data is MatchRead r ? new[] { r.match } : Array.Empty<MatchSummary>();
         private static Dictionary<string, long> Versions(object data)
         {
@@ -233,6 +250,7 @@ namespace PM.horizOn.Cloud.Manager
         {
             _epoch++; _network = null; _scope = null; InvalidateContent(); _refresh.Clear(); _revisions.Clear(); _times.Clear();
             _refreshOrder.Clear(); _revisionOrder.Clear(); _timeOrder.Clear(); _rankedMatch = _rankedRun = null; LastErrorCode = null;
+            _sourceRuns.Clear();_sourceRunOrder.Clear();
         }
         private void InvalidateContent() { _cache.Clear(); _cacheOrder.Clear(); }
         private bool IsCurrent(string scope, long epoch) { SyncIdentity(); return _scope == scope && _epoch == epoch; }

@@ -64,8 +64,8 @@ namespace PM.horizOn.Cloud.Helper
                 operationWindowSeconds = Exact(l["operationWindowSeconds"], 30), operationFutureToleranceSeconds = Exact(l["operationFutureToleranceSeconds"], 60),
                 messageCharacters = Exact(l["messageCharacters"], 500), messageUtf8Bytes = Exact(l["messageUtf8Bytes"], 2000),
                 playerSendIntervalMillis = Exact(l["playerSendIntervalMillis"], 3000), channelSendIntervalMillis = Exact(l["channelSendIntervalMillis"], 2000),
-                wordFilterTerms = Exact(l["wordFilterTerms"], 100), channelsPerAccount = Number(l["channelsPerAccount"], 1, 2000),
-                sendsPerAccountMinute = Number(l["sendsPerAccountMinute"], 1, 120), reportsPerProject = Number(l["reportsPerProject"], 1, 200)
+                wordFilterTerms = Exact(l["wordFilterTerms"], 100), channelsPerAccount = Number(l["channelsPerAccount"]),
+                sendsPerAccountMinute = Number(l["sendsPerAccountMinute"]), reportsPerProject = Number(l["reportsPerProject"])
             }, capabilities = new ChatCapabilities { chat = Bool(c["chat"]), realtime = Bool(c["realtime"]), incrementalSync = Bool(c["incrementalSync"]), localHistory = Bool(c["localHistory"]) },
                 moderation = Moderation(f["moderation"]), serverTime = Time(f["serverTime"]) };
         }

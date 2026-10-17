@@ -8,7 +8,7 @@ static class GroupsContractTests
         const string json="{\"x.y\":9007199254740993,\"$key\":{\"\":null},\"fraction\":1.0000000000000001,\"empty\":\"\"}";
         var value=GroupJsonData.FromJson(json);Require(value.Json==json,"lossless arbitrary JSON");
         Require(GroupsJson.Quote("a\"\\\n}")=="\"a\\\"\\\\\\n}\"","wire quoting");
-        foreach(var raw in new[]{"[]","null","{\"n\":1e999}","{\"n\":NaN}","{\"x\":1,\"x\":2}","{\"a\":\""+new string('x',2048)+"\"}",new string('[',18)+"0"+new string(']',18)}){
+        foreach(var raw in new[]{"[]","null","{\"n\":1e999}","{\"n\":NaN}","{\"x\":1,\"x\":2}",new string('[',18)+"0"+new string(']',18)}){
             bool rejected=false;try{GroupJsonData.FromJson(raw);}catch(FormatException){rejected=true;}Require(rejected,"reject invalid data");
         }
         string id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",time="2026-10-16T00:00:00Z";

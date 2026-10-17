@@ -142,10 +142,10 @@ namespace PM.horizOn.Cloud.Tests
         }
         [Test] public async Task ConfiguredCatalogsAboveTariffDefaultsAndAbsentOfferDayQuotaRemainReadable()
         {
-            string rows = string.Join(",", Enumerable.Range(0, 1201).Select(i => "{\"key\":\"offer_" + i + "\",\"name\":\"Configured\",\"active\":true,\"costs\":[{\"key\":\"gold\",\"amount\":1}],\"rewards\":[{\"key\":\"energy\",\"amount\":1}]}"));
+            string rows = string.Join(",", Enumerable.Range(0, 2051).Select(i => "{\"key\":\"offer_" + i + "\",\"name\":\"Configured\",\"active\":true,\"costs\":[{\"key\":\"gold\",\"amount\":1}],\"rewards\":[{\"key\":\"energy\",\"amount\":1}]}"));
             var incoming = _listener.GetContextAsync(); var pending = Manager.GetOffers(User);
             await Respond(await Timeout(incoming), 200, "{\"definitionVersion\":3,\"serverTime\":\"2026-10-15T12:00:30Z\",\"definitions\":[" + ConfiguredBalances() + "],\"offers\":[" + rows + "]}");
-            var offered = await pending; Assert.That(offered.IsSuccess, Is.True); Assert.That(offered.Data.definitions.Length, Is.EqualTo(80)); Assert.That(offered.Data.offers.Length, Is.EqualTo(1201));
+            var offered = await pending; Assert.That(offered.IsSuccess, Is.True); Assert.That(offered.Data.definitions.Length, Is.EqualTo(80)); Assert.That(offered.Data.offers.Length, Is.EqualTo(2051));
             Assert.That(offered.Data.offers.All(o => o.purchasesPerDay == -1), Is.True, "Omitted retired quota cannot deserialize as a zero daily limit");
             incoming = _listener.GetContextAsync(); var state = Manager.GetState(User);
             await Respond(await Timeout(incoming), 200, ConfiguredState(2, 3, 31)); Assert.That((await state).State.values.Length, Is.EqualTo(80)); Assert.That(Manager.CurrentState.values.Length, Is.EqualTo(80));

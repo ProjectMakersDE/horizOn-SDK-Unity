@@ -43,7 +43,7 @@ namespace PM.horizOn.Cloud.Examples.Features
         public bool HasIntent=>Directory.Exists(_directory)&&Directory.GetFileSystemEntries(_directory).Length!=0;
         public static Intent NewCreate(string project,string user,long playerRevision,MatchCreateInput input)
         {
-            if(input==null||input.name==null||input.data==null||input.data.Length>8192||input.inviteeIds==null||input.inviteeIds.Length>7)throw new IOException("Bounded complete create input required");
+            if(input==null||input.name==null||input.data==null||input.data.Length>MatchLimits.MaxStateBytes||input.inviteeIds==null||input.inviteeIds.Length>7)throw new IOException("Bounded complete create input required");
             return new Intent{projectId=project.ToLowerInvariant(),userId=user.ToLowerInvariant(),action="create",revision=playerRevision,playerRevision=playerRevision,nameBase64=Convert.ToBase64String(Utf8.GetBytes(input.name)),capacity=input.capacity,visibility=input.visibility,strength=input.strength,turnSeconds=input.turnSeconds,timeoutPolicy=input.timeoutPolicy,ranked=input.ranked,dataBase64=Convert.ToBase64String(input.data),ids=Array.ConvertAll(input.inviteeIds,x=>x?.ToLowerInvariant())};
         }
         public static Intent NewAction(string project,string user,string action,string match,long revision,long playerRevision,byte[] data=null,string[] ids=null,bool finish=false)
@@ -105,7 +105,10 @@ namespace PM.horizOn.Cloud.Examples.Features
             public void Acknowledge(string reviewedHash)
             {
                 var owner=Owner;if(reviewedHash!=Prepared.Hash)throw new IOException("Review belongs to another Matches original");owner.ReadReceipt(DurableRead(owner._result),Prepared);
-                Directory.Move(owner._directory,owner._directory+"."+Prepared.Hash+"."+Guid.NewGuid().ToString("N")+".acknowledged");
+                // Retire the proven original atomically before deleting only this new terminal
+                // directory. Existing *.acknowledged archives remain untouched for recovery.
+                string terminal=owner._directory+"."+Prepared.Hash+"."+Guid.NewGuid().ToString("N")+".completed";
+                Directory.Move(owner._directory,terminal); Directory.Delete(terminal,true);
             }
             public void Dispose(){_owner=null;_gate?.Dispose();_gate=null;}
         }
@@ -123,7 +126,7 @@ namespace PM.horizOn.Cloud.Examples.Features
                 ||!new[]{"create","join","decline","start","turn","timeout","leave","cancel","report","ranked"}.Contains(x.action)||x.action!="create"&&(!Uuid(x.matchId)||x.revision==0))throw new IOException("Original Matches scope/parameters invalid");
             try
             {
-                byte[] b=x.GetBytes();if(Convert.ToBase64String(b)!=x.dataBase64||b.Length>(x.action=="report"?256:8192))throw new IOException("Original Matches bytes invalid");
+                byte[] b=x.GetBytes();if(Convert.ToBase64String(b)!=x.dataBase64||b.Length>(x.action=="report"?256:MatchLimits.MaxStateBytes))throw new IOException("Original Matches bytes invalid");
                 if(x.action=="create")
                 {
                     var i=x.GetCreateInput();string name=i.name;
@@ -166,8 +169,8 @@ namespace PM.horizOn.Cloud.Examples.Features
         }
         private FileStream OpenGate(){Directory.CreateDirectory(_root);return new FileStream(_directory+".lock",FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}
         private void WithLock(Action action){using(var gate=OpenGate()){RecoverWritingResult();action();}}
-        private static void WriteNew(string path,string raw){byte[] b=Utf8.GetBytes(raw);if(b.Length>65536)throw new IOException("Matches journal bound");using(var f=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None)){f.Write(b,0,b.Length);f.Flush(true);}if(DurableRead(path)!=raw)throw new IOException("Matches durable readback changed");}
-        private static string DurableRead(string path){if(new FileInfo(path).Length>65536)throw new IOException("Matches journal bound");string raw=File.ReadAllText(path,Utf8);using(var f=new FileStream(path,FileMode.Open,FileAccess.ReadWrite,FileShare.None))f.Flush(true);if(File.ReadAllText(path,Utf8)!=raw)throw new IOException("Matches journal changed");return raw;}
+        private static void WriteNew(string path,string raw){byte[] b=Utf8.GetBytes(raw);if(b.Length>32*1024*1024)throw new IOException("Matches journal bound");using(var f=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None)){f.Write(b,0,b.Length);f.Flush(true);}if(DurableRead(path)!=raw)throw new IOException("Matches durable readback changed");}
+        private static string DurableRead(string path){if(new FileInfo(path).Length>32*1024*1024)throw new IOException("Matches journal bound");string raw=File.ReadAllText(path,Utf8);using(var f=new FileStream(path,FileMode.Open,FileAccess.ReadWrite,FileShare.None))f.Flush(true);if(File.ReadAllText(path,Utf8)!=raw)throw new IOException("Matches journal changed");return raw;}
         private static T Parse<T>(string raw)
         {
             try{return JsonUtility.FromJson<T>(raw);}catch(Exception e){throw new IOException("Corrupt/partial Matches JSON",e);}

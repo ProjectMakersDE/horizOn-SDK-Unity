@@ -14,7 +14,7 @@ using UnityEngine;
 namespace PM.horizOn.Cloud.Tests
 {
     [Category("Transport")]
-    public class FriendsTransportTests
+    public partial class FriendsTransportTests
     {
         private const string Host = "http://127.0.0.1:18920", User = "00000000-0000-4000-8000-000000001009";
         private const string Target = "11223344-5566-7788-99aa-bbccddeeff00", TargetCode = "H-ESIzRFVmd4iZqrvM3e7_AA";
