@@ -41,140 +41,128 @@ namespace PM.horizOn.Cloud.Tests
             UnityEngine.Object.DestroyImmediate(_config); PlayerPrefs.DeleteKey("horizOn_UserSession"); PlayerPrefs.DeleteKey("horizOn_AnonymousToken");
         }
         private static string Values(long revision = 1) => "{\"userId\":\"" + User + "\",\"definitionVersion\":1,\"revision\":" + revision + ",\"day\":\"2026-10-16\",\"values\":[{\"key\":\"gold\",\"balance\":9007199254740991,\"earnedToday\":50,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:10Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
-        private static string Response(bool replay = false, long revision = 1) => "{\"success\":true,\"message\":\"ok\",\"giftData\":\"{\\\"amount\\\":9007199254740992}\",\"grantedUnlocks\":[\"badge.supporter\"],\"grantedValues\":[{\"key\":\"gold\",\"amount\":50}],\"playerValues\":" + Values(revision) + ",\"replayed\":" + (replay ? "true" : "false") + "}";
-        [Test] public async Task StableIntentAndReplayReplaceBalancesWithoutAddingGrantAgain()
+        private static GiftCodeIntent NewIntent(string code="VALUES") => new GiftCodeIntent {userId=User,code=code,projectScope=GiftCodeIntent.ProjectFingerprint("fixture-gifts"),campaignId=Intent,expectedCount="9007199254740993",configRevision="9223372036854775807"};
+        private static string Response(bool replay=false,long revision=1) => "{\"success\":true,\"message\":\"ok\",\"campaignId\":\""+Intent+"\",\"count\":\"9007199254740994\",\"configRevision\":\"9223372036854775807\",\"giftData\":"+(replay?"null":"\"{\\\"opaque\\\":true}\"")+",\"grantedUnlocks\":"+(replay?"[]":"[\"badge.supporter\"]")+",\"grantedValues\":"+(replay?"[]":"[{\"key\":\"gold\",\"amount\":50}]")+",\"playerValues\":"+Values(revision)+",\"replayed\":"+(replay?"true":"false")+",\"alreadyApplied\":"+(replay?"true":"false")+"}";
+        [Test] public async Task PrepareAndTwoDeviceReplayKeepExactStringsAndCurrentBalances()
         {
-            int events = 0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed, new Action<RedeemGiftCodeResponse>(_ => events++));
-            for (int i = 0; i < 2; i++)
+            GiftCodeIntent[] intents=new GiftCodeIntent[2];
+            for(int i=0;i<2;i++)
             {
-                var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("VALUES", Intent); var context = await Timeout(incoming);
-                var request = JsonUtility.FromJson<RedeemGiftCodeRequest>(await new StreamReader(context.Request.InputStream).ReadToEndAsync());
-                Assert.That(context.Request.RawUrl, Is.EqualTo("/api/v1/app/gift-codes/redeem"));
-                Assert.That(context.Request.Headers["Authorization"], Is.EqualTo("Bearer fixture-session")); Assert.That(context.Request.Headers["X-API-Key"], Is.EqualTo("fixture-gifts"));
-                Assert.That(request.code, Is.EqualTo("VALUES")); Assert.That(request.userId, Is.EqualTo(User)); Assert.That(request.idempotencyId, Is.EqualTo(Intent));
-                await Respond(context, 200, Response(i == 1)); var result = await pending;
-                Assert.That(result, Is.Not.Null); Assert.That(result.replayed, Is.EqualTo(i == 1)); Assert.That(result.grantedValues[0].amount, Is.EqualTo(50));
-                Assert.That(result.giftData, Is.EqualTo("{\"amount\":9007199254740992}"));
-                Assert.That(result.playerValues.values[0].balance, Is.EqualTo(9007199254740991L));
-                result.playerValues.values[0].balance = 0;
-                Assert.That(PlayerValuesManager.Instance.CurrentState.values[0].balance, Is.EqualTo(9007199254740991L));
+                var incoming=_listener.GetContextAsync(); var pending=Manager.PrepareRedemption("VALUES"); var c=await Timeout(incoming);
+                string body=await new StreamReader(c.Request.InputStream).ReadToEndAsync();
+                Assert.That(c.Request.RawUrl,Is.EqualTo("/api/v1/app/gift-codes/validate")); Assert.That(c.Request.Headers["Authorization"],Is.EqualTo("Bearer fixture-session"));
+                Assert.That(JsonUtility.FromJson<ValidateGiftCodeRequest>(body).includeIntent,Is.True);
+                await Respond(c,200,"{\"valid\":true,\"protocolVersion\":2,\"campaignId\":\""+Intent+"\",\"expectedCount\":\"9007199254740993\",\"configRevision\":\"9223372036854775807\"}");
+                intents[i]=await pending; Assert.That(intents[i].expectedCount,Is.EqualTo("9007199254740993"));
             }
-            Assert.That(events, Is.EqualTo(2));
-        }
-        [Test] public async Task LegacyAndNullSnapshotKeepExistingContractAndOmitId()
-        {
-            foreach (string body in new[] { "{\"success\":true,\"giftData\":\"{}\"}", "{\"success\":true,\"grantedValues\":[],\"playerValues\":null,\"replayed\":false}" })
+            for(int i=0;i<2;i++)
             {
-                var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("LEGACY"); var context = await Timeout(incoming);
-                string request = await new StreamReader(context.Request.InputStream).ReadToEndAsync(); Assert.That(request, Does.Not.Contain("idempotencyId"));
-                await Respond(context, 200, body); var result = await pending;
-                Assert.That(result, Is.Not.Null); Assert.That(result.grantedValues, Is.Empty); Assert.That(result.grantedUnlocks, Is.Empty); Assert.That(result.playerValues, Is.Null); Assert.That(result.replayed, Is.False);
+                var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(intents[i]); var c=await Timeout(incoming);
+                var request=JsonUtility.FromJson<RedeemGiftCodeRequest>(await new StreamReader(c.Request.InputStream).ReadToEndAsync());
+                Assert.That(request.expectedCount,Is.EqualTo("9007199254740993")); Assert.That(request.configRevision,Is.EqualTo("9223372036854775807")); Assert.That(request.campaignId,Is.EqualTo(Intent)); Assert.That(request.protocolVersion,Is.EqualTo(2));
+                await Respond(c,200,Response(i==1,i+1)); var result=await pending; Assert.That(result,Is.Not.Null);
+                Assert.That(result.alreadyApplied,Is.EqualTo(i==1)); Assert.That(result.playerValues.values[0].balance,Is.EqualTo(9007199254740991L));
+                if(i==1) { Assert.That(result.giftData,Is.Null); Assert.That(result.grantedValues,Is.Empty); Assert.That(result.grantedUnlocks,Is.Empty); }
             }
         }
-        [TestCase(false)][TestCase(true)]
-        public async Task PureGiftPayloadSurvivesAnUnrelatedValuesCacheClear(bool explicitId)
+        [Test] public async Task LostResponseRetriesExactPersistedTupleEvenAfterManagerRestart()
         {
-            int events = 0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed, new Action<RedeemGiftCodeResponse>(_ => events++));
-            var incoming = _listener.GetContextAsync();
-            var pending = explicitId ? Manager.Redeem("PAYLOAD", Intent) : Manager.Redeem("PAYLOAD");
-            var context = await Timeout(incoming); PlayerValuesManager.Instance.ClearCache();
-            await Respond(context, 200, "{\"success\":true,\"giftData\":\"{\\\"item\\\":\\\"sword\\\"}\",\"grantedValues\":[],\"playerValues\":null}");
-            var result = await pending; Assert.That(result, Is.Not.Null); Assert.That(result.giftData, Is.EqualTo("{\"item\":\"sword\"}"));
-            Assert.That(result.playerValues, Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState, Is.Null); Assert.That(Manager.LastErrorCode, Is.Null); Assert.That(events, Is.EqualTo(1));
+            typeof(HorizonConfig).GetField("_retryDelaySeconds",BindingFlags.NonPublic|BindingFlags.Instance).SetValue(_config,0f);
+            var saved=JsonUtility.ToJson(NewIntent());
+            var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(JsonUtility.FromJson<GiftCodeIntent>(saved)); var first=await Timeout(incoming);
+            string original=await new StreamReader(first.Request.InputStream).ReadToEndAsync();
+            incoming=_listener.GetContextAsync(); await Respond(first,503,"{\"code\":\"TEMPORARY\"}"); var retry=await Timeout(incoming);
+            Assert.That(await new StreamReader(retry.Request.InputStream).ReadToEndAsync(),Is.EqualTo(original)); await Respond(retry,200,Response(true)); Assert.That((await pending).alreadyApplied,Is.True);
+            incoming=_listener.GetContextAsync(); pending=Manager.RedeemPrepared(JsonUtility.FromJson<GiftCodeIntent>(saved)); retry=await Timeout(incoming);
+            Assert.That(await new StreamReader(retry.Request.InputStream).ReadToEndAsync(),Is.EqualTo(original)); await Respond(retry,200,Response(true,2)); Assert.That((await pending).giftData,Is.Null);
         }
-        [TestCase("1.25")][TestCase("1e2")][TestCase("9007199254740992")][TestCase("-1")][TestCase("0")][TestCase("\"50\"")]
-        public async Task InvalidGrantIntegerNeverReachesPlayerValuesCache(string amount)
+        [TestCase("COUNT_AHEAD")][TestCase("CAMPAIGN_CHANGED")][TestCase("UPGRADE_REQUIRED")][TestCase("MIGRATION_REQUIRED")][TestCase("COUNTER_EXHAUSTED")]
+        public async Task DomainErrorNeverPreparesOrAdvances(string code)
         {
-            var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("VALUES", Intent);
-            await Respond(await Timeout(incoming), 200, Response().Replace("\"amount\":50", "\"amou\\u006et\":" + amount));
-            Assert.That(await pending, Is.Null); Assert.That(Manager.LastErrorCode, Is.EqualTo("INVALID_RESPONSE")); Assert.That(PlayerValuesManager.Instance.CurrentState, Is.Null);
+            var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
+            await Respond(c,409,"{\"code\":\""+code+"\",\"message\":\"protected\"}"); Assert.That(await pending,Is.Null); Assert.That(Manager.LastErrorCode,Is.EqualTo(code));
+            var extra=_listener.GetContextAsync(); Assert.That(await Task.WhenAny(extra,Task.Delay(80)),Is.Not.SameAs(extra));
         }
-        [TestCase("host")][TestCase("session")][TestCase("project")][TestCase("signout")][TestCase("cache")]
-        public async Task LateReplyIsRejectedAfterContextChangesIncludingSwitchAwayAndBack(string change)
+        [TestCase("session")][TestCase("project")][TestCase("signout")][TestCase("cache")][TestCase("host")]
+        public async Task InFlightIdentityAndValueCacheChangesAreFenced(string kind)
         {
-            int events = 0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed, new Action<RedeemGiftCodeResponse>(_ => events++));
-            var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("VALUES", Intent); var context = await Timeout(incoming);
-            switch (change)
+            var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
+            if(kind=="session") { NetworkService.Instance.SetSessionToken("other"); NetworkService.Instance.SetSessionToken("fixture-session"); }
+            if(kind=="project") { _config.SetApiKey("other"); _config.SetApiKey("fixture-gifts"); }
+            if(kind=="host") { NetworkService.Instance.SetActiveHost("http://other.invalid"); NetworkService.Instance.SetActiveHost(Host); }
+            if(kind=="signout") UserManager.Instance.SignOut();
+            if(kind=="cache") PlayerValuesManager.Instance.ClearCache();
+            await Respond(c,200,Response()); Assert.That(await pending,Is.Null); Assert.That(Manager.LastErrorCode,Is.EqualTo("STALE_RESPONSE"));
+        }
+        [TestCase("9223372036854775808")][TestCase("01")][TestCase("1e2")][TestCase("-1")]
+        public async Task InvalidPersistedCountsNeverReachTransport(string value)
+        {
+            var i=NewIntent(); i.expectedCount=value; var extra=_listener.GetContextAsync();
+            Assert.That(await Manager.RedeemPrepared(i),Is.Null); Assert.That(Manager.LastErrorCode,Is.EqualTo("INVALID_REQUEST"));
+            Assert.That(await Task.WhenAny(extra,Task.Delay(50)),Is.Not.SameAs(extra));
+        }
+        [Test] public async Task OriginalCampaignSurvivesVisibleCodeReuseAndForeignScopeIsRejected()
+        {
+            var i=NewIntent("REUSED"); var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(i); var c=await Timeout(incoming);
+            Assert.That((await new StreamReader(c.Request.InputStream).ReadToEndAsync()).Contains(Intent),Is.True);
+            await Respond(c,200,Response(true)); Assert.That(await pending,Is.Not.Null);
+            i.userId="other"; Assert.That(await Manager.RedeemPrepared(i),Is.Null); i.userId=User; i.projectScope="other"; Assert.That(await Manager.RedeemPrepared(i),Is.Null);
+        }
+        [TestCase("\"count\":9007199254740994")][TestCase("\"count\":\"9223372036854775808\"")][TestCase("\"count\":\"01\"")]
+        public async Task MalformedResponseCannotOverwriteValues(string replacement)
+        {
+            var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
+            await Respond(c,200,Response().Replace("\"count\":\"9007199254740994\"",replacement)); Assert.That(await pending,Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
+        }
+        [TestCase("PM.horizOn.Cloud.ExampleUI.HorizonExampleUIController")]
+        [TestCase("PM.horizOn.Cloud.Examples.HorizonSDKExample")]
+        public async Task ActualExampleUIKeepsOnePendingPreparation(string className)
+        {
+            Type type=null; foreach(var assembly in AppDomain.CurrentDomain.GetAssemblies()) { type=assembly.GetType(className); if(type!=null) break; }
+            Assert.That(type,Is.Not.Null,"Native project must import the concrete Example UI consumer");
+            GameObject owner=null;
+            object example;
+            if(typeof(MonoBehaviour).IsAssignableFrom(type)) { owner=new GameObject("[GiftV2UIProbe]"); example=owner.AddComponent(type); }
+            else example=Activator.CreateInstance(type);
+            var method=type.GetMethod("RedeemGiftV2",BindingFlags.NonPublic|BindingFlags.Instance);
+            string key="horizOn_gift_ui_pending_"+GiftCodeIntent.ProjectFingerprint("fixture-gifts")+"_"+User;
+            PlayerPrefs.DeleteKey(key);
+            try
             {
-                case "host": NetworkService.Instance.SetActiveHost("http://other.invalid"); NetworkService.Instance.SetActiveHost(Host); break;
-                case "session": NetworkService.Instance.SetSessionToken("other"); NetworkService.Instance.SetSessionToken("fixture-session"); break;
-                case "project": _config.SetApiKey("other"); _config.SetApiKey("fixture-gifts"); break;
-                case "signout": UserManager.Instance.SignOut(); SetUser(User, "fixture-session"); NetworkService.Instance.SetSessionToken("fixture-session"); break;
-                case "cache": PlayerValuesManager.Instance.ClearCache(); break;
+                var incoming=_listener.GetContextAsync(); var first=(Task<RedeemGiftCodeResponse>)method.Invoke(example,new object[]{"VALUES"}); var prepare=await Timeout(incoming);
+                Assert.That(prepare.Request.RawUrl,Is.EqualTo("/api/v1/app/gift-codes/validate"));
+                Assert.That(await (Task<RedeemGiftCodeResponse>)method.Invoke(example,new object[]{"OTHER"}),Is.Null,"Concurrent click cannot prepare or replace the unresolved slot");
+                incoming=_listener.GetContextAsync();
+                await Respond(prepare,200,"{\"valid\":true,\"protocolVersion\":2,\"campaignId\":\""+Intent+"\",\"expectedCount\":\"9007199254740993\",\"configRevision\":\"9223372036854775807\"}");
+                var redemption=await Timeout(incoming); Assert.That(redemption.Request.RawUrl,Is.EqualTo("/api/v1/app/gift-codes/redeem"));
+                Assert.That(PlayerPrefs.HasKey(key),Is.True,"Actual consumer saved the original before HTTP consume");
+                var saved=JsonUtility.FromJson<GiftCodeIntent>(PlayerPrefs.GetString(key)); Assert.That(saved.campaignId,Is.EqualTo(Intent)); Assert.That(saved.expectedCount,Is.EqualTo("9007199254740993"));
+                await Respond(redemption,409,"{\"code\":\"MIGRATION_REQUIRED\",\"message\":\"protected\"}"); Assert.That(await first,Is.Null);
+                Assert.That(PlayerPrefs.HasKey(key),Is.True,"Protected/unknown result cannot confirm or remove original");
             }
-            await Respond(context, 200, Response()); Assert.That(await pending, Is.Null); Assert.That(Manager.LastErrorCode, Is.EqualTo("STALE_RESPONSE"));
-            Assert.That(PlayerValuesManager.Instance.CurrentState, Is.Null); Assert.That(events, Is.Zero);
+            finally { PlayerPrefs.DeleteKey(key); PlayerPrefs.Save(); if(owner!=null) UnityEngine.Object.DestroyImmediate(owner); }
         }
-        [Test] public async Task OlderSnapshotCannotOverwriteNewerRedemptionOrClearedWatermark()
+        [TestCase("count")][TestCase("configRevision")]
+        public async Task FreshResponseMustBindOriginalSequenceAndRevisionBeforeConfirmation(string field)
         {
-            var incoming = _listener.GetContextAsync(); var old = Manager.Redeem("OLD", Intent); var first = await Timeout(incoming);
-            incoming = _listener.GetContextAsync(); var fresh = Manager.Redeem("NEW", Guid.NewGuid().ToString("D"));
-            await Respond(await Timeout(incoming), 200, Response(revision: 2)); Assert.That(await fresh, Is.Not.Null);
-            await Respond(first, 200, Response()); Assert.That(await old, Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState.revision, Is.EqualTo(2));
-            PlayerValuesManager.Instance.ClearCache(); incoming = _listener.GetContextAsync(); old = Manager.Redeem("OLD", Intent);
-            await Respond(await Timeout(incoming), 200, Response()); Assert.That(await old, Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState, Is.Null);
+            string key="horizon-gift-native-original";
+            var intent=NewIntent(); string saved=JsonUtility.ToJson(intent);
+            PlayerPrefs.SetString(key,saved); PlayerPrefs.Save();
+            try
+            {
+                int successes=0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed,new Action<RedeemGiftCodeResponse>(_=>successes++));
+                var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(JsonUtility.FromJson<GiftCodeIntent>(PlayerPrefs.GetString(key))); var c=await Timeout(incoming);
+                string wrong=field=="count"?Response().Replace("\"count\":\"9007199254740994\"","\"count\":\"9007199254740995\""):Response().Replace("\"configRevision\":\"9223372036854775807\"","\"configRevision\":\"9223372036854775806\"");
+                await Respond(c,200,wrong); Assert.That(await pending,Is.Null); Assert.That(Manager.LastErrorCode,Is.EqualTo("INVALID_RESPONSE"));
+                Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null); Assert.That(successes,Is.Zero);
+                Assert.That(PlayerPrefs.GetString(key),Is.EqualTo(saved),"Unconfirmed original remains available for reconciliation");
+            }
+            finally { PlayerPrefs.DeleteKey(key); PlayerPrefs.Save(); }
         }
-        [Test] public async Task SameContextRefreshStaysValidButForeignPlayerSnapshotIsRejected()
+        [Test] public async Task ReplayCannotSmuggleHistoricalRewards()
         {
-            var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("VALUES", Intent); var context = await Timeout(incoming);
-            _config.SetApiKey("fixture-gifts"); NetworkService.Instance.Initialize(_config); NetworkService.Instance.SetActiveHost(Host); NetworkService.Instance.SetSessionToken("fixture-session");
-            await Respond(context, 200, Response()); Assert.That(await pending, Is.Not.Null);
-            incoming = _listener.GetContextAsync(); pending = Manager.Redeem("VALUES", Intent);
-            await Respond(await Timeout(incoming), 200, Response(revision: 2).Replace(User, "00000000-0000-4000-8000-000000009999"));
-            Assert.That(await pending, Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState.userId, Is.EqualTo(User));
-            Assert.That(PlayerValuesManager.Instance.CurrentState.revision, Is.EqualTo(1));
-        }
-        [Test] public async Task ServerRetryKeepsOriginalBodyAndPermanentFailureIsNotRetried()
-        {
-            typeof(HorizonConfig).GetField("_retryDelaySeconds", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(_config, 0f);
-            var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("VALUES", Intent); var first = await Timeout(incoming);
-            string body = await new StreamReader(first.Request.InputStream).ReadToEndAsync(); incoming = _listener.GetContextAsync();
-            await Respond(first, 503, "{\"code\":\"TEMPORARY\"}"); var retry = await Timeout(incoming);
-            Assert.That(await new StreamReader(retry.Request.InputStream).ReadToEndAsync(), Is.EqualTo(body)); Assert.That(body, Does.Contain(Intent));
-            await Respond(retry, 200, Response(true)); Assert.That((await pending).replayed, Is.True);
-            incoming = _listener.GetContextAsync(); pending = Manager.Redeem("VALUES", Intent); first = await Timeout(incoming);
-            await Respond(first, 409, "{\"code\":\"IDEMPOTENCY_CONFLICT\",\"message\":\"Conflict\"}");
-            Assert.That(await pending, Is.Null); Assert.That(Manager.LastErrorCode, Is.EqualTo("IDEMPOTENCY_CONFLICT"));
-            var unexpected = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(unexpected, Task.Delay(100)), Is.Not.SameAs(unexpected));
-        }
-        [Test] public async Task LegacyRedemptionAndSignupNeverRepeatAfterUncertainServerResponse()
-        {
-            typeof(HorizonConfig).GetField("_retryDelaySeconds", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(_config, 0f);
-            var incoming = _listener.GetContextAsync(); var pending = Manager.Redeem("LEGACY");
-            await Respond(await Timeout(incoming), 503, "{\"code\":\"TEMPORARY\"}"); Assert.That(await pending, Is.Null);
-            var next = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(next, Task.Delay(100)), Is.Not.SameAs(next));
-            SetUser(null, null); NetworkService.Instance.ClearSessionToken();
-            var signup = UserManager.Instance.SignUpAnonymous("fixture-new"); var context = await Timeout(next);
-            Assert.That(context.Request.RawUrl, Is.EqualTo("/api/v1/app/user-management/signup"));
-            await Respond(context, 503, "{\"code\":\"TEMPORARY\"}"); Assert.That(await signup, Is.False);
-            var unexpected = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(unexpected, Task.Delay(100)), Is.Not.SameAs(unexpected));
-            Assert.That(UserManager.Instance.HasCachedAnonymousToken(), Is.False);
-        }
-        [TestCase(null)][TestCase("")][TestCase(" ")]
-        public async Task MissingExplicitIdNeverFallsBackToLegacyRedemption(string id)
-        {
-            var unexpected = _listener.GetContextAsync(); Assert.That(await Manager.Redeem("VALUES", id), Is.Null);
-            Assert.That(Manager.LastErrorCode, Is.EqualTo("INVALID_REQUEST"));
-            Assert.That(await Task.WhenAny(unexpected, Task.Delay(80)), Is.Not.SameAs(unexpected));
-        }
-        [Test] public async Task PublicReadRetrySurvivesConcurrentSigninButStillFencesRoutingChanges()
-        {
-            typeof(HorizonConfig).GetField("_retryDelaySeconds", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(_config, 0f);
-            var incoming = _listener.GetContextAsync(); var pending = NetworkService.Instance.GetAsync<MessageResponse>("/api/v1/app/news");
-            var first = await Timeout(incoming); NetworkService.Instance.SetSessionToken("signed-in-during-public-request");
-            incoming = _listener.GetContextAsync(); await Respond(first, 503, "{}"); var second = await Timeout(incoming);
-            Assert.That(second.Request.Headers["Authorization"], Is.Null);
-            await Respond(second, 200, "{\"success\":true,\"message\":\"public\"}"); Assert.That((await pending).IsSuccess, Is.True);
-            incoming = _listener.GetContextAsync(); pending = NetworkService.Instance.GetAsync<MessageResponse>("/api/v1/app/news"); first = await Timeout(incoming);
-            NetworkService.Instance.SetActiveHost("http://other.invalid"); NetworkService.Instance.SetActiveHost(Host);
-            await Respond(first, 503, "{}"); Assert.That((await pending).ErrorCode, Is.EqualTo("SESSION_CHANGED"));
-        }
-        [TestCase("")][TestCase(" ")][TestCase(null)]
-        public async Task MissingOrInvalidIdentityIsRejectedBeforeTransport(string token)
-        {
-            NetworkService.Instance.SetSessionToken(token);
-            var unexpected = _listener.GetContextAsync(); Assert.That(await Manager.Redeem("VALUES", Intent), Is.Null);
-            Assert.That(await Task.WhenAny(unexpected, Task.Delay(80)), Is.Not.SameAs(unexpected));
+            var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
+            await Respond(c,200,Response().Replace("\"replayed\":false","\"replayed\":true").Replace("\"alreadyApplied\":false","\"alreadyApplied\":true")); Assert.That(await pending,Is.Null);
         }
         private static void SetUser(string id, string token) => typeof(UserManager).GetField("_currentUser", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(UserManager.Instance, new UserData { UserId = id, AccessToken = token });
         private static async Task<T> Timeout<T>(Task<T> task)

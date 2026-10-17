@@ -10,6 +10,20 @@ namespace PM.horizOn.Cloud.Helper
     /// <summary>Validate original integer lexemes and decoded keys before any Unity numeric conversion.</summary>
     internal static class GiftCodeJson
     {
+        public static ValidateGiftCodeResponse Validate(string json)
+        {
+            var root=JsonFragments.Object(json);
+            if (!root.TryGetValue("valid",out var valid) || (valid!="true" && valid!="false")) throw new FormatException("Invalid validation");
+            var result=new ValidateGiftCodeResponse { valid=valid=="true" };
+            if (root.ContainsKey("protocolVersion"))
+            {
+                if (root["protocolVersion"]!="2") throw new FormatException("Unsupported protocol");
+                result.protocolVersion=2; result.campaignId=JsonFragments.String(root["campaignId"]);
+                result.expectedCount=JsonFragments.String(root["expectedCount"]); result.configRevision=JsonFragments.String(root["configRevision"]);
+                if (!Guid.TryParseExact(result.campaignId,"D",out _) || !GiftCodeIntent.CanonicalCount(result.expectedCount) || !GiftCodeIntent.CanonicalCount(result.configRevision)) throw new FormatException("Invalid original intent");
+            }
+            return result;
+        }
         public static RedeemGiftCodeResponse Redeem(string json)
         {
             var root = JsonFragments.Object(json);
@@ -43,6 +57,13 @@ namespace PM.horizOn.Cloud.Helper
             }
             if (root.TryGetValue("playerValues", out var state) && state != "null") result.playerValues = PlayerValuesJson.State(state);
             if (result.grantedValues.Length > 0 && result.playerValues == null) throw new FormatException("Gift code balance snapshot missing");
+            result.campaignId=JsonFragments.String(root["campaignId"]);
+            result.count=JsonFragments.String(root["count"]); result.configRevision=JsonFragments.String(root["configRevision"]);
+            if (!Guid.TryParseExact(result.campaignId,"D",out _) || !GiftCodeIntent.CanonicalCount(result.count) || !GiftCodeIntent.CanonicalCount(result.configRevision)
+                || !root.TryGetValue("alreadyApplied",out var applied) || (applied!="true" && applied!="false")) throw new FormatException("Invalid sequence result");
+            result.alreadyApplied=applied=="true";
+            if (!root.ContainsKey("replayed") || result.replayed!=result.alreadyApplied || result.alreadyApplied &&
+                (result.giftData!=null || result.grantedValues.Length>0 || result.grantedUnlocks.Length>0)) throw new FormatException("Historical replay rewards forbidden");
             return result;
         }
     }
