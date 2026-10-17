@@ -12,10 +12,13 @@ using PM.horizOn.Cloud.Service;
 using UnityEngine;
 using PM.horizOn.Cloud.Transport;
 
+if (ChatHistoryContractTests.TryRunChild(args)) return;
+if (args.Length == 1 && args[0] == "--chat-only") { ChatHistoryContractTests.Run(); return; }
 if (MatchesJournalContractTests.TryRunChild(args)) return;
 if (SharedObjectsJournalContractTests.TryRunChild(args)) return;
 if (ItemsJournalContractTests.TryRunChild(args)) return;
 if (GroupsJournalContractTests.TryRunChild(args)) return;
+ChatHistoryContractTests.Run();
 GroupsJournalContractTests.Run();
 SharedObjectsJournalContractTests.Run();
 ItemsJournalContractTests.Run();

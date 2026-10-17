@@ -48,7 +48,8 @@ namespace PM.horizOn.Cloud.Manager
         private readonly HashSet<string> _sent = new HashSet<string>();
         private readonly ConcurrentQueue<(int generation, string raw)> _incoming = new ConcurrentQueue<(int, string)>();
         private readonly string _clientId = Guid.NewGuid().ToString();
-        private string _pending, _token, _userId;
+        private string _pending, _token, _userId, _apiKey, _host;
+        private long _networkGeneration;
         private int _generation, _attempt, _pendingSends;
         private long _requestId, _pendingRequestId;
         private bool _pendingCanceled;
@@ -73,6 +74,8 @@ namespace PM.horizOn.Cloud.Manager
             _topics.Add(topic);
             return true;
         }
+        public bool IsSubscribed(string topic)
+        { SyncIdentity(); return IsReady && _topics.Contains(topic) && _sent.Contains(topic); }
         public void Unsubscribe(string topic)
         {
             if (!_topics.Remove(topic)) return;
@@ -131,7 +134,7 @@ namespace PM.horizOn.Cloud.Manager
             try
             {
                 var response = await HorizonApp.Network.PostAsync<RealtimeSessionInfo>("/api/v1/app/realtime/session", new object(), true);
-                if (generation != _generation || this == null) return;
+                if (this == null || SyncIdentity() || generation != _generation) return;
                 if (!response.IsSuccess)
                 {
                     _unsupported = response.ErrorCode == "NOT_SUPPORTED" || response.StatusCode == 501;
@@ -271,12 +274,18 @@ namespace PM.horizOn.Cloud.Manager
         private bool SyncIdentity()
         {
             if (!HorizonApp.IsInitialized) return false;
-            bool changed = false;
             string user = UserManager.Instance.CurrentUser?.UserId;
-            if (user != _userId) { if (!string.IsNullOrEmpty(_userId)) Close(); _userId = user; changed = true; }
-            string token = HorizonApp.Network.GetSessionToken();
-            if (token != _token) { DisconnectTransport(); _token = token; _unsupported = false; _attempt = 0; changed = true; }
-            return changed;
+            var network = HorizonApp.Network;
+            string token = network.GetSessionToken(), key = network.GetApiKey(), host = network.GetActiveHost();
+            long context = network.ContextGeneration;
+            bool ownerChanged = user != _userId || key != _apiKey;
+            bool changed = ownerChanged || token != _token || host != _host || context != _networkGeneration;
+            if (!changed) return false;
+            if (ownerChanged && (!string.IsNullOrEmpty(_userId) || !string.IsNullOrEmpty(_apiKey))) _topics.Clear();
+            DisconnectTransport();
+            _userId = user; _token = token; _apiKey = key; _host = host; _networkGeneration = context;
+            _unsupported = false; _attempt = 0;
+            return true;
         }
         private void DisconnectTransport()
         {
