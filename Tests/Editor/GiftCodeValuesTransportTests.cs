@@ -114,6 +114,23 @@ namespace PM.horizOn.Cloud.Tests
             var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);
             await Respond(c,200,Response().Replace("\"count\":\"9007199254740994\"",replacement)); Assert.That(await pending,Is.Null); Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null);
         }
+        [TestCase("count")][TestCase("configRevision")]
+        public async Task FreshResponseMustBindOriginalSequenceAndRevisionBeforeConfirmation(string field)
+        {
+            string key="horizon-gift-native-original";
+            var intent=NewIntent(); string saved=JsonUtility.ToJson(intent);
+            PlayerPrefs.SetString(key,saved); PlayerPrefs.Save();
+            try
+            {
+                int successes=0; HorizonApp.Events.Subscribe(EventKeys.GiftCodeRedeemed,new Action<RedeemGiftCodeResponse>(_=>successes++));
+                var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(JsonUtility.FromJson<GiftCodeIntent>(PlayerPrefs.GetString(key))); var c=await Timeout(incoming);
+                string wrong=field=="count"?Response().Replace("\"count\":\"9007199254740994\"","\"count\":\"9007199254740995\""):Response().Replace("\"configRevision\":\"9223372036854775807\"","\"configRevision\":\"9223372036854775806\"");
+                await Respond(c,200,wrong); Assert.That(await pending,Is.Null); Assert.That(Manager.LastErrorCode,Is.EqualTo("INVALID_RESPONSE"));
+                Assert.That(PlayerValuesManager.Instance.CurrentState,Is.Null); Assert.That(successes,Is.Zero);
+                Assert.That(PlayerPrefs.GetString(key),Is.EqualTo(saved),"Unconfirmed original remains available for reconciliation");
+            }
+            finally { PlayerPrefs.DeleteKey(key); PlayerPrefs.Save(); }
+        }
         [Test] public async Task ReplayCannotSmuggleHistoricalRewards()
         {
             var incoming=_listener.GetContextAsync(); var pending=Manager.RedeemPrepared(NewIntent()); var c=await Timeout(incoming);

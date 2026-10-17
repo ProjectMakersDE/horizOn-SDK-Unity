@@ -65,6 +65,8 @@ namespace PM.horizOn.Cloud.Manager
             var data=response.Data;
             if (data.campaignId!=intent.campaignId || !GiftCodeIntent.CanonicalCount(data.count) ||
                 string.CompareOrdinal(data.count.PadLeft(19,'0'),intent.expectedCount.PadLeft(19,'0'))<=0) return Failure("INVALID_RESPONSE");
+            if (!data.alreadyApplied && (data.count != checked(long.Parse(intent.expectedCount,System.Globalization.CultureInfo.InvariantCulture)+1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                || data.configRevision!=intent.configRevision)) return Failure("INVALID_RESPONSE");
             if (data.playerValues!=null)
             {
                 if (valuesEpoch!=values.CacheEpoch || !values.AcceptServerState(userId,data.playerValues)) return Failure("STALE_RESPONSE");
