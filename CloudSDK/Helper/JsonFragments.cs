@@ -11,19 +11,21 @@ namespace PM.horizOn.Cloud.Helper
         private const int MaxBytes = 8 * 1024 * 1024;
         private static readonly Regex Primitive = new Regex(@"\G(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)");
         private readonly string _json;
+        private readonly int _maxElements;
         private int _at;
-        private JsonFragments(string json)
+        private JsonFragments(string json, int maxElements = 2048)
         {
             if (json == null || json.Length > MaxBytes || Encoding.UTF8.GetByteCount(json) > MaxBytes) throw new FormatException("JSON size limit");
             _json = json;
+            _maxElements = maxElements;
         }
-        public static Dictionary<string, string> Object(string json)
+        public static Dictionary<string, string> Object(string json, int maxElements = 2048)
         {
-            var reader = new JsonFragments(json); var result = reader.ReadObject(0); reader.End(); return result;
+            var reader = new JsonFragments(json, maxElements); var result = reader.ReadObject(0); reader.End(); return result;
         }
-        public static List<string> Array(string json)
+        public static List<string> Array(string json, int maxElements = 2048)
         {
-            var reader = new JsonFragments(json); var result = reader.ReadArray(0); reader.End(); return result;
+            var reader = new JsonFragments(json, maxElements); var result = reader.ReadArray(0); reader.End(); return result;
         }
         public static string String(string json)
         {
@@ -37,7 +39,7 @@ namespace PM.horizOn.Cloud.Helper
             {
                 string key = ReadString(); Expect(':');
                 Space(); int start = _at; ReadValue(depth + 1);
-                if (result.Count >= 2048 || result.ContainsKey(key)) throw new FormatException("JSON duplicate/key limit");
+                if (result.Count >= _maxElements || result.ContainsKey(key)) throw new FormatException("JSON duplicate/key limit");
                 result.Add(key, _json.Substring(start, _at - start));
                 if (Take('}')) return result;
                 Expect(',');
@@ -50,7 +52,7 @@ namespace PM.horizOn.Cloud.Helper
             do
             {
                 Space(); int start = _at; ReadValue(depth + 1);
-                if (result.Count >= 2048) throw new FormatException("JSON array limit");
+                if (result.Count >= _maxElements) throw new FormatException("JSON array limit");
                 result.Add(_json.Substring(start, _at - start));
                 if (Take(']')) return result;
                 Expect(',');

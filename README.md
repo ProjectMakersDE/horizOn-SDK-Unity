@@ -1246,3 +1246,57 @@ coalesces writes during an in-flight flush. Browser storage errors are reported
 through `LocalHistoryFailed`; they do not resend messages. Browser storage is
 subject to browser quotas and user deletion. The flush bridge has automated
 contract tests; native tests do not prove an exported browser game.
+
+
+## Marketplace: current escrow and durable original actions
+
+`MarketplaceManager.Instance` implements all ten authenticated App routes: `GetLimits`,
+`GetRules`, `GetMarketplace`, `QueryListings`, `GetListing`, `CreateListing`,
+`BuyListing`, `CancelListing`, `GetOperation`, and `RetryReturn`. Rules/query pages
+are explicit (1–50 rows); continuation retains its original catalog revision or
+opaque cursor. Every call uses the current player's Bearer and project key. No
+method creates a player or polls automatically.
+
+The five operator quotas are exact positive Int32 values, including values above
+old tariff defaults. Current state keeps every retained listing/history reference
+even after a quota is lowered. The Marketplace decoder uses the existing 8 MiB
+JSON / 24-level transport frame without the generic 2,048-element guard. This is a
+transport limitation, not a database-size or product-quota claim. Original item
+properties, embedded NUL/Unicode and safe integers remain exact. Nullable fields
+use the explicit Marketplace codec; Unity `JsonUtility` is not its wire decoder.
+
+Import `MarketplaceExample.cs`, `MarketplaceSampleStore.cs` and `MarketplaceQuickstart.cs` from the Examples
+sample. Set the real stable project UUID in `projectId`, retain the normal existing
+SDK session, and call the explicit screen methods to read config/rules/inventory or
+a listing. `ReviewCreate`, `ReviewBuy` and `ReviewCancel` freeze displayed terms;
+only `ConfirmReviewedTrade` creates an operation UUID and a server-clock UTC
+millisecond timestamp. The sample flushes and verifies the complete original JSON
+before its single POST. A project/player OS-exclusive handle spans the entire
+asynchronous send; closing the screen releases it after the in-flight task returns.
+
+After an uncertain response use `RetryPending` for the same original bytes or
+`RecoverOriginalOperation` to look up that original operation. Neither a 404 nor
+expiry authorizes a new purchase. Replays may contain today's later terminal
+listing (with `item == null`) or no retained listing at all. They do not restore
+old inventory or balances. Only a minimal known identity is saved before explicit
+current Inventory, Player Values and Marketplace GETs; after all three succeed,
+the one resolved original is removed. Confirmed restarts perform only GETs. There
+is no local completed-purchase/result archive or synthetic item grant. Storage
+errors preserve originals and surface as exceptions; partial/conflicting files
+require recovery and must not be deleted to permit a new trade.
+
+`RetryReturnDelivery` retries the same listing's source-owned delivery.
+`ClaimReturn` delegates the same original entry to Inbox. `INBOX_FULL` and
+`INVENTORY_FULL` remain recoverable; a later replay after discard/resale is only a
+reference and never recreates the item. The supplied file journal supports native
+platforms. WebGL writes require a game-owned durable browser journal with exclusive
+ownership; the native sample rejects writes instead of pretending a synchronous
+file flush persisted browser storage.
+
+`Tests/Editor/MarketplaceTransportTests.cs` runs the actual imported sample and
+production transport against an isolated strict Python HTTP fixture: all ten
+routes, 2,051 retained open offers and 151 history references after lowering,
+actor destruction during an uncertain send, original retries, GET-only recovery,
+and original escrow claim followed by discard/replay. The shared .NET source gate
+also kills real journal-owner processes at five persistence boundaries. These
+artificial local tests do not prove a hosted deployment or exported browser game.

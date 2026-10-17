@@ -15,6 +15,11 @@
     <Compile Include="../../Samples~/Examples/Features/SharedObjectsSampleStore.cs" Link="Production/SharedObjectsSampleStore.cs" />
     <Compile Include="../../CloudSDK/Helper/SharedObjectsJson.cs" Link="Production/SharedObjectsJson.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/SharedObjectsResponses.cs" Link="Production/SharedObjectsResponses.cs" />
+    <Compile Include="../../CloudSDK/Objects/Network/Responses/MarketplaceResponses.cs" Link="Production/MarketplaceResponses.cs" />
+    <Compile Include="../../CloudSDK/Transport/MarketplaceIntent.cs" Link="Production/MarketplaceIntent.cs" />
+    <Compile Include="../../Samples~/Examples/Features/MarketplaceSampleStore.cs" Link="Production/MarketplaceSampleStore.cs" />
+    <Compile Include="../../CloudSDK/Helper/MarketplaceJson.cs" Link="Production/MarketplaceJson.cs" />
+    <Compile Include="../../CloudSDK/Manager/MarketplaceManager.cs" Link="Production/MarketplaceManager.cs" />
     <Compile Include="../../CloudSDK/Helper/ItemsJson.cs" Link="Production/ItemsJson.cs" />
     <Compile Include="../../CloudSDK/Objects/Network/Responses/ItemsResponses.cs" Link="Production/ItemsResponses.cs" />
     <Compile Include="../../Samples~/Examples/Features/GroupsSampleStore.cs" Link="Production/GroupsSampleStore.cs" />

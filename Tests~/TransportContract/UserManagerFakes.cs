@@ -132,6 +132,9 @@ namespace PM.horizOn.Cloud.Service
         }
         public Task<NetworkResponse<T>> GetAsync<T>(string endpoint, bool useSessionToken = false) where T : class
             => PostAsync<T>(endpoint, null, useSessionToken);
+        // This boundary has no retry layer; expose the production once-only entry point as one delegate call.
+        public Task<NetworkResponse<T>> PostOnceAsync<T>(string endpoint, object requestData = null, bool useSessionToken = false) where T : class
+            => PostAsync<T>(endpoint, requestData, useSessionToken);
 
         public void SetSessionToken(string token) { if (SessionToken != token) ContextGeneration++; SessionToken = token; }
         public void ClearSessionToken() => SetSessionToken(null);
