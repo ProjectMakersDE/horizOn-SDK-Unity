@@ -536,6 +536,10 @@ Require(!StatisticsTransportContract.TryUpdate(user, "stale-token", statisticsUp
 Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", statisticsUpdates, Guid.NewGuid().ToString(), out _, out _), "statistics explicit timestamp UUID");
 Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", new[] { new StatisticUpdate("kills", 1), new StatisticUpdate("kills", 2) }, statisticsOperation, out _, out _), "statistics duplicate keys");
 Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", new[] { new StatisticUpdate("kills", 9007199254740992L) }, statisticsOperation, out _, out _), "statistics integer upper bound");
+var largeStatisticsBatch = new System.Collections.Generic.List<StatisticUpdate>();
+for (int index = 0; index < 201; index++) largeStatisticsBatch.Add(new StatisticUpdate("stat" + index, index));
+Require(StatisticsTransportContract.TryUpdate(user, "session-token-720", largeStatisticsBatch, statisticsOperation, out var largeStatisticsRequest, out _)
+    && largeStatisticsRequest.updates.Length == 201, "statistics admin-configured catalog above100 remains sendable with the original operation ID");
 var parsedStatistics = JsonHelper.FromJson<StatisticsSnapshot>("{\"userId\":\"u\",\"values\":[{\"key\":\"kills\",\"value\":-9007199254740991,\"hasValue\":true}],\"definitions\":[{\"key\":\"kills\",\"mode\":\"sum\",\"reset\":\"none\"}]}");
 Require(parsedStatistics.values[0].value == -9007199254740991L && !parsedStatistics.definitions[0].HasMaxPerUpdate, "statistics response safe negative and absent bound");
 
