@@ -97,6 +97,12 @@ namespace PM.horizOn.Cloud.Tests
                 Assert.That(result.Data.items[0].instanceId, Is.EqualTo(User)); Assert.That(PlayerValuesManager.Instance.CurrentState.values[0].balance, Is.EqualTo(10));
             }
         }
+        [Test] public async Task LegacyGroupAcceptanceKeepsRequestReferenceAndGroupNavigation()
+        {
+            var result = await Load(WithEntries("[" + SourceEntry("group_accept-request", "horizon.groups.accept-request", "00000000-0000-4000-8000-000000001007", "{\"groupId\":\"" + User + "\"}") + "]"));
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.entries[0].TryGetSource(out var source), Is.True);
+            Assert.That(source.GroupId, Is.EqualTo(User)); Assert.That(source.SourceId, Is.Not.EqualTo(User));
+        }
         [TestCase("revision")] [TestCase("source")] [TestCase("attachment")] [TestCase("item")]
         public async Task MalformedSourceAndValuableContentCannotReplaceTheCache(string malformed)
         {

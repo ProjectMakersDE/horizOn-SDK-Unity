@@ -132,6 +132,8 @@ internal static class InboxContractTests
             Refuses(WithEntries("[" + source.Replace("\"reference\":\"" + User + "\"", "\"reference\":\"bad\"") + "]"), "invalid source identity");
         }
         string market = SourceEntry("marketplace", "marketplace.item_return", User, "{}", item);
+        var oldAcceptance = InboxJson.Snapshot(WithEntries("[" + SourceEntry("group_accept-invite", "horizon.groups.accept-invite", "00000000-0000-4000-8000-000000001007", "{\"groupId\":\"" + User + "\"}") + "]"));
+        Check(oldAcceptance.entries[0].TryGetSource(out var oldGroup) && oldGroup.GroupId == User && oldGroup.SourceId != User, "legacy acceptance retains original request reference and group navigation");
         var returned = InboxJson.Snapshot(WithEntries("[" + market + "]"));
         Check(returned.entries[0].CanClaim && returned.entries[0].attachment.values.Length == 0, "item-only attachment is claimable");
         Check(InboxJson.Clone(plain).entries[0].attachment == null && !InboxJson.Clone(InboxJson.Snapshot(WithEntries("[" + row.Replace("9007199254740991", "1").Replace("[{\"key\":\"gold\",\"amount\":1}]", "[]") + "]"))).entries[0].CanClaim, "optional reward presence survives clone");

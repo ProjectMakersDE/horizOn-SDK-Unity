@@ -63,7 +63,6 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
                 || sourceKind == InboxSourceKind.GroupInvitationAccepted || sourceKind == InboxSourceKind.GroupRequestAccepted)
             {
                 if (!ParameterId("groupId", out var groupId)) return false;
-                if ((sourceKind == InboxSourceKind.GroupInvitationAccepted || sourceKind == InboxSourceKind.GroupRequestAccepted) && groupId != result.SourceId) return false;
                 result.GroupId = groupId;
             }
             else if (sourceKind == InboxSourceKind.MatchTurn)
