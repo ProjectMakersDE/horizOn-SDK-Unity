@@ -1336,3 +1336,13 @@ actor destruction during an uncertain send, original retries, GET-only recovery,
 and original escrow claim followed by discard/replay. The shared .NET source gate
 also kills real journal-owner processes at five persistence boundaries. These
 artificial local tests do not prove a hosted deployment or exported browser game.
+
+The Groups sample's `ReadOneMemberPage()` reads the current auth-bound
+`CurrentGroups.limits.memberPageSize`; missing limits require an explicit own-group
+refresh. A changed size restarts the sample traversal without its old cursor.
+`ReadOneMemberPageWithLimit(limit, next)` preserves the explicit wire parameter.
+
+Minimal Match/final-revision→run-ID pairs stay in the current authenticated
+context even with201 distinct pending sources; another read cannot evict a
+still-protected source. Auth changes clear these local bindings. Their memory
+can grow across reads; no result/item/state history or server record is added.

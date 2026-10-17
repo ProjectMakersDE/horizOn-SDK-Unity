@@ -13,7 +13,7 @@ namespace PM.horizOn.Cloud.Tests
     {
         static string ConfigMatchId(int i)=>"30000000-0000-4000-8000-"+i.ToString("D12");
         static string ExtendedLimits=>"{\"activeMatches\":11,\"stateBytes\":"+MatchLimits.MaxStateBytes+",\"retainedMatches\":0,\"pendingInvites\":21,\"settlementMatches\":201,\"historyRetentionSeconds\":0,\"rankedSettlementSeconds\":604800}";
-        static string PendingSources=>"["+string.Join(",",Enumerable.Range(0,201).Select(i=>"{\"matchId\":\""+ConfigMatchId(9000+i)+"\",\"finalStateRevision\":5,\"ownRankedRunId\":"+(i==0?"\""+RunId+"\"":"null")+",\"expiresAt\":\"2026-10-23T00:00:00Z\"}"))+"]";
+        static string PendingSources=>"["+string.Join(",",Enumerable.Range(0,201).Select(i=>"{\"matchId\":\""+ConfigMatchId(9000+i)+"\",\"finalStateRevision\":5,\"ownRankedRunId\":"+"\""+(i==0?RunId:ConfigMatchId(12000+i))+"\""+",\"expiresAt\":\"2026-10-23T00:00:00Z\"}"))+"]";
         static string ConfiguredLedger()
         {
             string active="["+string.Join(",",Enumerable.Range(0,11).Select(i=>Summary().Replace(Id,ConfigMatchId(i))))+"]";
@@ -24,7 +24,7 @@ namespace PM.horizOn.Cloud.Tests
         [Test] public async Task ConfiguredMatchListsAndOriginalPendingSourceRecoverWithoutHistoricalDetail()
         {
             var caps=await Reply(Manager.GetLimits(User),Config.Replace(Limits,ExtendedLimits));Assert.That(caps.IsSuccess,Is.True);Assert.That(caps.Data.limits.stateBytes,Is.EqualTo(MatchLimits.MaxStateBytes));Assert.That(caps.Data.limits.historyRetentionSeconds,Is.Zero);Assert.That(caps.Data.limits.settlementMatches,Is.EqualTo(201));
-            var ledger=await Reply(Manager.GetMatches(User),ConfiguredLedger());Assert.That(ledger.IsSuccess,Is.True);Assert.That(ledger.Data.active.Length,Is.EqualTo(11));Assert.That(ledger.Data.invites.Length,Is.EqualTo(21));Assert.That(ledger.Data.recent.Length,Is.EqualTo(101));Assert.That(ledger.Data.pendingResults.Length,Is.EqualTo(201));Assert.That(ledger.Data.pendingResults[1].ownRankedRunId,Is.Null);
+            var ledger=await Reply(Manager.GetMatches(User),ConfiguredLedger());Assert.That(ledger.IsSuccess,Is.True);Assert.That(ledger.Data.active.Length,Is.EqualTo(11));Assert.That(ledger.Data.invites.Length,Is.EqualTo(21));Assert.That(ledger.Data.recent.Length,Is.EqualTo(101));Assert.That(ledger.Data.pendingResults.Length,Is.EqualTo(201));Assert.That(ledger.Data.pendingResults.Select(x=>x.ownRankedRunId).Distinct().Count(),Is.EqualTo(201));
             var actor=Actor();Assert.That(await ActReply(actor,"ReadLedger",ConfiguredLedger(),true),Is.True);
             var sent=Act(actor,"SaveRankedAfterPendingResultReview",ConfigMatchId(9000));var c=await Incoming();string original=await Body(c);Assert.That(original,Does.Contain("\"finalStateRevision\":5"));Assert.That(c.Request.RawUrl,Is.EqualTo("/api/v1/app/matches/"+ConfigMatchId(9000)+"/ranked-run"));string path=Path.Combine(Journal(),"intent.json");Assert.That(File.Exists(path),Is.True);string saved=File.ReadAllText(path);await Respond(c,"{\"code\":\"UNAVAILABLE\"}",503);Assert.That(await sent,Is.False);
             UnityEngine.Object.DestroyImmediate(actor.gameObject);actor=Actor();sent=Act(actor,"ApplySavedIntent");c=await Incoming();Assert.That(await Body(c),Is.EqualTo(original));await Respond(c,Run.Replace(RunId,ConfigMatchId(9999)));Assert.That(await sent,Is.False);Assert.That(Manager.LastErrorCode,Is.EqualTo("INVALID_RESPONSE"));Assert.That(ValidatedActionsManager.Instance.CurrentRun,Is.Null);Assert.That(File.ReadAllText(path),Is.EqualTo(saved));

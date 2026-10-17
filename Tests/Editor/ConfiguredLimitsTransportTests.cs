@@ -31,6 +31,23 @@ namespace PM.horizOn.Cloud.Tests
     }
     public partial class GroupsTransportTests
     {
+        [Test]public async Task ConfiguredDefaultMemberPageRestartsAfterSizeChangeAndRequiresCurrentAuthLimits()
+        {
+            var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
+            var incoming=_listener.GetContextAsync();var task=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Timeout(incoming),Detail());await Timeout(task);
+            // The selected detail contains no authoritative operator limits.
+            await Timeout((Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false}));
+            await Reply(Manager.GetGroups(User),Mine(1).Replace("\"memberPageSize\":50","\"memberPageSize\":51"));
+            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false});var c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("51"));Assert.That(c.Request.QueryString["afterUserId"],Is.Null);await Respond(c,Members(cursor:User));await Timeout(task);
+            await Reply(Manager.GetGroups(User),Mine(1).Replace("\"memberPageSize\":50","\"memberPageSize\":1"));
+            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{true});c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("1"));Assert.That(c.Request.QueryString["afterUserId"],Is.Null,"Old51 cursor cannot continue a new1-sized traversal");await Respond(c,Members(cursor:User));await Timeout(task);
+            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{true});c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("1"));Assert.That(c.Request.QueryString["afterUserId"],Is.EqualTo(User));await Respond(c,Members().Replace("\"userId\":\""+User+"\"","\"userId\":\""+Peer+"\""));await Timeout(task);
+            incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ReadOneMemberPageWithLimit").Invoke(actor,new object[]{7,true});c=await Timeout(incoming);Assert.That(c.Request.QueryString["limit"],Is.EqualTo("7"),"Explicit API parameter is never clamped to current1");Assert.That(c.Request.QueryString["afterUserId"],Is.Null);await Respond(c,"{\"code\":\"INVALID_REQUEST\"}",400);await Timeout(task);
+            NetworkService.Instance.SetSessionToken("other");NetworkService.Instance.SetSessionToken("session-"+User);
+            await Timeout((Task)type.GetMethod("ReadOneMemberPage").Invoke(actor,new object[]{false}));
+            var unexpected=_listener.GetContextAsync();Assert.That(await Task.WhenAny(unexpected,Task.Delay(100)),Is.Not.SameAs(unexpected),"Old auth-context limits never cause another request");
+        }
+
         static string ConfigGroupId(int i)=>"20000000-0000-4000-8000-"+i.ToString("D12");
         [Test] public async Task ElevenConfiguredLimitsRetainedGroupsPageAndDurableMetadataOriginalRemainExact()
         {
