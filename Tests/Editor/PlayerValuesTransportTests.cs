@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -128,6 +129,45 @@ namespace PM.horizOn.Cloud.Tests
             var incoming = _listener.GetContextAsync(); var pending = Manager.Purchase(User, "energy", Manager.CreateOperationId()); var context = await Timeout(incoming); await Respond(context, 503, "{}"); await Task.Delay(40);
             SetUser(User, "new-token"); NetworkService.Instance.SetSessionToken("new-token"); Assert.That((await pending).ErrorCode, Is.EqualTo("STALE_RESPONSE"));
             var unexpected = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(unexpected, Task.Delay(200)), Is.Not.SameAs(unexpected));
+        }
+        private static string ConfiguredBalances(long gold = 100, bool lowered = false) => string.Join(",", Enumerable.Range(0, 80).Select(i =>
+            "{\"key\":\"" + (i == 0 ? "gold" : i == 1 ? "energy" : "value_" + i) + "\",\"balance\":" + (i == 0 ? gold : i) + ",\"earnedToday\":" + (i == 0 && lowered ? 50 : 0) + ",\"dailyCap\":" + (i == 0 && lowered ? "0" : "null") + "}"));
+        private static string ConfiguredState(long revision, long definition, int second, long gold = 100, bool lowered = false, string operation = null)
+        {
+            string raw = State(revision, definition, second), field = "\"values\":[";
+            int start = raw.IndexOf(field, StringComparison.Ordinal) + field.Length;
+            int end = raw.IndexOf("],\"operationWindow\"", start, StringComparison.Ordinal);
+            raw = raw.Substring(0, start) + ConfiguredBalances(gold, lowered) + raw.Substring(end);
+            return operation == null ? raw : raw.Substring(0, raw.Length - 1) + ",\"operation\":" + operation + "}";
+        }
+        [Test] public async Task ConfiguredCatalogsAboveTariffDefaultsAndAbsentOfferDayQuotaRemainReadable()
+        {
+            string rows = string.Join(",", Enumerable.Range(0, 1201).Select(i => "{\"key\":\"offer_" + i + "\",\"name\":\"Configured\",\"active\":true,\"costs\":[{\"key\":\"gold\",\"amount\":1}],\"rewards\":[{\"key\":\"energy\",\"amount\":1}]}"));
+            var incoming = _listener.GetContextAsync(); var pending = Manager.GetOffers(User);
+            await Respond(await Timeout(incoming), 200, "{\"definitionVersion\":3,\"serverTime\":\"2026-10-15T12:00:30Z\",\"definitions\":[" + ConfiguredBalances() + "],\"offers\":[" + rows + "]}");
+            var offered = await pending; Assert.That(offered.IsSuccess, Is.True); Assert.That(offered.Data.definitions.Length, Is.EqualTo(80)); Assert.That(offered.Data.offers.Length, Is.EqualTo(1201));
+            Assert.That(offered.Data.offers.All(o => o.purchasesPerDay == -1), Is.True, "Omitted retired quota cannot deserialize as a zero daily limit");
+            incoming = _listener.GetContextAsync(); var state = Manager.GetState(User);
+            await Respond(await Timeout(incoming), 200, ConfiguredState(2, 3, 31)); Assert.That((await state).State.values.Length, Is.EqualTo(80)); Assert.That(Manager.CurrentState.values.Length, Is.EqualTo(80));
+        }
+        [Test] public async Task CompactReplayPreservesOriginalIdentityAndReplacesStateWithoutHistoricalDeltas()
+        {
+            var incoming = _listener.GetContextAsync(); var loaded = Manager.GetState(User);
+            await Respond(await Timeout(incoming), 200, ConfiguredState(1, 3, 28)); Assert.That((await loaded).IsSuccess, Is.True);
+            string id = Manager.CreateOperationId();
+            string fresh = "{\"operationId\":\"" + id + "\",\"replayed\":false,\"applied\":[{\"key\":\"gold\",\"amount\":-1}],\"items\":[{\"instanceId\":\"00000000-0000-4000-8000-000000001011\",\"itemKey\":\"sword\"}]}";
+            incoming = _listener.GetContextAsync(); var purchased = Manager.Purchase(User, "offer_0", id); var context = await Timeout(incoming);
+            string originalBody = await new StreamReader(context.Request.InputStream).ReadToEndAsync();
+            await Respond(context, 200, ConfiguredState(2, 3, 29, 99, false, fresh)); var first = await purchased;
+            Assert.That(first.IsSuccess, Is.True); Assert.That(first.State.operation.items.Length, Is.EqualTo(1)); Assert.That(first.State.operation.replayed, Is.False);
+            string replay = "{\"operationId\":\"" + id + "\",\"replayed\":true,\"applied\":[],\"items\":[]}";
+            incoming = _listener.GetContextAsync(); var retried = Manager.Purchase(User, "offer_0", id); context = await Timeout(incoming);
+            Assert.That(await new StreamReader(context.Request.InputStream).ReadToEndAsync(), Is.EqualTo(originalBody));
+            await Respond(context, 200, ConfiguredState(3, 4, 30, 33, true, replay)); var result = await retried;
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.State.operation.operationId, Is.EqualTo(id)); Assert.That(result.State.operation.replayed, Is.True);
+            Assert.That(result.State.operation.applied, Is.Empty); Assert.That(result.State.operation.items, Is.Empty);
+            Assert.That(Manager.CurrentState.values.Length, Is.EqualTo(80)); Assert.That(Manager.CurrentState.values[0].balance, Is.EqualTo(33));
+            Assert.That(Manager.CurrentState.values[0].earnedToday, Is.EqualTo(50)); Assert.That(Manager.CurrentState.values[0].dailyCap, Is.Zero);
         }
         private static void SetUser(string id, string token) => typeof(UserManager).GetField("_currentUser", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(UserManager.Instance, new UserData { UserId = id, AccessToken = token });
         private static async Task<T> Timeout<T>(Task<T> task) { if (await Task.WhenAny(task, Task.Delay(5000)) != task) throw new TimeoutException(); return await task; }

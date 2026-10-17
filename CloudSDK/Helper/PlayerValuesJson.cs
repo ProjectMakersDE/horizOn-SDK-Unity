@@ -43,6 +43,7 @@ namespace PM.horizOn.Cloud.Helper
             {
                 var fields = JsonFragments.Object(offers[i]);
                 result.offers[i].name = JsonFragments.String(fields["name"]);
+                if (!fields.TryGetValue("purchasesPerDay", out var quota) || quota == "null") result.offers[i].purchasesPerDay = -1;
                 result.offers[i].itemRewards = fields.TryGetValue("itemRewards", out var rewards) ? ItemsJson.Rewards(rewards) : Array.Empty<ItemReward>();
             }
             return result;
