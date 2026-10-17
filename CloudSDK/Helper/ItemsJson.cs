@@ -37,7 +37,8 @@ namespace PM.horizOn.Cloud.Helper
         private static ItemLimits Limits(string raw)
         {
             var f = JsonFragments.Object(raw);
-            return new ItemLimits { catalog = Bound(f["catalog"], 1, 5000), inventory = Bound(f["inventory"], 1, 150), receipts = Bound(f["receipts"], 1, 50) };
+            // Operator quotas are positive Int32 values, not the old tariff defaults.
+            return new ItemLimits { catalog = Bound(f["catalog"], 1, int.MaxValue), inventory = Bound(f["inventory"], 1, int.MaxValue), receipts = Bound(f["receipts"], 1, int.MaxValue) };
         }
         private static T[] Rows<T>(string raw, int max, Func<string, T> parse, Func<T, string> key)
         {
@@ -87,7 +88,7 @@ namespace PM.horizOn.Cloud.Helper
         internal static InventorySnapshot Inventory(string raw)
         {
             var f = JsonFragments.Object(raw);
-            return new InventorySnapshot { userId = Uuid(f["userId"]), revision = Integer(f["revision"]), serverTime = Instant(f["serverTime"]), limits = Limits(f["limits"]), instances = Rows(f["instances"], 150, Instance, x => x.instanceId) };
+            return new InventorySnapshot { userId = Uuid(f["userId"]), revision = Integer(f["revision"]), serverTime = Instant(f["serverTime"]), limits = Limits(f["limits"]), instances = Rows(f["instances"], int.MaxValue, Instance, x => x.instanceId) };
         }
         private static ItemInstance Instance(string raw)
         {
@@ -97,7 +98,8 @@ namespace PM.horizOn.Cloud.Helper
         internal static ItemCatalogPage Catalog(string raw)
         {
             var f = JsonFragments.Object(raw); string next = f["nextAfterKey"] == "null" ? null : KeyValue(f["nextAfterKey"]);
-            return new ItemCatalogPage { revision = Integer(f["revision"]), definitions = Rows(f["definitions"], 50, Definition, x => x.key), nextAfterKey = next, total = Bound(f["total"], 0, 5000), limits = Limits(f["limits"]), serverTime = Instant(f["serverTime"]) };
+            // The permanent UInt16 template-slot format has 65536 slots; a page remains at most 50 rows.
+            return new ItemCatalogPage { revision = Integer(f["revision"]), definitions = Rows(f["definitions"], 50, Definition, x => x.key), nextAfterKey = next, total = Bound(f["total"], 0, 65536), limits = Limits(f["limits"]), serverTime = Instant(f["serverTime"]) };
         }
         private static ItemDefinition Definition(string raw)
         {

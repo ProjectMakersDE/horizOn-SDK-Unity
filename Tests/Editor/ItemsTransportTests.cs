@@ -135,7 +135,7 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That((await Reply(Manager.GetInventory(User), Inventory(user: Project))).IsSuccess, Is.False);
             Assert.That((await Reply(Manager.DiscardItem(User, Item, 9), Inventory(8))).IsSuccess, Is.False);
         }
-        private static string ValuesState(string operationId = null, bool replayed = false) => "{\"userId\":\"" + User + "\",\"day\":\"2026-10-16\",\"definitionVersion\":1,\"revision\":1,\"values\":[{\"key\":\"coins\",\"balance\":80,\"earnedToday\":0,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"" + Time + "\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}" + (operationId == null ? "" : ",\"operation\":{\"operationId\":\"" + operationId + "\",\"replayed\":" + (replayed ? "true" : "false") + ",\"applied\":[],\"items\":[{\"instanceId\":\"" + Item + "\",\"itemKey\":\"sword\"}]}") + "}";
+        private static string ValuesState(string operationId = null, bool replayed = false) => "{\"userId\":\"" + User + "\",\"day\":\"2026-10-16\",\"definitionVersion\":1,\"revision\":1,\"values\":[{\"key\":\"coins\",\"balance\":80,\"earnedToday\":0,\"dailyCap\":null}],\"operationWindow\":{\"serverTime\":\"" + Time + "\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}" + (operationId == null ? "" : ",\"operation\":{\"operationId\":\"" + operationId + "\",\"replayed\":" + (replayed ? "true" : "false") + ",\"applied\":[],\"items\":" + (replayed ? "[]" : "[{\"instanceId\":\"" + Item + "\",\"itemKey\":\"sword\"}]") + "}") + "}";
         private static string Offers(bool include = true) => "{\"definitionVersion\":1,\"serverTime\":\"" + Time + "\",\"definitions\":[],\"offers\":" + (include ? "[{\"key\":\"buy_sword\",\"name\":\"前\\u0000後\",\"active\":true,\"costs\":[{\"key\":\"coins\",\"amount\":20}],\"rewards\":[],\"itemRewards\":[{\"itemKey\":\"sword\",\"quantity\":1}],\"purchasesPerDay\":null}]" : "[]") + "}";
         private static Type SampleType => Type.GetType("PM.horizOn.Cloud.Examples.Features.ItemsExample, Assembly-CSharp", true);
         private static Component Actor()
@@ -236,7 +236,7 @@ namespace PM.horizOn.Cloud.Tests
                 var c = await Timeout(_listener.GetContextAsync()); string body = await new StreamReader(c.Request.InputStream).ReadToEndAsync(); Assert.That(JsonUtility.FromJson<PurchaseWire>(body).operationId, Is.EqualTo(original));
                 await Respond(c, ValuesState(original, true)); c = await Timeout(_listener.GetContextAsync()); Assert.That(File.Exists(SuccessPath), Is.True);
                 Assert.That(c.Request.HttpMethod, Is.EqualTo("GET")); await Respond(c, Inventory(3, "[]")); Assert.That(await Timeout(task), Is.True); Ack(actor);
-                Assert.That(PlayerValuesManager.Instance.CurrentState.operation.replayed, Is.True);
+                Assert.That(PlayerValuesManager.Instance.CurrentState.operation.replayed, Is.True); Assert.That(PlayerValuesManager.Instance.CurrentState.operation.items, Is.Empty);
             }
             finally { CleanupJournal(); }
         }
@@ -391,6 +391,58 @@ namespace PM.horizOn.Cloud.Tests
                 Assert.That(File.Exists(JournalPath), Is.True);
             }
             finally { CleanupJournal(); }
+        }
+        private const string ConfiguredLimits = "{\"catalog\":6000,\"inventory\":250,\"receipts\":80}";
+        private static string ConfiguredItemId(int index) => "10000000-0000-4000-8000-" + index.ToString("D12", System.Globalization.CultureInfo.InvariantCulture);
+        private static string ConfiguredInventory(long revision, string limits, bool selectedEquipped = false)
+        {
+            string rows = string.Join(",", Enumerable.Range(0, 201).Select(i => Instance(selectedEquipped && i == 200).Replace(Item, ConfiguredItemId(i))));
+            return Inventory(revision, "[" + rows + "]").Replace(Limits, limits);
+        }
+        [Test] public async Task ConfiguredQuotasAndRetainedInventorySurviveLowering()
+        {
+            var incoming = _listener.GetContextAsync(); var loaded = Manager.GetInventory(User);
+            await Respond(await Timeout(incoming), ConfiguredInventory(1, ConfiguredLimits)); var high = await loaded;
+            Assert.That(high.IsSuccess, Is.True); Assert.That(high.Data.instances.Length, Is.EqualTo(201));
+            Assert.That(high.Data.limits.catalog, Is.EqualTo(6000)); Assert.That(high.Data.limits.inventory, Is.EqualTo(250)); Assert.That(high.Data.limits.receipts, Is.EqualTo(80));
+            incoming = _listener.GetContextAsync(); loaded = Manager.GetInventory(User);
+            await Respond(await Timeout(incoming), ConfiguredInventory(2, Limits)); var lower = await loaded;
+            Assert.That(lower.IsSuccess, Is.True); Assert.That(lower.Data.instances.Length, Is.EqualTo(201)); Assert.That(lower.Data.limits.inventory, Is.EqualTo(10));
+            Assert.That(Manager.CurrentInventory.instances.Length, Is.EqualTo(201), "Lowered quota must not erase retained instances");
+            incoming = _listener.GetContextAsync(); var equipped = Manager.SetEquipped(User, ConfiguredItemId(200), 2, true); var context = await Timeout(incoming);
+            string body = await new StreamReader(context.Request.InputStream).ReadToEndAsync();
+            Assert.That(body, Does.Contain("\"expectedRevision\":2").And.Contain(ConfiguredItemId(200)).And.Contain("\"equipped\":true"));
+            await Respond(context, ConfiguredInventory(3, Limits, true)); var changed = await equipped;
+            Assert.That(changed.IsSuccess, Is.True); Assert.That(changed.Data.instances.Length, Is.EqualTo(201)); Assert.That(changed.Data.instances[200].equipped, Is.True);
+        }
+        [Test] public async Task ConfiguredCatalogTotalAndOriginalPageRevisionSurviveLowering()
+        {
+            var incoming = _listener.GetContextAsync(); var loaded = Manager.GetCatalog(User, limit: 1);
+            await Respond(await Timeout(incoming), Catalog(1, next: "\"sword\"").Replace("\"total\":21", "\"total\":6000").Replace(Limits, ConfiguredLimits));
+            var page = await loaded; Assert.That(page.IsSuccess, Is.True); Assert.That(page.Data.total, Is.EqualTo(6000)); Assert.That(page.Data.limits.catalog, Is.EqualTo(6000));
+            incoming = _listener.GetContextAsync(); loaded = Manager.GetCatalog(User, "sword", 1, 1); var context = await Timeout(incoming);
+            Assert.That(context.Request.RawUrl, Does.Contain("afterKey=sword").And.Contain("catalogRevision=1"));
+            await Respond(context, Catalog(1, "[" + Definition("wand") + "]", "\"wand\"").Replace("\"total\":21", "\"total\":6000"));
+            page = await loaded; Assert.That(page.IsSuccess, Is.True); Assert.That(page.Data.total, Is.EqualTo(6000)); Assert.That(page.Data.limits.catalog, Is.EqualTo(20));
+            Assert.That(Manager.CurrentCatalogPage.definitions[0].key, Is.EqualTo("wand"));
+        }
+        [TestCase("0")][TestCase("2147483648")][TestCase("1.0")][TestCase("1e3")][TestCase("9007199254740992")]
+        public async Task ConfigurableQuotasStillRequirePositiveInt32OriginalTokens(string invalid)
+        {
+            var incoming = _listener.GetContextAsync(); var loaded = Manager.GetInventory(User);
+            await Respond(await Timeout(incoming), Inventory().Replace("\"catalog\":20", "\"catalog\":" + invalid));
+            Assert.That((await loaded).ErrorCode, Is.EqualTo("INVALID_RESPONSE")); Assert.That(Manager.CurrentInventory, Is.Null);
+        }
+        [TestCase(65536, true)][TestCase(65537, false)]
+        public async Task PhysicalTemplateSlotBoundIsSeparateFromOperatorQuotas(int total, bool accepted)
+        {
+            var incoming = _listener.GetContextAsync(); var loaded = Manager.GetCatalog(User);
+            string reply = Catalog().Replace("\"total\":21", "\"total\":" + total)
+                .Replace(Limits, "{\"catalog\":2147483647,\"inventory\":2147483647,\"receipts\":2147483647}");
+            await Respond(await Timeout(incoming), reply); var result = await loaded;
+            Assert.That(result.IsSuccess, Is.EqualTo(accepted));
+            if (accepted) { Assert.That(result.Data.total, Is.EqualTo(65536)); Assert.That(result.Data.limits.catalog, Is.EqualTo(int.MaxValue)); }
+            else { Assert.That(result.ErrorCode, Is.EqualTo("INVALID_RESPONSE")); Assert.That(Manager.CurrentCatalogPage, Is.Null); }
         }
         internal static void SetUser(string user)
         {

@@ -1021,6 +1021,13 @@ and actual network instance/host/project/player/session/generation plus cache ep
 responses and away/back changes. `ClearCache()` preserves separate inventory/catalog revision and
 server-time watermarks. Current tier limits do not delete retained downgraded state.
 
+`limits.catalog`, `limits.inventory` and `limits.receipts` carry current positive Int32
+operator configuration. The SDK accepts inventories above the old 150-instance default and
+retains all server-provided instances after limits are lowered. Catalog `total` is independent
+of the current quota, bounded by the permanent UInt16 slot format (65,536 templates); each page
+still contains at most 50 definitions. Compact server storage does not change public instance
+properties, original revision-fenced writes or property deltas.
+
 Player Values balance/offer lists follow current server configuration without tariff clamps.
 Retired offer-day quotas may be omitted/null and stay unlimited (`purchasesPerDay == -1`).
 Current balances and earned totals remain authoritative after a lower daily cap; compact replay
