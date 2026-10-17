@@ -133,6 +133,7 @@ internal static class InboxContractTests
         string market = SourceEntry("marketplace", "marketplace.item_return", User, "{}", item);
         var returned = InboxJson.Snapshot(WithEntries("[" + market + "]"));
         Check(returned.entries[0].CanClaim && returned.entries[0].attachment.values.Length == 0, "item-only attachment is claimable");
+        Check(InboxJson.Clone(plain).entries[0].attachment == null && !InboxJson.Clone(InboxJson.Snapshot(WithEntries("[" + row.Replace("9007199254740991", "1").Replace("[{\"key\":\"gold\",\"amount\":1}]", "[]") + "]"))).entries[0].CanClaim, "optional reward presence survives clone");
         var copy = InboxJson.Clone(returned); copy.entries[0].attachment.itemReturn.itemKey = "changed";
         Check(returned.entries[0].attachment.itemReturn.itemKey == "sword", "item descriptor deep clone");
         foreach (string bad in new[] { market.Replace("\"itemKey\":\"sword\"", "\"itemKey\":\"sword\",\"unknown\":1"), market.Replace("\"values\":[]", "\"values\":[],\"unknown\":1"), market.Replace("\"instanceId\":\"" + User + "\"", "\"instanceId\":\"bad\"") }) Refuses(WithEntries("[" + bad + "]"), "unsupported valuable content");

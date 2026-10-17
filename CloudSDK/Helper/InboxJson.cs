@@ -98,7 +98,17 @@ namespace PM.horizOn.Cloud.Helper
             var result = JsonUtility.FromJson<InboxSnapshot>(JsonUtility.ToJson(source));
             result.counts = new Dictionary<string, InboxCount>();
             foreach (var pair in source.counts) result.counts.Add(pair.Key, new InboxCount { total = pair.Value.total, unread = pair.Value.unread, claimable = pair.Value.claimable });
-            for (int i = 0; i < source.entries.Length; i++) result.entries[i].parameters = new Dictionary<string, string>(source.entries[i].parameters);
+            for (int i = 0; i < source.entries.Length; i++)
+            {
+                result.entries[i].parameters = new Dictionary<string, string>(source.entries[i].parameters);
+                // Preserve optional reward presence explicitly; Unity serialization may materialize an absent nested class.
+                var attachment = source.entries[i].attachment;
+                var item = attachment?.itemReturn;
+                result.entries[i].attachment = attachment == null ? null : new InboxAttachment {
+                    values = Array.ConvertAll(attachment.values ?? Array.Empty<PlayerValueAmount>(), value => new PlayerValueAmount { key = value.key, amount = value.amount }),
+                    itemReturn = item == null ? null : new InboxItemReturn { listingId = item.listingId, instanceId = item.instanceId, itemKey = item.itemKey }
+                };
+            }
             return result;
         }
         private static long Integer(string value, long max = PlayerValuesManager.MaxSafeInteger)
