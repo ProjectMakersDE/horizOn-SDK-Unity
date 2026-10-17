@@ -32,8 +32,8 @@ namespace PM.horizOn.Cloud.Helper
         {
             var reader = new JsonFragments(json, maxElements, maxBytes, maxDepth: maxDepth); var result = reader.ReadArray(); reader.End(); return result;
         }
-        public static string String(string json) => String(json, MaxBytes);
-        public static string String(string json, int maxBytes)
+        public static string String(string json) => StringWithBudget(json, MaxBytes);
+        public static string StringWithBudget(string json, int maxBytes)
         {
             var reader = new JsonFragments(json, maxBytes: maxBytes); string value = reader.ReadString(); reader.End(); return value;
         }

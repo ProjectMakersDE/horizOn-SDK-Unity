@@ -21,7 +21,7 @@ namespace PM.horizOn.Cloud.Helper
                     default:if(c<32)b.Append("\\u").Append(((int)c).ToString("x4",CultureInfo.InvariantCulture));else b.Append(c);break;}
             }return b.Append('"').ToString();
         }
-        internal static string Text(string raw) => JsonFragments.String(raw,maxBytes:RawBytes(raw));
+        internal static string Text(string raw) => JsonFragments.StringWithBudget(raw,maxBytes:RawBytes(raw));
         internal static string Uuid(string raw) { var id = Text(raw); if (!FriendsJson.IsUuid(id)) throw new FormatException("Groups UUID invalid"); return Guid.ParseExact(id,"D").ToString("D"); }
         private static string Optional(Dictionary<string,string> f, string key) => !f.TryGetValue(key,out var raw) || raw == "null" ? null : Text(raw);
         private static long Number(string raw) { if (!long.TryParse(raw,NumberStyles.None,CultureInfo.InvariantCulture,out var n) || !Revision(n)) throw new FormatException("Groups integer invalid"); return n; }
