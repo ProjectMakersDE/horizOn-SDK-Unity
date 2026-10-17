@@ -114,7 +114,7 @@ namespace PM.horizOn.Cloud.Manager
         private static bool ValidEntry(string value)
         {
             if (value == null) return false; var parts = value.Split(':');
-            return parts.Length == 2 && (parts[0] == "message" || parts[0] == "broadcast") && Guid.TryParseExact(parts[1], "D", out _);
+            return parts.Length == 2 && (parts[0] == "message" || parts[0] == "broadcast") && FriendsJson.IsUuid(parts[1]);
         }
         [Serializable] private sealed class ActionRequest { public string userId, entryId; }
     }

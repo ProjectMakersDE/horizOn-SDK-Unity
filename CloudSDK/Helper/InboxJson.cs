@@ -30,7 +30,7 @@ namespace PM.horizOn.Cloud.Helper
                 foreach (var field in new[] { "overdue", "read", "claimed" }) if (fields[field] != "true" && fields[field] != "false") throw new FormatException("Inbox entry flag invalid");
                 var entry = result.entries[i];
                 if (entry == null || !fields.TryGetValue("parameters", out var parameters)) throw new FormatException("Inbox entry invalid");
-                if ((entry.kind != "message" && entry.kind != "broadcast") || !entry.id.StartsWith(entry.kind + ":", StringComparison.Ordinal) || !Guid.TryParseExact(entry.id.Substring(entry.kind.Length + 1), "D", out _) || !entryIds.Add(entry.id)) throw new FormatException("Inbox entry identity invalid");
+                if ((entry.kind != "message" && entry.kind != "broadcast") || !entry.id.StartsWith(entry.kind + ":", StringComparison.Ordinal) || !FriendsJson.IsUuid(entry.id.Substring(entry.kind.Length + 1)) || !entryIds.Add(entry.id)) throw new FormatException("Inbox entry identity invalid");
                 Instant(entry.createdAt); Instant(entry.expiresAt);
                 entry.parameters = new Dictionary<string, string>();
                 foreach (var pair in JsonFragments.Object(parameters)) entry.parameters.Add(pair.Key, JsonFragments.String(pair.Value));

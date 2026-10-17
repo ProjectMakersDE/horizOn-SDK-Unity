@@ -112,6 +112,7 @@ internal static class InboxContractTests
         Check(InboxJson.Snapshot(Snapshot(PlayerValuesManager.MaxSafeInteger)).revision == PlayerValuesManager.MaxSafeInteger, "safe maximum revision remains exact");
         foreach (string bad in new[] { "1e3", "9007199254740992", "\"1\"" }) Refuses(Snapshot().Replace("\"revision\":1", "\"revision\":" + bad), "unsafe revision");
         Refuses(WithEntries("[" + row + "," + row + "]"), "duplicate entry identity");
+        Refuses(WithEntries("[" + row.Replace(Entry, "message: " + User) + "]"), "entry UUID cannot be trimmed");
         string item = "{\"values\":[],\"itemReturn\":{\"listingId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}}";
         var cases = new[] {
             new[] { "friend_request", "horizon.friends.request", "{\"userId\":\"" + User + "\"}" },

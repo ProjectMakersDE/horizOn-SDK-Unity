@@ -52,7 +52,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         {
             source = null;
             var sourceKind = SourceKind;
-            if (sourceKind == InboxSourceKind.Unknown || !Guid.TryParseExact(reference, "D", out var id)) return false;
+            if (sourceKind == InboxSourceKind.Unknown || reference == null || reference.Length != 36 || !Guid.TryParseExact(reference, "D", out var id)) return false;
             var result = new InboxSource { Kind = sourceKind, SourceId = id.ToString("D") };
             if (sourceKind == InboxSourceKind.FriendRequest || sourceKind == InboxSourceKind.FriendAccepted)
             {
@@ -79,7 +79,7 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         private bool ParameterId(string name, out string id)
         {
             id = null;
-            if (parameters == null || !parameters.TryGetValue(name, out var raw) || !Guid.TryParseExact(raw, "D", out var value)) return false;
+            if (parameters == null || !parameters.TryGetValue(name, out var raw) || raw == null || raw.Length != 36 || !Guid.TryParseExact(raw, "D", out var value)) return false;
             id = value.ToString("D"); return true;
         }
     }
