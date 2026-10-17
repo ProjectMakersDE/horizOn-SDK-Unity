@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using PM.horizOn.Cloud.Helper;
 using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Service;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using UnityEngine;
 namespace PM.horizOn.Cloud.Tests
@@ -31,6 +32,7 @@ namespace PM.horizOn.Cloud.Tests
     }
     public partial class GroupsTransportTests
     {
+        private static async Task Timeout(Task task){if(await Task.WhenAny(task,Task.Delay(8000))!=task)throw new TimeoutException("Groups sample fixture");await task;}
         [Test]public async Task ConfiguredDefaultMemberPageRestartsAfterSizeChangeAndRequiresCurrentAuthLimits()
         {
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);var actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
