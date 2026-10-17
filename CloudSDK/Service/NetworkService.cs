@@ -429,6 +429,7 @@ namespace PM.horizOn.Cloud.Service
                         else if (typeof(TResponse) == typeof(SharedQueryResult)) { data = SharedObjectsJson.Query(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(SharedWriteResult)) { data = SharedObjectsJson.Write(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(SharedDeleteResult)) { data = SharedObjectsJson.Delete(responseText) as TResponse; }
+                        else if (MarketplaceJson.IsResponse<TResponse>()) { data = MarketplaceJson.Read<TResponse>(responseText); }
                         else if (typeof(TResponse) == typeof(InventorySnapshot)) { data = ItemsJson.Inventory(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(ItemCatalogPage)) { data = ItemsJson.Catalog(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(PlayerValuesState)) { data = PlayerValuesJson.State(responseText) as TResponse; }
@@ -788,10 +789,11 @@ namespace PM.horizOn.Cloud.Service
             || typeof(T) == typeof(MyMatches) || typeof(T) == typeof(MatchLimitsView) || typeof(T) == typeof(MatchPage) || typeof(T) == typeof(MatchRead) || typeof(T) == typeof(MatchCreated) || typeof(T) == typeof(MatchReported) || typeof(T) == typeof(MatchRankedRunResponse)
             || typeof(T) == typeof(SharedCollectionPage) || typeof(T) == typeof(SharedUsage) || typeof(T) == typeof(SharedObjectRead)
             || typeof(T) == typeof(SharedQueryResult) || typeof(T) == typeof(SharedWriteResult) || typeof(T) == typeof(SharedDeleteResult)
+            || MarketplaceJson.IsResponse<T>()
             || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
 
         private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
-            ? (data is ChatJsonRequest chat ? chat.Json : data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+            ? (data is MarketplaceJsonRequest market ? market.Json : data is ChatJsonRequest chat ? chat.Json : data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
         private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
         {
             if (headers == null) return null;
