@@ -363,18 +363,16 @@ foreach (var item in news)
 
 ### Gift Codes
 
-```csharp
-// Validate first (optional)
-bool? valid = await GiftCodeManager.Instance.Validate("PROMO2024");
+Prepare once, persist the complete intent before sending, and retry that saved intent after a timeout or restart. `GiftCodesExample` includes a scoped durable sample store and separate explicit redeem/retry actions.
 
-// Redeem
-var result = await GiftCodeManager.Instance.Redeem("PROMO2024");
-if (result?.success == true)
-{
-    // Parse result.giftData for rewards
-    // result.grantedUnlocks lists cosmetics the code unlocked (see Player Profile)
-}
+```csharp
+var intent = await GiftCodeManager.Instance.PrepareRedemption("PROMO2024");
+// Save intent durably for this project/player BEFORE calling RedeemPrepared.
+var result = await GiftCodeManager.Instance.RedeemPrepared(intent);
+// On uncertainty, load and resend this same intent. Never prepare a replacement automatically.
 ```
+
+Counts/revisions remain canonical Int64 decimal strings. Replay returns current `playerValues`, `alreadyApplied/replayed = true`, and no historical `giftData` or grants. Replace balances from the authoritative snapshot; never add grants locally. V1 `Redeem(code[, id])` returns `UPGRADE_REQUIRED`. `MIGRATION_REQUIRED`, `COUNT_AHEAD`, `CAMPAIGN_CHANGED`, `COUNTER_EXHAUSTED` and other domain errors require explicit reconciliation. Changing a visible code cannot retarget a saved campaign ID. Sign-out/project changes fence late responses and cannot move a pending intent to another player.
 
 ### Player Profile
 

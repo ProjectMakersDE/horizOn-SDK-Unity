@@ -41,7 +41,7 @@ namespace PM.horizOn.Cloud.Examples
             await TestNews();
             await TestLeaderboard();
             await TestCloudSave();
-            await TestGiftCode();
+            // Gift redemption is an explicit action. Call TestGiftCode after a player gesture.
             await TestFeedback();
         }
 
@@ -224,7 +224,7 @@ namespace PM.horizOn.Cloud.Examples
             // Note: Actual redemption would consume the code
             // Uncomment to test redemption (code can only be used once)
             /*
-            var redemption = await GiftCodeManager.Instance.Redeem(testCode);
+            var redemption = await RedeemGiftV2(testCode);
             if (redemption != null && redemption.success)
             {
                 HorizonApp.Log.Info("Code redeemed successfully!");
@@ -283,5 +283,32 @@ namespace PM.horizOn.Cloud.Examples
             HorizonApp.Log.Info("All caches cleared");
         }
         #endif
+        private async System.Threading.Tasks.Task<PM.horizOn.Cloud.Objects.Network.Responses.RedeemGiftCodeResponse> RedeemGiftV2(string code)
+        {
+            string project=HorizonApp.Network.GetApiKey(), user=UserManager.Instance.CurrentUser?.UserId;
+            if (string.IsNullOrEmpty(user)) return null;
+            string scope=PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.ProjectFingerprint(project);
+            string key="horizOn_gift_ui_pending_"+scope+"_"+user;
+            PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent intent=null;
+            if (UnityEngine.PlayerPrefs.HasKey(key))
+            {
+                try { intent=UnityEngine.JsonUtility.FromJson<PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent>(UnityEngine.PlayerPrefs.GetString(key)); } catch { return null; }
+                if (intent==null || !intent.IsValidFor(project,user) || intent.code!=code) return null;
+            }
+            else
+            {
+                intent=await GiftCodeManager.Instance.PrepareRedemption(code);
+                if (intent==null || project!=HorizonApp.Network.GetApiKey() || UserManager.Instance.CurrentUser?.UserId!=user) return null;
+                if (UnityEngine.PlayerPrefs.HasKey(key)) return null; // Another action already owns this pending slot.
+                string saved=UnityEngine.JsonUtility.ToJson(intent);
+                UnityEngine.PlayerPrefs.SetString(key,saved); UnityEngine.PlayerPrefs.Save();
+                if (UnityEngine.PlayerPrefs.GetString(key)!=saved) return null;
+            }
+            var result=await GiftCodeManager.Instance.RedeemPrepared(intent);
+            if (result!=null && project==HorizonApp.Network.GetApiKey() && UserManager.Instance.CurrentUser?.UserId==user &&
+                UnityEngine.PlayerPrefs.GetString(key)==UnityEngine.JsonUtility.ToJson(intent))
+            { UnityEngine.PlayerPrefs.DeleteKey(key); UnityEngine.PlayerPrefs.Save(); }
+            return result;
+        }
     }
 }

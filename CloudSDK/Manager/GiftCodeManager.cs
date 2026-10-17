@@ -7,25 +7,10 @@ using PM.horizOn.Cloud.Objects.Network.Requests;
 using PM.horizOn.Cloud.Objects.Data;
 using PM.horizOn.Cloud.Objects.Network.Responses;
 using PM.horizOn.Cloud.Transport;
-
 namespace PM.horizOn.Cloud.Manager
 {
-    /// <summary>
-    /// Manager for gift code redemption and validation.
-    /// </summary>
     public class GiftCodeManager : BaseManager<GiftCodeManager>
     {
-        /// <summary>
-        /// Redeem a gift code for rewards.
-        /// The request carries the signed-in player's session, the server only redeems
-        /// codes for the player who owns that session.
-        /// When the code granted cosmetics (<c>grantedUnlocks</c> not empty), the cached player
-        /// profile is dropped so the next <see cref="PlayerProfileManager.GetProfile"/> shows the unlock.
-        /// </summary>
-        /// <param name="code">The gift code to redeem</param>
-        /// <returns>Redeem response with giftData JSON string and grantedUnlocks, or null if failed</returns>
-        public Task<RedeemGiftCodeResponse> Redeem(string code) => RedeemInternal(code, null);
-
         public string LastErrorCode { get; private set; }
         private long _identityEpoch;
         protected override void RegisterEvents()
@@ -33,99 +18,70 @@ namespace PM.horizOn.Cloud.Manager
             RegisterEvent<DateTime>(EventKeys.UserSignOutSuccess, _ => _identityEpoch++);
             RegisterEvent<UserData>(EventKeys.UserSignInSuccess, _ => _identityEpoch++);
         }
+        [Obsolete("V1 is closed. PrepareRedemption, persist its intent, then RedeemPrepared.")]
+        public Task<RedeemGiftCodeResponse> Redeem(string code) => Task.FromResult(Failure("UPGRADE_REQUIRED"));
+        [Obsolete("Arbitrary IDs cannot be converted. Reconcile the V1 operation before preparing V2.")]
+        public Task<RedeemGiftCodeResponse> Redeem(string code, string idempotencyId) => Task.FromResult(Failure("UPGRADE_REQUIRED"));
 
-        /// <summary>Redeem using the original persisted ID. Never replace it after a timeout.</summary>
-        public Task<RedeemGiftCodeResponse> Redeem(string code, string idempotencyId)
+        /// <summary>Read-only. The caller must durably save the returned identity before RedeemPrepared.</summary>
+        public async Task<GiftCodeIntent> PrepareRedemption(string code)
         {
-            if (string.IsNullOrWhiteSpace(idempotencyId) || idempotencyId.Length > 128)
-                return Task.FromResult(Failure("INVALID_REQUEST"));
-            return RedeemInternal(code, idempotencyId);
+            LastErrorCode=null;
+            if (string.IsNullOrWhiteSpace(code) || code.Length>50) { Failure("INVALID_REQUEST"); return null; }
+            var network=HorizonApp.Network;
+            var user=UserManager.Instance.CurrentUser;
+            string token=network.GetSessionToken(), project=network.GetApiKey(), userId=user?.UserId;
+            if (!GiftCodeTransportContract.HasSession(user, token)) { Failure("SESSION_REQUIRED"); return null; }
+            long generation=network.ContextGeneration, epoch=_identityEpoch;
+            var response=await network.PostAsync<ValidateGiftCodeResponse>("/api/v1/app/gift-codes/validate",
+                new ValidateGiftCodeRequest {code=code,userId=userId,includeIntent=true},useSessionToken:true);
+            if (!ReferenceEquals(network,HorizonApp.Network) || generation!=network.ContextGeneration || epoch!=_identityEpoch || UserManager.Instance.CurrentUser?.UserId!=userId || !GiftCodeTransportContract.HasSession(UserManager.Instance.CurrentUser,network.GetSessionToken()))
+            { Failure("STALE_RESPONSE"); return null; }
+            if (!response.IsSuccess || response.Data==null) { Failure(response.ErrorCode ?? "INVALID_RESPONSE"); return null; }
+            if (!response.Data.valid) { Failure("CODE_NOT_ELIGIBLE"); return null; }
+            var data=response.Data;
+            var intent=new GiftCodeIntent {protocolVersion=data.protocolVersion,projectScope=GiftCodeIntent.ProjectFingerprint(project),userId=userId,code=code,
+                campaignId=data.campaignId,expectedCount=data.expectedCount,configRevision=data.configRevision};
+            if (!intent.IsValidFor(project,userId)) { Failure("INVALID_RESPONSE"); return null; }
+            return intent;
         }
-        private async Task<RedeemGiftCodeResponse> RedeemInternal(string code, string idempotencyId)
+        /// <summary>Retry the original persisted tuple after any uncertain outcome, including restart.</summary>
+        public async Task<RedeemGiftCodeResponse> RedeemPrepared(GiftCodeIntent original)
         {
-            LastErrorCode = null;
-            if (string.IsNullOrWhiteSpace(code) || code.Length > 50 ||
-                (idempotencyId != null && (string.IsNullOrWhiteSpace(idempotencyId) || idempotencyId.Length > 128)))
-                return Failure("INVALID_REQUEST");
-            var network = HorizonApp.Network;
-            GiftCodeRedeemPlan plan;
-            bool valid = idempotencyId == null
-                ? GiftCodeTransportContract.TryCreateRedeemPlan(UserManager.Instance.CurrentUser, network.GetSessionToken(), code, out plan)
-                : GiftCodeTransportContract.TryCreateRedeemPlan(UserManager.Instance.CurrentUser, network.GetSessionToken(), code, idempotencyId, out plan);
-            if (!valid) return Failure("SESSION_REQUIRED");
-
-            long generation = network.ContextGeneration, epoch = _identityEpoch;
-            string userId = plan.Request.userId, token = network.GetSessionToken();
-            var values = PlayerValuesManager.Instance;
-            long valuesEpoch = values.CacheEpoch;
-            var response = await network.PostAsync<RedeemGiftCodeResponse>(GiftCodeRedeemPlan.Endpoint,
-                plan.Request, useSessionToken: plan.UseSessionToken);
-            var user = UserManager.Instance.CurrentUser;
-            if (!ReferenceEquals(network, HorizonApp.Network) || generation != network.ContextGeneration || epoch != _identityEpoch
-                || user?.UserId != userId || user.AccessToken != token)
+            LastErrorCode=null;
+            var network=HorizonApp.Network;
+            var user=UserManager.Instance.CurrentUser;
+            if (!GiftCodeTransportContract.HasSession(user,network.GetSessionToken())) return Failure("SESSION_REQUIRED");
+            var intent=original?.Copy();
+            if (!GiftCodeTransportContract.TryCreateRedeemPlan(user,network.GetSessionToken(),network.GetApiKey(),intent,out var plan)) return Failure("INVALID_REQUEST");
+            long generation=network.ContextGeneration, epoch=_identityEpoch;
+            string userId=plan.Request.userId;
+            var values=PlayerValuesManager.Instance;
+            long valuesEpoch=values.CacheEpoch;
+            var response=await network.PostAsync<RedeemGiftCodeResponse>(GiftCodeRedeemPlan.Endpoint,plan.Request,useSessionToken:true);
+            if (!ReferenceEquals(network,HorizonApp.Network) || generation!=network.ContextGeneration || epoch!=_identityEpoch || UserManager.Instance.CurrentUser?.UserId!=userId || !GiftCodeTransportContract.HasSession(UserManager.Instance.CurrentUser,network.GetSessionToken()))
                 return Failure("STALE_RESPONSE");
-            if (!response.IsSuccess || response.Data == null || !response.Data.success)
-                return Failure(response.ErrorCode ?? (response.StatusCode >= 200 && response.StatusCode < 300 ? "INVALID_RESPONSE" : "HTTP_" + response.StatusCode));
-            var data = response.Data;
-            if (data.playerValues != null)
+            if (!response.IsSuccess || response.Data==null || !response.Data.success) return Failure(response.ErrorCode ?? "INVALID_RESPONSE");
+            var data=response.Data;
+            if (data.campaignId!=intent.campaignId || !GiftCodeIntent.CanonicalCount(data.count) ||
+                string.CompareOrdinal(data.count.PadLeft(19,'0'),intent.expectedCount.PadLeft(19,'0'))<=0) return Failure("INVALID_RESPONSE");
+            if (data.playerValues!=null)
             {
-                if (valuesEpoch != values.CacheEpoch || !values.AcceptServerState(userId, data.playerValues)) return Failure("STALE_RESPONSE");
-                data.playerValues = values.CurrentState;
+                if (valuesEpoch!=values.CacheEpoch || !values.AcceptServerState(userId,data.playerValues)) return Failure("STALE_RESPONSE");
+                data.playerValues=values.CurrentState;
             }
-            if (data.grantedUnlocks != null && data.grantedUnlocks.Length > 0) PlayerProfileManager.Instance.ClearCache();
-            LastErrorCode = null;
-            HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed, data);
+            if (data.alreadyApplied || data.grantedUnlocks.Length>0) PlayerProfileManager.Instance.ClearCache();
+            HorizonApp.Events.Publish(EventKeys.GiftCodeRedeemed,data);
             return data;
         }
-        private RedeemGiftCodeResponse Failure(string code)
-        {
-            LastErrorCode = code;
-            HorizonApp.Log.Warning($"Gift code redemption failed [{code}]; retain the original intent for reconciliation.");
-            return null;
-        }
-
-        /// <summary>
-        /// Validate a gift code without redeeming it.
-        /// </summary>
-        /// <param name="code">The gift code to validate</param>
-        /// <returns>True if valid, false otherwise, or null if request failed</returns>
+        private RedeemGiftCodeResponse Failure(string code) { LastErrorCode=code; return null; }
         public async Task<bool?> Validate(string code)
         {
-            if (string.IsNullOrEmpty(code))
-            {
-                HorizonApp.Log.Error("Gift code is required");
-                return null;
-            }
-
-            if (!PM.horizOn.Cloud.Manager.UserManager.Instance.IsSignedIn)
-            {
-                HorizonApp.Log.Error("User must be signed in to validate gift code");
-                return null;
-            }
-
-            var request = new ValidateGiftCodeRequest
-            {
-                code = code,
-                userId = PM.horizOn.Cloud.Manager.UserManager.Instance.CurrentUser.UserId
-            };
-
-            var response = await HorizonApp.Network.PostAsync<ValidateGiftCodeResponse>(
-                "/api/v1/app/gift-codes/validate",
-                request,
-                useSessionToken: false
-            );
-
-            if (response.IsSuccess && response.Data != null)
-            {
-                HorizonApp.Log.Info($"Gift code validated: {code} (Valid: {response.Data.valid})");
-                HorizonApp.Events.Publish(EventKeys.GiftCodeValidated, response.Data.valid);
-                return response.Data.valid;
-            }
-            else
-            {
-                HorizonApp.Log.Error($"Gift code validation failed: {response.Error}");
-                return null;
-            }
+            LastErrorCode=null;
+            if (string.IsNullOrWhiteSpace(code) || code.Length>50) { Failure("INVALID_REQUEST"); return null; }
+            var response=await HorizonApp.Network.PostAsync<ValidateGiftCodeResponse>("/api/v1/app/gift-codes/validate",new ValidateGiftCodeRequest {code=code},useSessionToken:false);
+            if (!response.IsSuccess || response.Data==null) { Failure(response.ErrorCode ?? "INVALID_RESPONSE"); return null; }
+            HorizonApp.Events.Publish(EventKeys.GiftCodeValidated,response.Data.valid); return response.Data.valid;
         }
     }
 }

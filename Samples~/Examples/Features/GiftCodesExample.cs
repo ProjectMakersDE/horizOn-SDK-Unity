@@ -41,18 +41,19 @@ namespace PM.horizOn.Cloud.Examples.Features
                 if (pending == null)
                 {
                     if (retryOnly) return;
-                    pending = new GiftCodeSampleStore.Intent { userId = user, code = giftCode, idempotencyId = Guid.NewGuid().ToString("D") };
-                    if (!GiftCodeSampleStore.Save(project, pending)) return; // Persist original code and UUID before HTTP.
+                    pending = await GiftCodeManager.Instance.PrepareRedemption(giftCode);
+                    if (pending == null || project != HorizonApp.Network.GetApiKey() || UserManager.Instance.CurrentUser?.UserId != user) return;
+                    if (!GiftCodeSampleStore.Save(project, pending)) return; // Persist original V2 tuple before HTTP.
                 }
                 else if (!retryOnly)
-                { HorizonApp.Log.Warning("Unresolved redemption exists. Use RetryPendingRedemption with its original code and UUID."); return; }
+                { HorizonApp.Log.Warning("Unresolved redemption exists. Use RetryPendingRedemption with its original V2 tuple."); return; }
                 var manager = GiftCodeManager.Instance;
-                var result = await manager.Redeem(pending.code, pending.idempotencyId);
+                var result = await manager.RedeemPrepared(pending);
                 if (project != HorizonApp.Network.GetApiKey() || UserManager.Instance.CurrentUser?.UserId != user) return;
                 if (result == null)
                 { HorizonApp.Log.Warning($"Redemption [{manager.LastErrorCode}]. Intent retained. Retry uncertain outcomes explicitly; reconcile permanent errors."); return; }
                 if (result.playerValues != null) foreach (var value in result.playerValues.values) HorizonApp.Log.Info($"{value.key}: {value.balance}");
-                // grantedValues reports the original grant even on replay; never add those amounts locally.
+                // Replay carries current state and empty grants; never add returned amounts locally.
                 if (!GiftCodeSampleStore.Confirm(project, pending)) HorizonApp.Log.Warning("Confirmation was not saved. Keep and reconcile the original intent.");
             }
             catch (Exception exception) { HorizonApp.Log.Warning($"Gift code stopped: {exception.GetType().Name}. Pending intent retained."); }

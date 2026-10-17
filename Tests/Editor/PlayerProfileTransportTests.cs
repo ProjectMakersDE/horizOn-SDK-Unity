@@ -200,9 +200,9 @@ namespace PM.horizOn.Cloud.Tests
             Assert.That(PlayerProfileManager.Instance.CurrentProfile, Is.Not.Null);
 
             incoming = _listener.GetContextAsync();
-            Task<RedeemGiftCodeResponse> redemption = GiftCodeManager.Instance.Redeem("FRAME2026");
+            Task<RedeemGiftCodeResponse> redemption = GiftCodeManager.Instance.RedeemPrepared(new PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent { code="FRAME2026",userId=UserManager.Instance.CurrentUser.UserId,projectScope=PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.ProjectFingerprint(NetworkService.Instance.GetApiKey()),campaignId="00000000-0000-4000-8000-000000001007",expectedCount="0",configRevision="1" });
             await Respond(await WithTimeout(incoming, TimeSpan.FromSeconds(5)), 200,
-                "{\"success\":true,\"message\":\"ok\",\"giftData\":\"{}\",\"grantedUnlocks\":[\"frame.gold\"]}");
+                "{\"success\":true,\"message\":\"ok\",\"giftData\":\"{}\",\"grantedUnlocks\":[\"frame.gold\"],\"campaignId\":\"00000000-0000-4000-8000-000000001007\",\"count\":\"1\",\"configRevision\":\"1\",\"replayed\":false,\"alreadyApplied\":false}");
 
             RedeemGiftCodeResponse result = await redemption;
             Assert.That(result, Is.Not.Null);

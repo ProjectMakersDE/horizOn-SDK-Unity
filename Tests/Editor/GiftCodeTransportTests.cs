@@ -69,44 +69,14 @@ namespace PM.horizOn.Cloud.Tests
             PlayerPrefs.DeleteKey("horizOn_AnonymousToken");
         }
 
-        [Test]
-        public async Task Redeem_SendsSessionBoundRequest_AndRejectsMissingSessionBeforeTransport()
+        [Test] public async Task V1IsExplicitlyClosedWithoutSendingOrInventingIntent()
         {
-            Task<HttpListenerContext> signedRequest = _listener.GetContextAsync();
-            Task<RedeemGiftCodeResponse> redemption = GiftCodeManager.Instance.Redeem("SUMMER2026");
-
-            HttpListenerContext context = await WithTimeout(signedRequest, TimeSpan.FromSeconds(5));
-            string body;
-            using (var reader = new StreamReader(context.Request.InputStream))
-            {
-                body = await reader.ReadToEndAsync();
-            }
-
-            Assert.That(context.Request.HttpMethod, Is.EqualTo("POST"));
-            Assert.That(context.Request.RawUrl, Is.EqualTo("/api/v1/app/gift-codes/redeem"));
-            Assert.That(context.Request.Headers["X-API-Key"], Is.EqualTo("project-key-886"));
-            Assert.That(context.Request.Headers["Authorization"], Is.EqualTo("Bearer session-token-886"));
-
-            var request = JsonUtility.FromJson<RedeemGiftCodeRequest>(body);
-            Assert.That(request.userId, Is.EqualTo("user-886"));
-            Assert.That(request.code, Is.EqualTo("SUMMER2026"));
-
-            context.Response.StatusCode = 200;
-            context.Response.ContentType = "application/json";
-            using (var writer = new StreamWriter(context.Response.OutputStream))
-            {
-                await writer.WriteAsync("{\"success\":true,\"message\":\"ok\",\"giftData\":\"{}\"}");
-            }
-            context.Response.Close();
-            Assert.That(await redemption, Is.Not.Null);
-
-            Task<HttpListenerContext> unexpectedRequest = _listener.GetContextAsync();
-            SetCurrentUser(new UserData());
-            Assert.That(await GiftCodeManager.Instance.Redeem("SUMMER2026"), Is.Null);
-
-            Task completed = await Task.WhenAny(unexpectedRequest, Task.Delay(350));
-            Assert.That(completed, Is.Not.SameAs(unexpectedRequest),
-                "Redeem sent a network request even though no user session existed");
+            var extra=_listener.GetContextAsync();
+            Assert.That(await GiftCodeManager.Instance.Redeem("SUMMER2026"),Is.Null);
+            Assert.That(GiftCodeManager.Instance.LastErrorCode,Is.EqualTo("UPGRADE_REQUIRED"));
+            Assert.That(await GiftCodeManager.Instance.Redeem("SUMMER2026","old-id"),Is.Null);
+            Assert.That(GiftCodeManager.Instance.LastErrorCode,Is.EqualTo("UPGRADE_REQUIRED"));
+            Assert.That(await Task.WhenAny(extra,Task.Delay(100)),Is.Not.SameAs(extra));
         }
 
         private static void SetCurrentUser(UserData user)

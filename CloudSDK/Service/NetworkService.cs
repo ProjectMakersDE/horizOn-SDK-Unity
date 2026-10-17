@@ -240,7 +240,7 @@ namespace PM.horizOn.Cloud.Service
             // Signup creates a server-issued identity; legacy gift redemption has no stable
             // caller ID. An uncertain response must never silently create another operation.
             bool oneAttempt = singleAttempt || method == "POST" && (endpoint == "/api/v1/app/user-management/signup"
-                || endpoint == "/api/v1/app/gift-codes/redeem" && requestData is PM.horizOn.Cloud.Objects.Network.Requests.RedeemGiftCodeRequest gift && string.IsNullOrEmpty(gift.idempotencyId));
+                || endpoint == "/api/v1/app/gift-codes/redeem" && requestData is PM.horizOn.Cloud.Objects.Network.Requests.RedeemGiftCodeRequest gift && (gift.protocolVersion != 2 || !PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.CanonicalCount(gift.expectedCount) || !PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.CanonicalCount(gift.configRevision) || !Guid.TryParseExact(gift.campaignId, "D", out _)));
             int maxAttempts = oneAttempt ? 1 : _config.MaxRetryAttempts + 1;
 
             while (attemptCount < maxAttempts)
@@ -442,6 +442,7 @@ namespace PM.horizOn.Cloud.Service
                         { data = FriendsJson.Snapshot(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(FriendLookup))
                         { data = FriendsJson.Lookup(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ValidateGiftCodeResponse)) { data = GiftCodeJson.Validate(responseText) as TResponse; }
                         else if (typeof(TResponse) == typeof(RedeemGiftCodeResponse))
                         {
                             data = GiftCodeJson.Redeem(responseText) as TResponse;
@@ -779,7 +780,7 @@ namespace PM.horizOn.Cloud.Service
             return BinaryNetworkResponse.Failure($"Max retry attempts ({maxAttempts}) exceeded");
         }
 
-        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(ChatLimitsView) || typeof(T) == typeof(ChatOpened) || typeof(T) == typeof(ChatSynced) || typeof(T) == typeof(ChatSent) || typeof(T) == typeof(ChatOperation) || typeof(T) == typeof(ChatReported)
+        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(ValidateGiftCodeResponse) || typeof(T) == typeof(RedeemGiftCodeResponse) || typeof(T) == typeof(ChatLimitsView) || typeof(T) == typeof(ChatOpened) || typeof(T) == typeof(ChatSynced) || typeof(T) == typeof(ChatSent) || typeof(T) == typeof(ChatOperation) || typeof(T) == typeof(ChatReported)
             || typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
             || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
             || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
