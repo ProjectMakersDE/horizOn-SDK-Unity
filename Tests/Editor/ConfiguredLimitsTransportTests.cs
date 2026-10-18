@@ -68,19 +68,34 @@ namespace PM.horizOn.Cloud.Tests
         {
             string name="a"+new string('\u0001',6*1024*1024);
             string DetailLarge(long revision=1,string id=Group)=>Detail(revision,data:"{}",id:id).Replace("\"name\":\"Seagull\"","\"name\":"+GroupsJson.Quote(name));
-            string detail=DetailLarge();Assert.That(Encoding.UTF8.GetByteCount(detail),Is.GreaterThan(36*1024*1024));
+            var preparation=System.Diagnostics.Stopwatch.StartNew();
+            string detail=DetailLarge();byte[] detailBytes=Encoding.UTF8.GetBytes(detail);Assert.That(detailBytes.Length,Is.GreaterThan(36*1024*1024));
+            string group=DetailLarge(2), own=Mine(2,groups:"["+group+"]"), response="{\"groups\":"+own+",\"group\":"+group+"}";
+            byte[] responseBytes=Encoding.UTF8.GetBytes(response), malformedBytes=Encoding.UTF8.GetBytes(response.Replace("\"revision\":2","\"revision\":\"invalid\""));
+            Assert.That(responseBytes.Length,Is.GreaterThan(72*1024*1024));
+            TestContext.Progress.WriteLine("Large Groups fixture prebuilt detail/mutation bytes in "+preparation.ElapsedMilliseconds+"ms before starting HTTP; configured timeout stays "+_config.ConnectionTimeoutSeconds+"s");
             var type=Type.GetType("PM.horizOn.Cloud.Examples.Features.GroupsExample, Assembly-CSharp",true);Component actor=new GameObject("[GroupsExampleTest]").AddComponent(type);type.GetField("projectId",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(actor,Peer);
             string path=Path.Combine(Application.persistentDataPath,"groups-"+Peer+"-"+User+".json.journal/intent.json");
             try{
-                var incoming=_listener.GetContextAsync();var task=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await Respond(await Large(incoming),detail);await Large(task);
+                var incoming=_listener.GetContextAsync();var task=(Task)type.GetMethod("ReviewGroup").Invoke(actor,new object[]{Group});await RespondLarge(await Large(incoming),detailBytes,"detail");await Large(task);
                 var reviewed=(GroupView)type.GetField("_reviewed",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(actor);Assert.That(reviewed.name,Is.EqualTo(name));
                 incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("SaveMetadataAfterReview").Invoke(actor,new object[]{name,"","open",GroupJsonData.Empty});var c=await Large(incoming);string original=await new StreamReader(c.Request.InputStream).ReadToEndAsync();Assert.That(original,Does.Contain("\"expectedRevision\":1"));Assert.That(File.Exists(path),Is.True);string saved=JournalHash(path);
-                string group=DetailLarge(2), own=Mine(2,groups:"["+group+"]"), response="{\"groups\":"+own+",\"group\":"+group+"}";Assert.That(Encoding.UTF8.GetByteCount(response),Is.GreaterThan(72*1024*1024));
-                await Respond(c,response.Replace("\"revision\":2","\"revision\":\"invalid\""));await Large(task);Assert.That(JournalHash(path),Is.EqualTo(saved),"Parse failure cannot erase or rebase a durable original");
-                incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ApplySavedIntent").Invoke(actor,null);c=await Large(incoming);Assert.That(await new StreamReader(c.Request.InputStream).ReadToEndAsync(),Is.EqualTo(original));await Respond(c,response);await Large(task);Assert.That(Manager.CurrentGroups.groups[0].name,Is.EqualTo(name));type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);Assert.That(File.Exists(path),Is.False);
-                string retained="["+string.Join(",",Enumerable.Range(0,3).Select(i=>DetailLarge(2,i==0?Group:ConfigGroupId(70000+i))))+"]";string lower=Mine(3,groups:retained).Replace("\"maxNameBytes\":120","\"maxNameBytes\":1");Assert.That(Encoding.UTF8.GetByteCount(lower),Is.GreaterThan(108*1024*1024));
-                incoming=_listener.GetContextAsync();var read=Manager.GetGroups(User);await Respond(await Large(incoming),lower);var accepted=await Large(read);Assert.That(accepted.IsSuccess,Is.True);Assert.That(accepted.Data.groups.Length,Is.EqualTo(3));Assert.That(accepted.Data.limits.maxNameBytes,Is.EqualTo(1));Assert.That(accepted.Data.groups[2].name,Is.EqualTo(name));
+                await RespondLarge(c,malformedBytes,"malformed mutation");await Large(task);Assert.That(JournalHash(path),Is.EqualTo(saved),"Parse failure cannot erase or rebase a durable original");
+                incoming=_listener.GetContextAsync();task=(Task)type.GetMethod("ApplySavedIntent").Invoke(actor,null);c=await Large(incoming);Assert.That(await new StreamReader(c.Request.InputStream).ReadToEndAsync(),Is.EqualTo(original));await RespondLarge(c,responseBytes,"original retry mutation");await Large(task);Assert.That(Manager.CurrentGroups.groups[0].name,Is.EqualTo(name));type.GetMethod("AcknowledgeSavedSuccess").Invoke(actor,null);Assert.That(File.Exists(path),Is.False);
+                string retained="["+string.Join(",",Enumerable.Range(0,3).Select(i=>DetailLarge(2,i==0?Group:ConfigGroupId(70000+i))))+"]";string lower=Mine(3,groups:retained).Replace("\"maxNameBytes\":120","\"maxNameBytes\":1");byte[] lowerBytes=Encoding.UTF8.GetBytes(lower);Assert.That(lowerBytes.Length,Is.GreaterThan(108*1024*1024));
+                incoming=_listener.GetContextAsync();var read=Manager.GetGroups(User);await RespondLarge(await Large(incoming),lowerBytes,"retained aggregate");var accepted=await Large(read);Assert.That(accepted.IsSuccess,Is.True);Assert.That(accepted.Data.groups.Length,Is.EqualTo(3));Assert.That(accepted.Data.limits.maxNameBytes,Is.EqualTo(1));Assert.That(accepted.Data.groups[2].name,Is.EqualTo(name));
             }finally{CleanupJournal(path);}
+        }
+
+        // Build and encode the deliberately huge fixture before starting a timed client request.
+        // Linux's Mono HttpListener otherwise competes with Unity's main-thread JSON construction
+        // while the production-configured timeout is already ticking. This helper changes no client timeout.
+        private static async Task RespondLarge(HttpListenerContext context,byte[] bytes,string phase)
+        {
+            var elapsed=System.Diagnostics.Stopwatch.StartNew();
+            context.Response.StatusCode=200;context.Response.ContentType="application/json";context.Response.ContentLength64=bytes.Length;
+            await context.Response.OutputStream.WriteAsync(bytes,0,bytes.Length);context.Response.Close();
+            TestContext.Progress.WriteLine("Large Groups "+phase+": "+bytes.Length+" bytes written in "+elapsed.ElapsedMilliseconds+"ms");
         }
 
         static string ConfigGroupId(int i)=>"20000000-0000-4000-8000-"+i.ToString("D12");
