@@ -177,6 +177,12 @@ server.ActiveHost;     // Returns current server URL
 
 ### Authentication
 
+Google sign-in/sign-up accepts an authorization code obtained by your game's
+platform-specific Google integration. Configure the OAuth client and redirect URI
+with Google and horizOn; the SDK does not include Google's sign-in plugin.
+Real Google/Apple provider sign-in on target devices is not established by the
+SDK's native transport tests.
+
 ```csharp
 // Anonymous sign-up (auto-caches token for session restore)
 await UserManager.Instance.SignUpAnonymous("PlayerName");
@@ -200,14 +206,19 @@ UserManager.Instance.SignOut();
 
 ### Sign in with Apple
 
-App-Store-ready authentication that respects user privacy. On iOS the SDK opens the
-native ASAuthorizationController sheet via the bundled AuthenticationServices plugin.
-On Android, Standalone (Windows / Linux / macOS) and the Editor it falls back to a
-system-browser OAuth redirect using the Apple Services ID configured in
-`HorizonConfig`.
+The SDK implements a native iOS path using ASAuthorizationController through the
+bundled AuthenticationServices plugin. Your iOS app still needs the Sign in with
+Apple capability, provisioning and Apple Developer/project configuration. Actual
+Apple sign-in on an iOS device and App Store acceptance have not been verified.
+
+On Android, Standalone (Windows / Linux / macOS) and the Editor, the SDK can open
+the Apple Services ID authorization URL. Your game must receive the OAuth redirect
+and hand its identity token back to the SDK; opening the browser does not complete
+sign-in. This platform integration and real provider sign-in require separate
+acceptance on each target platform.
 
 ```csharp
-// One-call end-to-end flow: native sheet on iOS, web fallback elsewhere.
+// Native iOS path; outside iOS requires your own redirect/token bridge (below).
 // Internally calls SignInApple, falls through to SignUpApple on USER_NOT_FOUND.
 bool signedIn = await UserManager.Instance.SignInWithApple();
 
@@ -665,6 +676,12 @@ When `StartCapture()` is called, the SDK automatically:
 ### Email Sending
 
 **Email Sending** lets your game send transactional emails to registered players. Create multi-language HTML templates with variable placeholders in the horizOn Dashboard, then trigger immediate or scheduled email delivery from your game using the SDK. Emails are sent through your own SMTP server -- horizOn handles the queue, rendering, and scheduling while you keep full control over branding and deliverability.
+
+The recipient must already be an active, email-verified user with a nonempty email
+in the API key's project; anonymous users are not eligible. Set **Recipient User Id**
+on the [minimal example](Samples~/Examples/Features/EmailSendingExample.cs) to that
+user's ID and configure the template first. The example does not create or sign in
+a replacement user. A queued/status response is separate from external SMTP delivery.
 
 ```csharp
 // Send immediate email
