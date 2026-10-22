@@ -9,17 +9,20 @@ namespace PM.horizOn.Cloud.Examples.Features
     /// <summary>
     /// Minimal example: Email Sending (transactional).
     ///
-    /// What it does: connects, signs in anonymously, sends one transactional email
-    /// using a Dashboard template, then queries its status.
+    /// What it does: connects, sends one transactional email to an explicitly
+    /// configured recipient using a Dashboard template, then queries its status.
     /// Setup: import the SDK, set your API key via Window > horizOn > Config Importer,
     /// create a "welcome" email template in the horizOn Dashboard, then attach this
-    /// script to an empty GameObject and press Play.
+    /// script to an empty GameObject. Set Recipient User Id in the Inspector to an
+    /// existing active, email-verified user with a nonempty email in the same project,
+    /// then press Play. Anonymous users are not eligible. This sample creates no user.
     /// Expected Debug.Log output: "Email queued: <id>" then "Email status: <status>".
     ///
     /// Reference: docs/wiki/sdks/features/email-sending.md
     /// </summary>
     public class EmailSendingExample : MonoBehaviour
     {
+        [SerializeField] private string _recipientUserId = "";
         [SerializeField] private string templateSlug = "welcome";
         [SerializeField] private string language = "en";
 
@@ -29,6 +32,12 @@ namespace PM.horizOn.Cloud.Examples.Features
             {
                 HorizonApp.Initialize();
 
+                if (string.IsNullOrWhiteSpace(_recipientUserId))
+                {
+                    HorizonApp.Log.Error("[EmailSendingExample] Set Recipient User Id to an active, email-verified user in this project");
+                    return;
+                }
+
                 var server = new HorizonServer();
                 if (!await server.Connect())
                 {
@@ -36,17 +45,9 @@ namespace PM.horizOn.Cloud.Examples.Features
                     return;
                 }
 
-                // SendEmail needs a recipient user ID. Here we use the current user.
-                if (!await UserManager.Instance.SignUpAnonymous("Player1"))
-                {
-                    Debug.LogError("[EmailSendingExample] Anonymous sign up failed");
-                    return;
-                }
-
-                string userId = UserManager.Instance.CurrentUser.UserId;
                 var variables = new Dictionary<string, string> { { "username", "Player1" } };
 
-                var sent = await EmailSendingManager.Instance.SendEmail(userId, templateSlug, variables, language);
+                var sent = await EmailSendingManager.Instance.SendEmail(_recipientUserId, templateSlug, variables, language);
                 if (sent == null)
                 {
                     Debug.LogError("[EmailSendingExample] Email send failed");
