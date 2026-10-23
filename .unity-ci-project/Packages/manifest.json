@@ -2,7 +2,8 @@
   "dependencies": {
     "com.projectmakers.horizon": "file:../..",
     "com.unity.modules.unitywebrequest": "1.0.0",
-    "com.unity.test-framework": "1.6.0"
+    "com.unity.test-framework": "1.6.0",
+    "com.unity.modules.uielements": "1.0.0"
   },
   "testables": [
     "com.projectmakers.horizon"

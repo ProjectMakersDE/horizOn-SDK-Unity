@@ -23,12 +23,26 @@ namespace PM.horizOn.Cloud.Service
         private HorizonConfig _config;
         private string _activeHost;
         private string _sessionToken;
+        private long _contextGeneration, _routingGeneration, _configGeneration;
+        /// <summary>Monotonic scope counter for rejecting late game UI callbacks, including a host,
+        /// session or project switched away and back. Contains no credentials.</summary>
+        public long ContextGeneration { get { _ = RoutingGeneration; return _contextGeneration; } }
+        internal long RoutingGeneration
+        {
+            get
+            {
+                long generation = _config?.ApiKeyGeneration ?? 0;
+                if (_configGeneration != generation) { _configGeneration = generation; _contextGeneration++; _routingGeneration++; }
+                return _routingGeneration;
+            }
+        }
 
         /// <summary>
         /// Set the active host URL to use for API requests.
         /// </summary>
         public void SetActiveHost(string host)
         {
+            if (!string.Equals(_activeHost, host, StringComparison.Ordinal)) { _contextGeneration++; _routingGeneration++; }
             _activeHost = host;
             LogService.Instance.Info($"Active host set to: {host}");
         }
@@ -46,6 +60,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void SetSessionToken(string token)
         {
+            if (!string.Equals(_sessionToken, token, StringComparison.Ordinal)) _contextGeneration++;
             _sessionToken = token;
             LogService.Instance.Info("Session token updated");
         }
@@ -53,6 +68,9 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Get the current session token.
         /// </summary>
+        /// <summary>Project API key used by the shared transports, including optional realtime.</summary>
+        public string GetApiKey() => _config?.ApiKey;
+
         public string GetSessionToken()
         {
             return _sessionToken;
@@ -63,6 +81,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void ClearSessionToken()
         {
+            if (_sessionToken != null) _contextGeneration++;
             _sessionToken = null;
             LogService.Instance.Info("Session token cleared");
         }
@@ -72,6 +91,7 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         public void Initialize(HorizonConfig config)
         {
+            if (_config != config) { _contextGeneration++; _routingGeneration++; }
             _config = config;
 
             if (config == null || !config.IsValid()) 
@@ -103,6 +123,27 @@ namespace PM.horizOn.Cloud.Service
         {
             return await SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, headers);
         }
+
+        /// <summary>One JSON POST attempt for revision-fenced commands with an uncertain outcome.
+        /// The caller retains the original intent; this never substitutes a new revision.</summary>
+        public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, null, true);
+
+        /// <summary>One JSON POST attempt with a frozen original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> PostOnceAsync<TResponse>(string endpoint, object requestData, bool useSessionToken, IReadOnlyDictionary<string, string> headers) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "POST", requestData, useSessionToken, headers, true);
+
+        /// <summary>One complete JSON PUT attempt for an original revision-fenced Groups update.</summary>
+        public Task<NetworkResponse<TResponse>> PutOnceAsync<TResponse>(string endpoint, object requestData = null, bool useSessionToken = false) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, null, true);
+
+        /// <summary>One complete JSON PUT attempt with an original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> PutOnceAsync<TResponse>(string endpoint, object requestData, bool useSessionToken, IReadOnlyDictionary<string, string> headers) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "PUT", requestData, useSessionToken, headers, true);
+
+        /// <summary>One DELETE attempt with an original revision header.</summary>
+        public Task<NetworkResponse<TResponse>> DeleteOnceAsync<TResponse>(string endpoint, bool useSessionToken = false, IReadOnlyDictionary<string, string> headers = null) where TResponse : class
+            => SendRequestAsync<TResponse>(endpoint, "DELETE", null, useSessionToken, headers, true);
 
         /// <summary>
         /// Send a PUT request to the API.
@@ -176,7 +217,7 @@ namespace PM.horizOn.Cloud.Service
             string method,
             object requestData,
             bool useSessionToken,
-            IReadOnlyDictionary<string, string> headers) where TResponse : class
+            IReadOnlyDictionary<string, string> headers, bool singleAttempt = false) where TResponse : class
         {
             if (string.IsNullOrEmpty(_activeHost))
             {
@@ -188,9 +229,19 @@ namespace PM.horizOn.Cloud.Service
                 return NetworkResponse<TResponse>.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
+            string requestJson = SerializeRequest(method, requestData);
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
-            int maxAttempts = _config.MaxRetryAttempts + 1; // Initial attempt + retries
+            // Signup creates a server-issued identity; legacy gift redemption has no stable
+            // caller ID. An uncertain response must never silently create another operation.
+            bool oneAttempt = singleAttempt || method == "POST" && (endpoint == "/api/v1/app/user-management/signup"
+                || endpoint == "/api/v1/app/gift-codes/redeem" && requestData is PM.horizOn.Cloud.Objects.Network.Requests.RedeemGiftCodeRequest gift && (gift.protocolVersion != 2 || !PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.CanonicalCount(gift.expectedCount) || !PM.horizOn.Cloud.Objects.Network.Responses.GiftCodeIntent.CanonicalCount(gift.configRevision) || !Guid.TryParseExact(gift.campaignId, "D", out _)));
+            int maxAttempts = oneAttempt ? 1 : _config.MaxRetryAttempts + 1;
 
             while (attemptCount < maxAttempts)
             {
@@ -203,11 +254,15 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken, requestApiKey, requestSession, requestTimeout, IsPrivatePlayerResponse<TResponse>()))
                 {
                     ApplyHeaders(request, headers);
 
                     // Send request
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return NetworkResponse<TResponse>.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     // Wait for completion
@@ -226,20 +281,21 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
                             string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
                             // Feature limits with a code (for example RUN_RATE_LIMITED) can last an hour:
                             // they are reported right away instead of being retried.
-                            if (attemptCount < maxAttempts && !IsNonRetryableRateLimitCode(rateLimitCode))
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -254,7 +310,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode);
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode, ReadResponseHeaders(request), request.downloadHandler?.text);
                         }
 
                         // Server errors (5xx) or timeout - retry
@@ -287,7 +343,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request));
+                        return NetworkResponse<TResponse>.Failure(errorMessage, responseCode, ParseErrorCode(request), ReadResponseHeaders(request), request.downloadHandler?.text);
                     }
 
                     // Success
@@ -304,9 +360,13 @@ namespace PM.horizOn.Cloud.Service
                     try
                     {
                         // Debug log the raw response
-                        LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
+                        if (IsPrivatePlayerResponse<TResponse>())
+                            LogService.Instance.Info($"Private player response: {responseText.Length} characters");
+                        else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
 
                         TResponse data;
+                        if (typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesState) || typeof(TResponse) == typeof(PM.horizOn.Cloud.Objects.Network.Responses.PlayerValuesOffers))
+                            responseText = PM.horizOn.Cloud.Manager.PlayerValuesManager.PrepareJson(responseText);
 
                         // Special handling for MessageResponse with plain text responses
                         if (typeof(TResponse) == typeof(MessageResponse))
@@ -336,6 +396,58 @@ namespace PM.horizOn.Cloud.Service
                         {
                             data = LocalizationAllResponse.ParseFromJson(responseText) as TResponse;
                         }
+                        else if (typeof(TResponse) == typeof(InboxSnapshot))
+                        {
+                            data = PM.horizOn.Cloud.Helper.InboxJson.Snapshot(responseText) as TResponse;
+                        }
+                        else if (typeof(TResponse) == typeof(InboxClaimResponse))
+                        {
+                            data = PM.horizOn.Cloud.Helper.InboxJson.Claim(responseText) as TResponse;
+                        }
+                        else if (typeof(TResponse) == typeof(AchievementsSnapshot))
+                        { data = AchievementsJson.Snapshot(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(AchievementUnlockResponse))
+                        { data = AchievementsJson.Unlock(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(AchievementDeliveryResponse))
+                        { data = AchievementsJson.Delivery(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatLimitsView)) { data = ChatJson.Limits(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatOpened)) { data = ChatJson.Opened(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatSynced)) { data = ChatJson.Synced(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatSent)) { data = ChatJson.Sent(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatOperation)) { data = ChatJson.Operation(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ChatReported)) { data = ChatJson.Reported(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MyMatches)) { data = MatchesJson.Mine(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchLimitsView)) { data = MatchesJson.LimitView(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchPage)) { data = MatchesJson.Page(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchRead)) { data = MatchesJson.Read(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchCreated)) { data = MatchesJson.Created(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchReported)) { data = MatchesJson.Reported(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MatchRankedRunResponse)) { data = MatchesJson.RankedRun(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedCollectionPage)) { data = SharedObjectsJson.Collections(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedUsage)) { data = SharedObjectsJson.Usage(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedObjectRead)) { data = SharedObjectsJson.Read(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedQueryResult)) { data = SharedObjectsJson.Query(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedWriteResult)) { data = SharedObjectsJson.Write(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(SharedDeleteResult)) { data = SharedObjectsJson.Delete(responseText) as TResponse; }
+                        else if (MarketplaceJson.IsResponse<TResponse>()) { data = MarketplaceJson.Read<TResponse>(responseText); }
+                        else if (typeof(TResponse) == typeof(InventorySnapshot)) { data = ItemsJson.Inventory(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ItemCatalogPage)) { data = ItemsJson.Catalog(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(PlayerValuesState)) { data = PlayerValuesJson.State(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(PlayerValuesOffers)) { data = PlayerValuesJson.Offers(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(MyGroupsView)) { data = GroupsJson.Mine(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupView)) { data = GroupsJson.Group(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupMembersView)) { data = GroupsJson.Members(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupPendingSnapshot)) { data = GroupsJson.Pending(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(GroupMutationView)) { data = GroupsJson.Mutation(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(FriendsSnapshot))
+                        { data = FriendsJson.Snapshot(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(FriendLookup))
+                        { data = FriendsJson.Lookup(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(ValidateGiftCodeResponse)) { data = GiftCodeJson.Validate(responseText) as TResponse; }
+                        else if (typeof(TResponse) == typeof(RedeemGiftCodeResponse))
+                        {
+                            data = GiftCodeJson.Redeem(responseText) as TResponse;
+                        }
                         // Special handling for array responses (JsonUtility can't deserialize arrays directly)
                         else if (typeof(TResponse).IsArray)
                         {
@@ -357,7 +469,8 @@ namespace PM.horizOn.Cloud.Service
                     catch (Exception e)
                     {
                         LogService.Instance.Error($"Failed to deserialize response: {e.Message}");
-                        LogService.Instance.Error($"Response text was: {responseText}");
+                        if (IsPrivatePlayerResponse<TResponse>()) LogService.Instance.Error($"Private player response could not be decoded ({responseText.Length} characters)");
+                        else LogService.Instance.Error($"Response text was: {responseText}");
                         return NetworkResponse<TResponse>.Failure($"Deserialization failed: {e.Message}", request.responseCode);
                     }
                 }
@@ -387,7 +500,13 @@ namespace PM.horizOn.Cloud.Service
                 return NetworkResponse<TResponse>.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
+            binaryData = binaryData == null ? Array.Empty<byte>() : (byte[])binaryData.Clone();
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
             int maxAttempts = _config.MaxRetryAttempts + 1;
 
@@ -402,9 +521,13 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return NetworkResponse<TResponse>.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
+                using (UnityWebRequest request = CreateBinaryPostRequest(url, binaryData, useSessionToken, requestApiKey, requestSession, requestTimeout))
                 {
                     ApplyHeaders(request, headers);
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return NetworkResponse<TResponse>.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -420,17 +543,19 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
-                            if (attemptCount < maxAttempts)
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -444,7 +569,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode);
+                            return NetworkResponse<TResponse>.Failure(rateLimitError, responseCode, rateLimitCode, ReadResponseHeaders(request), request.downloadHandler?.text);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -489,7 +614,9 @@ namespace PM.horizOn.Cloud.Service
 
                     try
                     {
-                        LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
+                        if (IsPrivatePlayerResponse<TResponse>())
+                            LogService.Instance.Info($"Private player response: {responseText.Length} characters");
+                        else LogService.Instance.Info($"Raw response from {endpoint}: {responseText}");
                         TResponse data = JsonUtility.FromJson<TResponse>(responseText);
                         return NetworkResponse<TResponse>.Success(data, request.responseCode, ReadResponseHeaders(request));
                     }
@@ -521,7 +648,13 @@ namespace PM.horizOn.Cloud.Service
                 return BinaryNetworkResponse.Failure("NetworkService not initialized. Call Initialize() first.");
             }
 
+            var requestOwner = Instance;
             string url = $"{_activeHost}{endpoint}";
+            string requestHost = _activeHost, requestApiKey = GetApiKey(), requestSession = GetSessionToken();
+            long requestGeneration = useSessionToken ? ContextGeneration : RoutingGeneration;
+            int requestTimeout = _config.ConnectionTimeoutSeconds;
+            string requestJson = SerializeRequest(method, requestData);
+            headers = SnapshotHeaders(headers);
             int attemptCount = 0;
             int maxAttempts = _config.MaxRetryAttempts + 1;
 
@@ -536,10 +669,14 @@ namespace PM.horizOn.Cloud.Service
                     Attempt = attemptCount
                 });
 
-                using (UnityWebRequest request = CreateRequest(url, method, requestData, useSessionToken))
+                if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || (useSessionToken && requestSession != GetSessionToken()))
+                    return BinaryNetworkResponse.Failure("Request identity changed before retry", errorCode: "SESSION_CHANGED");
+                using (UnityWebRequest request = CreateRequest(url, method, requestJson, useSessionToken, requestApiKey, requestSession, requestTimeout))
                 {
                     request.SetRequestHeader("Accept", "application/octet-stream");
                     ApplyHeaders(request, headers);
+                    if (!ReferenceEquals(requestOwner, Instance) || requestGeneration != (useSessionToken ? ContextGeneration : RoutingGeneration) || requestHost != _activeHost || requestApiKey != GetApiKey() || useSessionToken && requestSession != GetSessionToken())
+                        return BinaryNetworkResponse.Failure("Request identity changed during construction", errorCode: "SESSION_CHANGED");
                     var operation = request.SendWebRequest();
 
                     while (!operation.isDone)
@@ -567,17 +704,19 @@ namespace PM.horizOn.Cloud.Service
                         if (responseCode == 429)
                         {
                             string retryAfter = request.GetResponseHeader("Retry-After");
-                            float retryDelay = float.TryParse(retryAfter, out float delay) ? delay : _config.RetryDelaySeconds;
+                            double retryDelay = RateLimitRetryPolicy.RetryAfterSeconds(retryAfter, _config.RetryDelaySeconds, DateTimeOffset.UtcNow);
+                            string rateLimitCode = ParseErrorCode(request);
 
                             EventService.Instance?.Publish(EventKeys.NetworkRateLimited, new RateLimitData
                             {
-                                RetryAfter = retryDelay
+                                RetryAfter = (float)Math.Min(retryDelay, float.MaxValue)
                             });
 
-                            if (attemptCount < maxAttempts)
+                            int? wait = IsNonRetryableRateLimitCode(rateLimitCode) ? null : RateLimitRetryPolicy.DelayMilliseconds(retryDelay);
+                            if (attemptCount < maxAttempts && wait.HasValue)
                             {
-                                LogService.Instance.Warning($"Rate limited. Retrying after {retryDelay} seconds...");
-                                await Task.Delay((int)(retryDelay * 1000));
+                                LogService.Instance.Warning($"Rate limited. Retrying after {wait.Value} milliseconds including jitter...");
+                                await Task.Delay(wait.Value);
                                 continue;
                             }
 
@@ -591,7 +730,7 @@ namespace PM.horizOn.Cloud.Service
                                 Error = rateLimitError
                             });
                             LogService.Instance.Error($"Request failed: {method} {url} - {rateLimitError}");
-                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode);
+                            return BinaryNetworkResponse.Failure(rateLimitError, responseCode, ReadResponseHeaders(request), rateLimitCode);
                         }
 
                         if (responseCode >= 500 || request.result == UnityWebRequest.Result.ConnectionError)
@@ -622,7 +761,7 @@ namespace PM.horizOn.Cloud.Service
                         });
 
                         LogService.Instance.Error($"Request failed: {method} {url} - {errorMessage}");
-                        return BinaryNetworkResponse.Failure(errorMessage, responseCode, ReadResponseHeaders(request));
+                        return BinaryNetworkResponse.Failure(errorMessage, responseCode, ReadResponseHeaders(request), ParseErrorCode(request));
                     }
 
                     byte[] responseData = request.downloadHandler.data;
@@ -642,32 +781,52 @@ namespace PM.horizOn.Cloud.Service
             return BinaryNetworkResponse.Failure($"Max retry attempts ({maxAttempts}) exceeded");
         }
 
+        private static bool IsPrivatePlayerResponse<T>() => typeof(T) == typeof(ValidateGiftCodeResponse) || typeof(T) == typeof(RedeemGiftCodeResponse) || typeof(T) == typeof(ChatLimitsView) || typeof(T) == typeof(ChatOpened) || typeof(T) == typeof(ChatSynced) || typeof(T) == typeof(ChatSent) || typeof(T) == typeof(ChatOperation) || typeof(T) == typeof(ChatReported)
+            || typeof(T) == typeof(InboxSnapshot) || typeof(T) == typeof(InboxClaimResponse)
+            || typeof(T) == typeof(AchievementsSnapshot) || typeof(T) == typeof(AchievementUnlockResponse) || typeof(T) == typeof(AchievementDeliveryResponse) || typeof(T) == typeof(FriendsSnapshot) || typeof(T) == typeof(FriendLookup)
+            || typeof(T) == typeof(MyGroupsView) || typeof(T) == typeof(GroupView) || typeof(T) == typeof(GroupMembersView) || typeof(T) == typeof(GroupPendingSnapshot) || typeof(T) == typeof(GroupMutationView)
+            || typeof(T) == typeof(ValidatedRun) || typeof(T) == typeof(ValidatedSubmitResult) || typeof(T) == typeof(PlayerState) || typeof(T) == typeof(EvidenceUploadResult)
+            || typeof(T) == typeof(MyMatches) || typeof(T) == typeof(MatchLimitsView) || typeof(T) == typeof(MatchPage) || typeof(T) == typeof(MatchRead) || typeof(T) == typeof(MatchCreated) || typeof(T) == typeof(MatchReported) || typeof(T) == typeof(MatchRankedRunResponse)
+            || typeof(T) == typeof(SharedCollectionPage) || typeof(T) == typeof(SharedUsage) || typeof(T) == typeof(SharedObjectRead)
+            || typeof(T) == typeof(SharedQueryResult) || typeof(T) == typeof(SharedWriteResult) || typeof(T) == typeof(SharedDeleteResult)
+            || MarketplaceJson.IsResponse<T>()
+            || typeof(T) == typeof(InventorySnapshot) || typeof(T) == typeof(ItemCatalogPage) || typeof(T) == typeof(PlayerValuesState) || typeof(T) == typeof(PlayerValuesOffers);
+
+        private static string SerializeRequest(string method, object data) => method == "POST" || method == "PUT"
+            ? (data is MarketplaceJsonRequest market ? market.Json : data is ChatJsonRequest chat ? chat.Json : data is MatchesJsonRequest matches ? matches.Json : data is SharedObjectsJsonRequest shared ? shared.Json : data is ItemsJsonRequest items ? items.Json : data is GroupsJsonRequest groups ? groups.Json : data == null ? "{}" : JsonHelper.ToJsonExcludeEmpty(data)) : null;
+        private static IReadOnlyDictionary<string, string> SnapshotHeaders(IReadOnlyDictionary<string, string> headers)
+        {
+            if (headers == null) return null;
+            var copy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in headers) copy[pair.Key] = pair.Value;
+            return copy;
+        }
+
         /// <summary>
         /// Create a UnityWebRequest for binary POST with octet-stream content type.
         /// </summary>
-        private UnityWebRequest CreateBinaryPostRequest(string url, byte[] binaryData, bool useSessionToken)
+        private UnityWebRequest CreateBinaryPostRequest(string url, byte[] binaryData, bool useSessionToken, string apiKey, string sessionToken, int timeout)
         {
             UnityWebRequest request = new UnityWebRequest(url, "POST");
             request.uploadHandler = new UploadHandlerRaw(binaryData ?? new byte[0]);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/octet-stream");
 
-            request.timeout = _config.ConnectionTimeoutSeconds;
+            request.timeout = timeout;
 
-            string apiKey = _config.ApiKey;
             if (string.IsNullOrEmpty(apiKey))
             {
                 LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
             }
             else
             {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
+                LogService.Instance.Info("Configured project key added to request headers");
             }
             request.SetRequestHeader("X-API-Key", apiKey);
 
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
+            if (useSessionToken && !string.IsNullOrEmpty(sessionToken))
             {
-                request.SetRequestHeader("Authorization", $"Bearer {_sessionToken}");
+                request.SetRequestHeader("Authorization", $"Bearer {sessionToken}");
                 LogService.Instance.Info("Authorization header added (session token)");
             }
 
@@ -677,7 +836,7 @@ namespace PM.horizOn.Cloud.Service
         /// <summary>
         /// Create a UnityWebRequest with proper headers and body.
         /// </summary>
-        private UnityWebRequest CreateRequest(string url, string method, object requestData, bool useSessionToken)
+        private UnityWebRequest CreateRequest(string url, string method, string requestJson, bool useSessionToken, string apiKey, string sessionToken, int timeout, bool privatePayload = false)
         {
             UnityWebRequest request;
 
@@ -688,8 +847,8 @@ namespace PM.horizOn.Cloud.Service
             else if (method == "POST" || method == "PUT")
             {
                 // Use ToJsonExcludeEmpty to avoid sending empty strings that fail API validation
-                string jsonData = requestData != null ? JsonHelper.ToJsonExcludeEmpty(requestData) : "{}";
-                LogService.Instance.Info($"Request JSON: {jsonData}");
+                string jsonData = requestJson ?? "{}";
+                LogService.Instance.Info(privatePayload ? $"Private player request: {jsonData.Length} characters" : $"Request JSON: {jsonData}");
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
                 request = new UnityWebRequest(url, method);
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -707,23 +866,22 @@ namespace PM.horizOn.Cloud.Service
             }
 
             // Set timeout
-            request.timeout = _config.ConnectionTimeoutSeconds;
+            request.timeout = timeout;
 
             // Set API key header
-            string apiKey = _config.ApiKey;
             if (string.IsNullOrEmpty(apiKey))
             {
                 LogService.Instance.Error("API Key is empty or null! Check your HorizonConfig configuration.");
             }
             else
             {
-                LogService.Instance.Info($"Using API Key (length: {apiKey.Length}, starts with: {apiKey.Substring(0, Math.Min(10, apiKey.Length))}...)");
+                LogService.Instance.Info("Configured project key added to request headers");
             }
-            foreach (var header in HorizonRequestHeaders.Create(apiKey, _sessionToken, useSessionToken))
+            foreach (var header in HorizonRequestHeaders.Create(apiKey, sessionToken, useSessionToken))
             {
                 request.SetRequestHeader(header.Key, header.Value);
             }
-            if (useSessionToken && !string.IsNullOrEmpty(_sessionToken))
+            if (useSessionToken && !string.IsNullOrEmpty(sessionToken))
             {
                 LogService.Instance.Info("Authorization header added (session token)");
             }
@@ -761,27 +919,19 @@ namespace PM.horizOn.Cloud.Service
         /// </summary>
         /// <param name="retryAfterSeconds">Seconds from the Retry-After header (0 if unknown)</param>
         /// <returns>Human-readable error message</returns>
-        internal static string BuildRateLimitMessage(float retryAfterSeconds)
+        internal static string BuildRateLimitMessage(double retryAfterSeconds)
         {
             if (retryAfterSeconds > 0f)
             {
-                return $"Rate limit exceeded (HTTP 429). Try again in {(int)Math.Ceiling(retryAfterSeconds)} seconds.";
+                return $"Rate limit exceeded (HTTP 429). Try again in {Math.Ceiling(retryAfterSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture)} seconds.";
             }
             return "Rate limit exceeded (HTTP 429). Try again later.";
         }
 
         /// <summary>
-        /// True for a 429 server code that must not be retried automatically because the wait can
-        /// be long: the validated actions run limits <c>RUN_RATE_LIMITED</c> and
-        /// <c>RUN_CAPACITY_REACHED</c> (up to an hour). A 429 without a code (the account request
-        /// limit) keeps the Retry-After based retries.
+        /// Every nonempty feature-limit code is final for this call. Only codefree account429 retries automatically.
         /// </summary>
-        /// <param name="errorCode">The <c>code</c> of the 429 body, or null</param>
-        internal static bool IsNonRetryableRateLimitCode(string errorCode)
-        {
-            return errorCode == ValidatedActionsErrorCodes.RunRateLimited ||
-                   errorCode == ValidatedActionsErrorCodes.RunCapacityReached;
-        }
+        internal static bool IsNonRetryableRateLimitCode(string errorCode) => RateLimitRetryPolicy.IsFeatureLimit(errorCode);
 
         /// <summary>
         /// Parse error message from request.
@@ -846,6 +996,8 @@ namespace PM.horizOn.Cloud.Service
         public T Data { get; private set; }
         public string Error { get; private set; }
         public long StatusCode { get; private set; }
+        /// <summary>JSON error body for feature-specific current-state recovery.</summary>
+        public string ErrorBody { get; private set; }
 
         /// <summary>
         /// Stable error code from the JSON error body (for example <c>COSMETIC_LOCKED</c>),
@@ -874,7 +1026,7 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null, IReadOnlyDictionary<string, string> headers = null)
+        public static NetworkResponse<T> Failure(string error, long statusCode = 0, string errorCode = null, IReadOnlyDictionary<string, string> headers = null, string errorBody = null)
         {
             return new NetworkResponse<T>
             {
@@ -882,6 +1034,7 @@ namespace PM.horizOn.Cloud.Service
                 Error = error,
                 StatusCode = statusCode,
                 ErrorCode = errorCode,
+                ErrorBody = errorBody,
                 Headers = headers ?? ResponseHeaders.Empty
             };
         }
@@ -896,6 +1049,7 @@ namespace PM.horizOn.Cloud.Service
         public bool Found { get; private set; }
         public byte[] Data { get; private set; }
         public string Error { get; private set; }
+        public string ErrorCode { get; private set; }
         public long StatusCode { get; private set; }
 
         /// <summary>
@@ -932,13 +1086,14 @@ namespace PM.horizOn.Cloud.Service
             };
         }
 
-        public static BinaryNetworkResponse Failure(string error, long statusCode = 0, IReadOnlyDictionary<string, string> headers = null)
+        public static BinaryNetworkResponse Failure(string error, long statusCode = 0, IReadOnlyDictionary<string, string> headers = null, string errorCode = null)
         {
             return new BinaryNetworkResponse
             {
                 IsSuccess = false,
                 Found = false,
                 Error = error,
+                ErrorCode = errorCode,
                 StatusCode = statusCode,
                 Headers = headers ?? ResponseHeaders.Empty
             };

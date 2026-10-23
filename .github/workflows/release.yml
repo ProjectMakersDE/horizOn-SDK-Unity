@@ -28,6 +28,9 @@ jobs:
       - name: Run shared transport contract
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
+      - name: Check WebGL realtime bridge
+        run: node Tests~/WebGLRealtimeBridge.test.cjs
+
   unity-editor-transport:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -36,6 +39,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+
+      - name: Import actual feature samples for executable sample regressions
+        run: |
+          mkdir -p .unity-ci-project/Assets/InboxSample
+          cp Samples~/Examples/Features/InboxExample.cs .unity-ci-project/Assets/InboxSample/InboxExample.cs
+          mkdir -p .unity-ci-project/Assets/AchievementsSample
+          cp Samples~/Examples/Features/AchievementsExample.cs .unity-ci-project/Assets/AchievementsSample/AchievementsExample.cs
+          mkdir -p .unity-ci-project/Assets/FriendsSample
+          cp Samples~/Examples/Features/FriendsExample.cs .unity-ci-project/Assets/FriendsSample/FriendsExample.cs
 
       - name: Run actual Unity Editor transport tests
         id: unity-tests

@@ -144,7 +144,7 @@ To switch configurations:
 
 ## Rate Limiting
 
-> **Important**: Each client is limited to **10 requests per minute**.
+> **Important**: The limit counts **per account**, shared by all players. On the Free plan the soft limit is **10** and the hard limit **100 requests per minute**. Paid plans have higher limits, see [horizon.pm/pricing](https://horizon.pm/pricing).
 
 Design your API calls efficiently:
 
@@ -169,11 +169,26 @@ async void Start()
     await RemoteConfigManager.Instance.GetAllConfigs();
     await NewsManager.Instance.LoadNews();
 
-    // Remaining 7 requests available for gameplay actions
+    // The per-minute limit counts for your whole account, not per player
 }
 ```
 
 ---
+
+## Report Statistics At Session End
+
+In the Dashboard define `kills` as `sum` and `best_score` as `max` for your project. After
+authentication, call `StatisticsManager.Instance.GetStatistics()` once when you need the
+values/catalog. Batch session changes with `UpdateStatistics(updates, operationId)` rather
+than sending every gameplay event. Create the ID once with `CreateOperationId()` and persist
+it together with the original updates before sending. A timeout keeps that same ID; never
+automatically report the session under a new ID. The sample
+`Samples~/Examples/Features/StatisticsExample.cs` demonstrates durable pending batches.
+
+`CurrentStatistics` contains the last accepted values; use `hasValue` to distinguish unset
+from zero. `LastErrorCode` exposes `OPERATION_EXPIRED`, `OPERATION_CONFLICT`,
+`UPDATE_ABOVE_LIMIT`, `VALUE_OVERFLOW` and the session errors. Statistics also works against
+simpleServer with its project definitions configured in SQL.
 
 ## Next Steps
 
@@ -213,3 +228,35 @@ async void Start()
 ---
 
 **Made with love by ProjectMakers**
+
+
+## Shared Objects (explicit reads and original revisions)
+
+Use the player's existing restored session. Never replace a stored anonymous identity after a
+failed restore. `SharedObjectsManager` adds no polling or pagination loop:
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+using PM.horizOn.Cloud.Objects.Network.Responses;
+
+string userId = UserManager.Instance.CurrentUser.UserId;
+var page = await SharedObjectsManager.Instance.QueryObjects(userId, "levels", new SharedQuery {
+    mode = SharedQueryMode.Rectangle, minX = -10, maxX = 10, minY = -10, maxY = 10, limit = 20
+});
+if (page.IsSuccess) {
+    foreach (var item in page.Data.objects) {
+        byte[] opaqueGameData = item.data; // Your game validates its own format.
+        // item.id and item.revision identify exactly the version the player reviewed.
+    }
+    // page.Data.nextCursor is opaque; a next page is another explicit player/game action.
+}
+```
+
+Create uses an owner-usage revision; update/delete use the original object revision. They each
+send exactly once. Persist the complete original before HTTP and retain it after an uncertain
+answer. Never resend an uncertain CREATE. The executable `SharedObjectsExample` and
+`SharedObjectsSampleStore` implement OS-exclusive ownership, durable send markers, explicit owner
+reconciliation pages (`NextRecoveryCursor` / `ReviewNextCreateOwnerPage`) and atomic result ACK.
+Their filesystem mutations deliberately fail before sending in a WebGL player; a browser game
+must supply durable browser storage. The defensive VA recipe retains an unknown start and never
+creates a replacement run or trusted client Inbox reward.

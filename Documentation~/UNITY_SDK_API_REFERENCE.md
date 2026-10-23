@@ -6,7 +6,7 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 
 **Base URL**: `https://horizon.pm`
 **All endpoints require**: `X-API-Key` header for authentication
-**Rate Limit**: 10 requests/minute per client
+**Rate Limit**: per account, Free plan 10 requests/minute soft and 100 hard, higher on paid plans
 
 ## Table of Contents
 
@@ -21,8 +21,10 @@ This document provides a comprehensive reference for all `/api/v1/app/**` endpoi
 9. [Leaderboard](#leaderboard)
 10. [Player Profile](#player-profile)
 11. [Validated Actions](#validated-actions)
-12. [Data Models](#data-models)
-13. [Error Handling](#error-handling)
+12. [Statistics](#statistics)
+13. [Achievements](#achievements)
+14. [Data Models](#data-models)
+15. [Error Handling](#error-handling)
 
 ---
 
@@ -35,8 +37,8 @@ X-API-Key: horizon_your-api-key-here
 ```
 
 ### Rate Limiting
-- **10 requests per minute** per client (all tiers)
-- Exceeding returns HTTP 429 with `Retry-After` header
+- Counted **per account**, shared by all players. Free plan: soft limit **10**, hard limit **100** requests per minute. Paid plans have higher limits ([pricing](https://horizon.pm/pricing))
+- Above the hard limit, requests return HTTP 429 with a `Retry-After` header
 - Design API calls efficiently using caching
 
 ### Account Tiers
@@ -57,6 +59,11 @@ Base path: `/api/v1/app/user-management`
 ### 1. Sign Up
 
 **Endpoint**: `POST /api/v1/app/user-management/signup`
+
+Signup uses one transport attempt, including on timeout, 5xx or 429. The server creates the
+anonymous identity, so a lost response must be reconciled rather than automatically creating
+another account. Keep any existing anonymous token and restore that identity before signup.
+
 
 **Description**: Create a new user account. Supports ANONYMOUS, EMAIL, and GOOGLE authentication.
 
@@ -428,7 +435,8 @@ current session automatically. The server only redeems for the player who owns t
 ```json
 {
   "code": "string (max 50 chars)",
-  "userId": "uuid"
+  "userId": "uuid",
+  "idempotencyId": "optional stable ID, 1–128 nonblank characters"
 }
 ```
 
@@ -438,7 +446,10 @@ current session automatically. The server only redeems for the player who owns t
   "success": "boolean",
   "message": "string",
   "giftData": "string (JSON with rewards)",
-  "grantedUnlocks": ["string (cosmetic ID)"]
+  "grantedUnlocks": ["string (cosmetic ID)"],
+  "grantedValues": [{"key": "gold", "amount": 50}],
+  "playerValues": "full PlayerValuesState or null",
+  "replayed": false
 }
 ```
 
@@ -446,6 +457,32 @@ current session automatically. The server only redeems for the player who owns t
 this redemption (newly unlocked or owned before), `[]` when the code grants nothing. See
 [Player Profile](#player-profile). When it is not empty, the SDK drops the cached
 `PlayerProfileManager.CurrentProfile`, so the next `GetProfile()` shows the unlock.
+
+`Redeem(code)` remains supported and makes only one transport attempt, because the server
+creates a new redemption ID when the caller omits it. The two-argument overload rejects a null/empty/blank ID before HTTP; it never silently selects
+legacy behavior. `Redeem(code, idempotencyId)` preserves your supplied ID
+on transport retries; create and durably save it together with the **original code** before
+the first request. Reuse that exact pair after a timeout. Do not replace an unresolved
+intent or automatically retry permanent 4xx errors. `LastErrorCode` exposes the server code,
+`SESSION_REQUIRED`, `INVALID_REQUEST`, `INVALID_RESPONSE`, `STALE_RESPONSE` or an `HTTP_` status when the legacy
+nullable return value is null.
+
+`grantedValues` contains the original grant, including on a replay. The manager replaces
+`PlayerValuesManager.CurrentState` using the authoritative `playerValues` snapshot before
+publishing `GiftCodeRedeemed`. Never add `grantedValues` to balances locally. State adoption
+rejects an older revision, definition or server clock and a changed session/project/host or
+cleared values cache. Pure giftData responses without a player-values snapshot remain valid
+after an unrelated values-cache clear. Scope/session changes still invalidate every response.
+The returned snapshot is isolated from the manager cache. Old servers
+that omit the new fields produce `[]`, `null`, and `false` respectively.
+
+Import the Examples sample for `GiftCodesExample` and `GiftCodeSampleStore`: startup restores
+an existing anonymous identity without silently replacing it, while explicit UI actions save
+one UUID per redemption and retain uncertain outcomes. Pending storage belongs to the game,
+is scoped to project/player, and survives regional host changes. Connect separate UI buttons
+to `RedeemConfiguredCode()` and `RetryPendingRedemption()`; startup does not redeem a code.
+Persist the intent atomically in your game's own durable storage for production integration.
+
 
 **Example giftData**:
 ```json
@@ -1780,6 +1817,57 @@ in `ValidatedActionsErrorCodes`.
 
 ---
 
+## Statistics
+
+Every endpoint requires the current player's Bearer session and Project API key.
+
+| Method | Endpoint | Result |
+|---|---|---|
+| GET | `/api/v1/app/statistics?userId=&definitionVersion=` | `StatisticsSnapshot` |
+| GET | `/api/v1/app/statistics/definitions?definitionVersion=` | `StatisticsDefinitionsResponse` |
+| POST | `/api/v1/app/statistics` | Snapshot plus original `operationId` and `replayed` |
+
+POST body: `{userId,operationId,updates:[{key,value}]}`. All updates apply atomically. Modes
+are `sum`, `max`, `min`, `last`; optional resets use UTC midnight or ISO Monday. Missing values
+are zero with `hasValue:false`; the first min/max/last report initializes the counter.
+Integers are exact `long` values within ±9,007,199,254,740,991. Duplicate keys and overflow
+reject the whole batch. An optional positive `maxPerUpdate` bounds the absolute reported value.
+
+| StatisticsManager member | Meaning |
+|---|---|
+| `Task<StatisticsSnapshot> GetStatistics()` | Explicit snapshot; conditional catalog version is managed by the SDK |
+| `Task<StatisticsDefinitionsResponse> GetDefinitions()` | Explicit catalog read; unchanged definitions are folded from cache |
+| `Task<StatisticsSnapshot> UpdateStatistics(IList<StatisticUpdate> updates, string operationId)` | One session batch; original ID is mandatory |
+| `string CreateOperationId()` | Timestamp:UUID, corrected using the last snapshot's server time |
+| `CurrentStatistics`, `CurrentDefinitions` | Last accepted data, cleared on session/host change |
+| `LastErrorCode`, `LastSubmittedOperationId` | Stable failure code and original submitted ID |
+| `void ClearCache()` | Drop snapshot, catalog, clock correction and pending-ID reference |
+
+Persist the ID and immutable batch before sending. Transport retries use that ID. After a
+timeout, load a snapshot and retry the original ID; never silently generate a replacement.
+Retained receipts replay the current snapshot; mismatched payloads return `OPERATION_CONFLICT`.
+Unknown IDs must be within 24 hours, no more than 30 seconds ahead of server time and newer
+than the persistent eviction floor. Only eight receipts are retained, so delayed or
+out-of-order unknown IDs can receive `OPERATION_EXPIRED` sooner. Reconcile an uncertain old
+operation before deciding to report another session.
+
+Snapshots expose `definitionVersion`, `definitions`, `revision`, `values` with `hasValue` and
+`period`, `operationWindow`, and `newlyUnlocked` for achievement integration. The Unity SDK
+preserves cached definitions when JsonUtility materializes an unchanged null catalog as an
+empty array. A higher definition version invalidates the old counter projection. Optional
+`maxPerUpdate` is omitted by the server; Unity uses `HasMaxPerUpdate`/zero for absence.
+Revision and snapshot-server-time watermarks are independent of the current projection and
+survive catalog invalidation. An older snapshot fails locally with `STATE_CONFLICT`, even
+when lazy UTC reset left the revision unchanged. Clearing the cache invalidates in-flight
+conditional responses and makes the next request load the full catalog.
+
+Methods return null on failure. `StatisticsErrorCodes` includes `SESSION_REQUIRED`,
+`SESSION_FORBIDDEN`, `OPERATION_CONFLICT`, `OPERATION_EXPIRED`, `OPERATION_IN_FUTURE`,
+`STATE_CONFLICT`, `UNKNOWN_STATISTIC`, `UPDATE_ABOVE_LIMIT`, `VALUE_OVERFLOW` and
+`RATE_LIMITED`. A clock behind an already stored UTC bucket fails with `STATE_CONFLICT`;
+refresh/retry the original ID. `SESSION_CHANGED` rejects a late response from another session.
+No statistics read is added to login, run-start or cloud-save operations.
+
 ## Data Models
 
 ### Enums
@@ -1855,6 +1943,9 @@ Helpers: `List<PlayerCosmetic> GetCosmetics(string type)` and `bool IsAvailable(
 | message | string | Server message |
 | giftData | string | JSON string with the rewards |
 | grantedUnlocks | string[] | Cosmetic IDs the code unlocked (owned after this redemption), empty when none |
+| grantedValues | PlayerValueAmount[] | Original authoritative grant (also on replay); never add locally |
+| playerValues | PlayerValuesState | Full current snapshot or null, adopted by PlayerValuesManager |
+| replayed | bool | This request replays an existing redemption |
 
 ### ValidatedRun
 | Field | Type | Description |
@@ -1952,7 +2043,7 @@ Helpers: `HasDailyCap`, `RemainingToday` (`long.MaxValue` without a cap), `IsFul
 | 403 | Forbidden | Tier limit, wrong user, check permissions |
 | 404 | Not Found | Resource doesn't exist |
 | 409 | Conflict | For example `UNLOCK_LIMIT_REACHED` on a gift code with grants |
-| 429 | Rate Limited | Wait and retry with backoff |
+| 429 | Rate Limited | Codefree: Retry-After plus0–20% jitter; any nonempty feature code: return immediately |
 
 Player profile errors carry a stable `code` in the JSON body (`COSMETIC_LOCKED`, ...). The
 Unity SDK exposes it as `PlayerProfileManager.Instance.LastErrorCode`; switch on the code,
@@ -2048,8 +2139,11 @@ else
 | 23 | Start Validated Run | `/validated-actions/runs` | POST | `ValidatedActionsManager.StartRun()` |
 | 24 | Submit Validated Run | `/validated-actions/submit` | POST | `ValidatedActionsManager.SubmitValidated()`, `SubmitValidatedWithHash()` |
 | 25 | Get Player State | `/validated-actions/state?userId=` | GET | `ValidatedActionsManager.GetState()` |
+| 26 | Get Statistics | `/statistics?userId=` | GET | `StatisticsManager.GetStatistics()` |
+| 27 | Get Statistic Definitions | `/statistics/definitions` | GET | `StatisticsManager.GetDefinitions()` |
+| 28 | Update Statistics | `/statistics` | POST | `StatisticsManager.UpdateStatistics()` |
 
-**Total Endpoints**: 25
+**Listed Endpoints**: 28
 
 ---
 
@@ -2061,3 +2155,60 @@ else
 
 **Version**: 1.11.0
 **Last Updated**: 2026-09-29
+
+
+### Transport rate-limit retries (TASK-996)
+
+All JSON, binary-upload and binary-download transports handle429 consistently. A response
+with any nonempty `code` is a feature limit: return it immediately with the original status,
+code and response headers; do not sleep or retry it. An account limit without a code uses
+`Retry-After` (seconds or any of the three [HTTP-date formats](https://www.rfc-editor.org/rfc/rfc9110.html#name-date-time-formats)) plus random0–20% additional delay, rounded up to
+milliseconds. A missing/invalid header uses the configured positive retry delay (at least1s).
+A wait too large for the platform is returned without retrying earlier than the server asked.
+
+Retry limits remain configured by `MaxRetryAttempts`. Original serialized JSON/operation IDs,
+binary bytes and custom headers are frozen before the first request. Retry attempts cannot
+cross a host/project switch or, for authenticated calls, a session change, even if the value
+is switched back. Public reads can finish retrying during a concurrent signin. Binary error
+responses additionally expose `ErrorCode`, with existing `Headers`/`GetHeader()` preserved.
+Non-idempotent signup and legacy gift-code redemption without caller IDs make only one
+transport attempt after an uncertain result. No SDK retry creates a replacement operation ID.
+
+## Achievements
+
+**Manager:** `PM.horizOn.Cloud.Manager.AchievementsManager.Instance`. All three app routes require the current project key and the matching current player's Bearer session.
+
+| REST | Unity |
+|---|---|
+| `GET /api/v1/app/achievements?userId=&definitionVersion=` | `Task<AchievementsResult> GetAchievements(string userId, string definitionVersion = null)` |
+| `POST /api/v1/app/achievements/unlock {userId,key}` | `Task<AchievementUnlockResult> Unlock(string userId, string key)` |
+| `POST /api/v1/app/achievements/rewards/deliver {userId,keys}` | `Task<AchievementDeliveryResult> DeliverRewards(string userId, IList<string> keys)` |
+
+Response types expose `IsSuccess`, `Data`, `ErrorCode`, `Error`. `AchievementsSnapshot` contains `userId`, `revision`, `definitionVersion`, `definitions`, `progress`, `limits`, `serverTime`. Unlock data includes `achievements`, `newlyUnlocked`, `replayed`, `deliveryResults`; delivery data includes `achievements`, `results`. Compact progress and status results use `complete`; fresh unlocks return no deliveryResults. Nullable legacy dates, Inbox IDs and pending payloads stay readable for migration.
+
+Fresh achievements atomically grant rewards with the durable unlock. Compact progress uses `rewardState:"complete"` and `unlockedAt:null`; it creates no new pending reward or Inbox entry. `DeliverRewards` is a compatibility/status call for one to eight original keys, not a second grant. Retained legacy `pendingReward`/`inboxEntryId` fields describe old accepted rewards only; unresolved originals require explicit source migration (`MIGRATION_REQUIRED`), never reconstruction from current definitions or automatic regrant. Repeat an uncertain manual unlock with the same key, and read current Player Values instead of adding reward deltas locally.
+
+An opaque version can be used conditionally only with matching player/session metadata. Null metadata retains that cache and an empty array clears it. `CurrentAchievements` is a defensive copy. `ClearCache()` preserves anti-rollback revision/time watermarks; identity changes reset scope and fence in-flight replies. There is no automatic fetch, polling or currency addition. Repeat original manual/delivery keys. Only retained legacy rewards can refer to an Inbox claim; new compact unlocks require no claim. Use the existing Inbox sample's fresh-selection guard before persisting a new claim; replay only the saved original entry ID after uncertainty. See `Samples~/Examples/Features/AchievementsExample.cs` for explicit actions and statistics integration.
+
+
+## Friends
+
+**Manager:** `PM.horizOn.Cloud.Manager.FriendsManager.Instance`. App calls require the matching current player's Bearer session and project key; they do not authenticate or create players.
+
+| REST | Unity |
+|---|---|
+| `GET /api/v1/app/friends?userId=` | `Task<FriendsResult> GetFriends(string userId)` |
+| `GET /api/v1/app/friends/find?userId=&query=` | `Task<FriendLookupResult> FindPlayer(string userId, string query)` |
+| `POST /api/v1/app/friends/request` | `Task<FriendsResult> SendRequest(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/accept` | `Task<FriendsResult> AcceptRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/decline` | `Task<FriendsResult> DeclineRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/cancel` | `Task<FriendsResult> CancelRequest(string userId, string targetUserId, long expectedRevision, string requestId)` |
+| `POST /api/v1/app/friends/remove` | `Task<FriendsResult> RemoveFriend(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/block` | `Task<FriendsResult> BlockPlayer(string userId, string targetUserId, long expectedRevision)` |
+| `POST /api/v1/app/friends/unblock` | `Task<FriendsResult> UnblockPlayer(string userId, string targetUserId, long expectedRevision)` |
+
+Every action body contains `userId`, `targetUserId`, `expectedRevision`; only accept/decline/cancel additionally contain the original `requestId`. A zero revision is explicit. Self actions, malformed IDs and negative/unsafe revisions fail before HTTP. All seven actions use `NetworkService.PostOnceAsync`, retaining ordinary JSON serialization, headers, session/context fences and error details while suppressing automatic transport retries. Existing `PostAsync` retry behavior is unchanged. Keep the original saved command after an uncertain outcome; a GET and deliberate user reconciliation must precede any new command using a new revision.
+
+Wrappers expose `IsSuccess`, `Data`, `ErrorCode`, `Error`. `FriendsSnapshot` has `userId`, safe64 `revision`, canonical `friendCode`, `friends`, `incoming`, `outgoing`, `blocked`, `limits`, `serverTime`. Friend rows contain `userId`, `since`, public `display`, nullable `lastActiveAt`; request rows contain `userId`, `requestId`, `createdAt`, public `display`; blocks contain only `userId`, `blockedAt`. `FriendLookup` has `userId`, `friendCode`, `display`. Public nullable names/avatar/frame values remain null, and missing activity means unknown, never online. Current limits are authoritative for new additions; retained above-tier lists remain readable. DTOs live in `PM.horizOn.Cloud.Objects.Network.Responses`.
+
+`CurrentFriends` returns independent nested copies. `ClearCache()` keeps anti-rollback revision/time watermarks, while identity changes reset scope and invalidate pending responses. Optional own-player `friends:<userId>` events only invalidate; HTTP refresh is an explicit game lifecycle/button action. No automatic signup, poll or socket connection. `Samples~/Examples/Features/FriendsExample.cs` demonstrates exact lookup, saved original mutations and explicit refresh after conflicts. Its game UI callbacks also fence the public read-only `NetworkService.ContextGeneration` counter.

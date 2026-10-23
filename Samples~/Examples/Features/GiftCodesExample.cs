@@ -5,76 +5,59 @@ using PM.horizOn.Cloud.Manager;
 
 namespace PM.horizOn.Cloud.Examples.Features
 {
-    /// <summary>
-    /// Minimal example: Gift Codes.
-    ///
-    /// What it does: connects, signs in anonymously, validates a gift code, then
-    /// redeems it. Redeeming consumes the code, so a code can only be used once.
-    /// Setup: import the SDK, set your API key via Window > horizOn > Config Importer,
-    /// create a gift code in the horizOn Dashboard, set it on this component, then
-    /// attach the script to an empty GameObject and press Play.
-    /// Expected Debug.Log output: "Code valid: True" then "Code redeemed" with gift data.
-    ///
-    /// Reference: docs/wiki/sdks/features/gift-codes.md
-    /// </summary>
+    /// <summary>Wire the two public actions to explicit UI buttons. Startup never redeems automatically.</summary>
     public class GiftCodesExample : MonoBehaviour
     {
-        [SerializeField] private string giftCode = "PROMO2026";
-
+        [SerializeField] private string giftCode = "SUMMER2026";
+        private bool _ready, _busy;
         private async void Start()
         {
             try
             {
                 HorizonApp.Initialize();
-
-                var server = new HorizonServer();
-                if (!await server.Connect())
+                if (!await new HorizonServer().Connect()) return;
+                var auth = UserManager.Instance;
+                if (auth.CurrentUser == null || !auth.CurrentUser.IsValid())
                 {
-                    Debug.LogError("[GiftCodesExample] Could not connect to horizOn");
-                    return;
+                    if (!GiftCodeSampleStore.PrepareIdentity(out var restore)) return;
+                    if (restore ? !await auth.RestoreAnonymousSession() : !await auth.SignUpAnonymous("GiftPlayer")) return;
                 }
-
-                // Gift code calls require a signed in user.
-                if (!await UserManager.Instance.SignUpAnonymous("Player1"))
-                {
-                    Debug.LogError("[GiftCodesExample] Anonymous sign up failed");
-                    return;
-                }
-
-                // Validate returns null on a request error, true or false otherwise.
-                bool? valid = await GiftCodeManager.Instance.Validate(giftCode);
-                if (valid == null)
-                {
-                    Debug.LogError("[GiftCodesExample] Gift code validation request failed");
-                    return;
-                }
-
-                Debug.Log($"[GiftCodesExample] Code valid: {valid.Value}");
-                if (!valid.Value)
-                {
-                    return;
-                }
-
-                var result = await GiftCodeManager.Instance.Redeem(giftCode);
-                if (result != null && result.success)
-                {
-                    Debug.Log($"[GiftCodesExample] Code redeemed, gift data: {result.giftData}");
-                    // Cosmetics the code unlocked (see PlayerProfileExample). The SDK already
-                    // dropped its cached profile, the next GetProfile() shows them.
-                    if (result.grantedUnlocks != null && result.grantedUnlocks.Length > 0)
-                    {
-                        Debug.Log($"[GiftCodesExample] Unlocked: {string.Join(", ", result.grantedUnlocks)}");
-                    }
-                }
-                else
-                {
-                    Debug.LogWarning("[GiftCodesExample] Gift code redemption failed");
-                }
+                _ready = true;
+                HorizonApp.Log.Info("Gift code ready. An unresolved intent must be retried or reconciled before another redemption.");
             }
-            catch (Exception e)
+            catch (Exception exception) { HorizonApp.Log.Warning($"Gift code setup stopped: {exception.GetType().Name}. Existing identity retained."); }
+        }
+        public void RedeemConfiguredCode() => Redeem(false);
+        public void RetryPendingRedemption() => Redeem(true);
+        private async void Redeem(bool retryOnly)
+        {
+            if (!_ready || _busy || UserManager.Instance.CurrentUser == null || !UserManager.Instance.CurrentUser.IsValid()) return;
+            _busy = true;
+            try
             {
-                Debug.LogError($"[GiftCodesExample] Unexpected error: {e.Message}");
+                string project = HorizonApp.Network.GetApiKey(), user = UserManager.Instance.CurrentUser.UserId;
+                if (!GiftCodeSampleStore.TryLoad(project, user, out var pending))
+                { HorizonApp.Log.Warning("Saved redemption needs recovery; original storage retained."); return; }
+                if (pending == null)
+                {
+                    if (retryOnly) return;
+                    pending = await GiftCodeManager.Instance.PrepareRedemption(giftCode);
+                    if (pending == null || project != HorizonApp.Network.GetApiKey() || UserManager.Instance.CurrentUser?.UserId != user) return;
+                    if (!GiftCodeSampleStore.Save(project, pending)) return; // Persist original V2 tuple before HTTP.
+                }
+                else if (!retryOnly)
+                { HorizonApp.Log.Warning("Unresolved redemption exists. Use RetryPendingRedemption with its original V2 tuple."); return; }
+                var manager = GiftCodeManager.Instance;
+                var result = await manager.RedeemPrepared(pending);
+                if (project != HorizonApp.Network.GetApiKey() || UserManager.Instance.CurrentUser?.UserId != user) return;
+                if (result == null)
+                { HorizonApp.Log.Warning($"Redemption [{manager.LastErrorCode}]. Intent retained. Retry uncertain outcomes explicitly; reconcile permanent errors."); return; }
+                if (result.playerValues != null) foreach (var value in result.playerValues.values) HorizonApp.Log.Info($"{value.key}: {value.balance}");
+                // Replay carries current state and empty grants; never add returned amounts locally.
+                if (!GiftCodeSampleStore.Confirm(project, pending)) HorizonApp.Log.Warning("Confirmation was not saved. Keep and reconcile the original intent.");
             }
+            catch (Exception exception) { HorizonApp.Log.Warning($"Gift code stopped: {exception.GetType().Name}. Pending intent retained."); }
+            finally { _busy = false; }
         }
     }
 }

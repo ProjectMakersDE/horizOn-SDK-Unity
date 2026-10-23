@@ -19,11 +19,18 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🔐 **Authentication** | `UserManager` | Anonymous, email, Google and Apple sign-in |
 | 🏆 **Leaderboards** | `LeaderboardManager` | Global rankings and scores |
 | ☁️ **Cloud Save** | `CloudSaveManager` | Persist game data across devices |
+| ⏳ **Matches** | `MatchesManager` | Explicit asynchronous turns, immutable reports and original ranked-run recovery |
+| 🧩 **Shared Objects** | `SharedObjectsManager` | Opaque bytes, indexed bounded queries and explicit original-revision writes |
+| 🎒 **Items** | `ItemsManager` | Bounded catalog, unique inventory and explicit revision-fenced equip/adjust/discard |
+| 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
+| 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
+| 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
 | 📰 **News** | `NewsManager` | In-game announcements |
-| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks |
+| 🎁 **Gift Codes** | `GiftCodeManager` | Promotional code redemption, cosmetic unlocks, authoritative player values |
 | 🪪 **Player Profile** | `PlayerProfileManager` | Avatar, frame and badges shown on leaderboards |
+| 📈 **Statistics** | `StatisticsManager` | Batched sum/max/min/last counters with optional UTC daily/weekly resets |
 | 🛡️ **Validated Actions** | `ValidatedActionsManager` | Server-checked runs: single-use tickets, server seed, rules before any score is written, server-owned currency and loot, input log evidence |
 | 💬 **Feedback** | `FeedbackManager` | Bug reports and feature requests |
 | 📊 **User Logs** | `UserLogManager` | Server-side logging |
@@ -140,6 +147,12 @@ Attach one to an empty GameObject and press Play.
 | Email Sending | `EmailSendingExample.cs` |
 | Gift Codes | `GiftCodesExample.cs` |
 | Player Profile | `PlayerProfileExample.cs` |
+| Statistics | `StatisticsExample.cs`, `StatisticsSampleStore.cs` |
+| Inbox | `InboxExample.cs` (explicit screen reads and player claims) |
+| Achievements | `AchievementsExample.cs` (progress, manual unlock, pending handoff and saved Inbox claim) |
+| Friends | `FriendsExample.cs` (explicit lookup, saved original actions and reconciliation) |
+| Matches | `MatchesExample.cs`, `MatchesSampleStore.cs` (two-player original intents, reports and guarded ranked runs) |
+| Items | `ItemsExample.cs`, `ItemsSampleStore.cs` (durable original purchase/CAS and GET-only recovery) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -164,6 +177,12 @@ server.ActiveHost;     // Returns current server URL
 
 ### Authentication
 
+Google sign-in/sign-up accepts an authorization code obtained by your game's
+platform-specific Google integration. Configure the OAuth client and redirect URI
+with Google and horizOn; the SDK does not include Google's sign-in plugin.
+Real Google/Apple provider sign-in on target devices is not established by the
+SDK's native transport tests.
+
 ```csharp
 // Anonymous sign-up (auto-caches token for session restore)
 await UserManager.Instance.SignUpAnonymous("PlayerName");
@@ -187,14 +206,19 @@ UserManager.Instance.SignOut();
 
 ### Sign in with Apple
 
-App-Store-ready authentication that respects user privacy. On iOS the SDK opens the
-native ASAuthorizationController sheet via the bundled AuthenticationServices plugin.
-On Android, Standalone (Windows / Linux / macOS) and the Editor it falls back to a
-system-browser OAuth redirect using the Apple Services ID configured in
-`HorizonConfig`.
+The SDK implements a native iOS path using ASAuthorizationController through the
+bundled AuthenticationServices plugin. Your iOS app still needs the Sign in with
+Apple capability, provisioning and Apple Developer/project configuration. Actual
+Apple sign-in on an iOS device and App Store acceptance have not been verified.
+
+On Android, Standalone (Windows / Linux / macOS) and the Editor, the SDK can open
+the Apple Services ID authorization URL. Your game must receive the OAuth redirect
+and hand its identity token back to the SDK; opening the browser does not complete
+sign-in. This platform integration and real provider sign-in require separate
+acceptance on each target platform.
 
 ```csharp
-// One-call end-to-end flow: native sheet on iOS, web fallback elsewhere.
+// Native iOS path; outside iOS requires your own redirect/token bridge (below).
 // Internally calls SignInApple, falls through to SignUpApple on USER_NOT_FOUND.
 bool signedIn = await UserManager.Instance.SignInWithApple();
 
@@ -350,18 +374,16 @@ foreach (var item in news)
 
 ### Gift Codes
 
-```csharp
-// Validate first (optional)
-bool? valid = await GiftCodeManager.Instance.Validate("PROMO2024");
+Prepare once, persist the complete intent before sending, and retry that saved intent after a timeout or restart. `GiftCodesExample` includes a scoped durable sample store and separate explicit redeem/retry actions.
 
-// Redeem
-var result = await GiftCodeManager.Instance.Redeem("PROMO2024");
-if (result?.success == true)
-{
-    // Parse result.giftData for rewards
-    // result.grantedUnlocks lists cosmetics the code unlocked (see Player Profile)
-}
+```csharp
+var intent = await GiftCodeManager.Instance.PrepareRedemption("PROMO2024");
+// Save intent durably for this project/player BEFORE calling RedeemPrepared.
+var result = await GiftCodeManager.Instance.RedeemPrepared(intent);
+// On uncertainty, load and resend this same intent. Never prepare a replacement automatically.
 ```
+
+Counts/revisions remain canonical Int64 decimal strings. Replay returns current `playerValues`, `alreadyApplied/replayed = true`, and no historical `giftData` or grants. Replace balances from the authoritative snapshot; never add grants locally. V1 `Redeem(code[, id])` returns `UPGRADE_REQUIRED`. `MIGRATION_REQUIRED`, `COUNT_AHEAD`, `CAMPAIGN_CHANGED`, `COUNTER_EXHAUSTED` and other domain errors require explicit reconciliation. Changing a visible code cannot retarget a saved campaign ID. Sign-out/project changes fence late responses and cannot move a pending intent to another player.
 
 ### Player Profile
 
@@ -535,6 +557,38 @@ run, overwrite the copy with `GetState()` on start (never the other way round), 
 value from the save back as a balance, and send values earned offline as `earned` of the next
 validated run. See `ValidatedStateExample.cs`.
 
+### Statistics
+
+Define `kills` (sum) and `best_score` (max) for the project in the Dashboard. Sign in, then load
+an explicit snapshot when the game needs it. Nothing is fetched automatically during sign-in.
+
+```csharp
+using PM.horizOn.Cloud.Objects.Network.Requests;
+
+var statistics = StatisticsManager.Instance;
+var snapshot = await statistics.GetStatistics(); // values, definitions, revision and server time
+if (snapshot == null) return;
+string operationId = statistics.CreateOperationId(); // create once and persist with this batch
+var batch = new[] { new StatisticUpdate("kills", 3), new StatisticUpdate("best_score", 250) };
+var result = await statistics.UpdateStatistics(batch, operationId);
+if (result == null) Debug.LogWarning(statistics.LastErrorCode);
+```
+
+After a timeout, keep the original batch and ID, refresh the snapshot and retry that same ID.
+The SDK never invents a replacement ID. A retained receipt replays safely; an old or evicted
+unknown ID is rejected with `OPERATION_EXPIRED`, so the game must reconcile rather than report
+the session again. At most eight receipts and a 24-hour acceptance window are retained;
+delayed out-of-order IDs can expire sooner. Values use exact `long` integers within
+±9,007,199,254,740,991. `hasValue` distinguishes an unset counter from zero.
+
+`CurrentStatistics` and `CurrentDefinitions` cache the last accepted response and clear on
+session/host change or `ClearCache()`. Late responses cannot overwrite a newer revision or a
+new session. Optional `maxPerUpdate` uses `HasMaxPerUpdate` (zero means absent in the Unity
+model). See `StatisticsExample.cs` for a pending batch persisted across restarts and the
+[API reference](Documentation~/UNITY_SDK_API_REFERENCE.md#statistics) for all members/errors.
+Revision and snapshot-server-time watermarks survive catalog changes. `ClearCache()` also
+invalidates pending conditional reads, so a late response cannot create an empty catalog.
+
 ### Feedback
 
 ```csharp
@@ -623,6 +677,12 @@ When `StartCapture()` is called, the SDK automatically:
 
 **Email Sending** lets your game send transactional emails to registered players. Create multi-language HTML templates with variable placeholders in the horizOn Dashboard, then trigger immediate or scheduled email delivery from your game using the SDK. Emails are sent through your own SMTP server -- horizOn handles the queue, rendering, and scheduling while you keep full control over branding and deliverability.
 
+The recipient must already be an active, email-verified user with a nonempty email
+in the API key's project; anonymous users are not eligible. Set **Recipient User Id**
+on the [minimal example](Samples~/Examples/Features/EmailSendingExample.cs) to that
+user's ID and configure the template first. The example does not create or sign in
+a replacement user. A queued/status response is separate from external SMTP delivery.
+
 ```csharp
 // Send immediate email
 var response = await EmailSendingManager.Instance.SendEmail(
@@ -701,7 +761,7 @@ Assets/Plugins/ProjectMakers/horizOn/CloudSDK/Resources/horizOn/HorizonConfig.as
 
 ## Rate Limiting
 
-**Limit**: 10 requests per minute per client.
+**Limit**: counted per account, shared by all players of all your games. On the Free plan the soft limit is 10 and the hard limit 100 requests per minute. Paid plans have higher limits, see [horizon.pm/pricing](https://horizon.pm/pricing).
 
 | Do | Don't |
 |----|-------|
@@ -725,7 +785,7 @@ async void Start()
     await NewsManager.Instance.LoadNews();
     CrashManager.Instance.StartCapture(); // registers session
 
-    // 6 requests remaining for gameplay
+    // The per-minute limit counts for your whole account, not per player
 }
 ```
 
@@ -818,7 +878,7 @@ horizOn-SDK-Unity/        # the package (repo root)
 ## Support
 
 - 📖 **Documentation**: [horizon.pm/quickstart](https://horizon.pm/quickstart)
-- 💬 **Discord**: [discord.gg/horizOn](https://discord.gg/JFmaXtguku)
+- 💬 **Discord**: [discord.gg/JFmaXtguku](https://discord.gg/JFmaXtguku)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues)
 
 ## License
@@ -826,3 +886,485 @@ horizOn-SDK-Unity/        # the package (repo root)
 MIT License - Copyright (c) [ProjectMakers](https://projectmakers.de)
 
 See [LICENSE.md](LICENSE.md) for details.
+
+## Realtime invalidations (Cloud)
+
+After sign-in, subscribe with `RealtimeManager.Instance.Subscribe("inbox:" + UserManager.Instance.CurrentUser.UserId)`. Handle `ResyncRequired` and `EventReceived` by loading current authorized content through the feature HTTP API. `PollingRequired` is the offline fallback signal; wait at least its `pollAfterSeconds` and never poll chat. Call `Unsubscribe(topic)` when the screen closes.
+
+The manager reconnects with jitter, reauthorizes topics and requests a fresh snapshot after reconnect. Events contain IDs and revisions only, not message or save contents. Unity native and WebGL transports share this contract. simpleServer reports `NOT_SUPPORTED`; realtime is Cloud only.
+
+## Player values
+
+`PlayerValuesManager.Instance` reads server-owned balances and active offers. All four routes require the matching signed-in player's ID and session. `GetState(userId)`, `Purchase(userId,offerKey,operationId)` and `Adjust(userId,key,longAmount,reason,operationId)` return `PlayerValuesResult` with `IsSuccess`, `State`, `ErrorCode`, `Error`; `GetOffers(userId)` returns `PlayerValuesOffersResult` with `Data`. Business errors can carry an up-to-date `State`: render it even when `IsSuccess` is false. `CurrentState` and `CurrentOffers` are defensive copies; `ClearCache()` invalidates in-flight responses. Session/project/host changes discard old state. Revisions and server-clock watermarks survive catalogue/cache invalidation.
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+var userId = UserManager.Instance.CurrentUser.UserId;
+var values = PlayerValuesManager.Instance;
+var loaded = await values.GetState(userId);
+if (!loaded.IsSuccess) return;
+var operationId = values.CreateOperationId(); // persist with the immutable purchase intent
+var result = await values.Purchase(userId, "energy-pack", operationId);
+if (result.State != null) foreach (var balance in result.State.values) UnityEngine.Debug.Log(balance.balance);
+if (!result.IsSuccess) UnityEngine.Debug.Log(result.ErrorCode);
+```
+
+Generate one operation ID per logical action and reuse that exact ID and payload after a timeout. Never automatically create a replacement after `OPERATION_EXPIRED`; refresh state and reconcile the intended action first. `CreateOperationId()` uses learned server time plus elapsed monotonic time, falling back to local UTC before the first state/offer response (`HasServerClock` is false). No purchases or adjustments are automatically polled. Amounts are signed `long` integers within +/-9,007,199,254,740,991; unsafe or fractional response tokens are rejected before Unity's JSON conversion. A `dailyCap` of -1 represents JSON null, while zero is a real zero cap (`HasDailyCap`). Offer `purchasesPerDay == -1` means unlimited. Realtime is optional; fetch HTTP state after validated actions or another balance-changing feature.
+
+## Inbox (TASK-1006)
+
+Use `InboxManager.Instance.GetInbox(userId, since: null)`, `MarkRead(userId, entryId)`, `Remove(userId, entryId)` and `Claim(userId, entryId)`. They require the matching current player session and project key. Snapshot results expose `IsSuccess`, `Data`, `ErrorCode`, `Error`; claim `Data` exposes `entryId`, `replayed`, `inbox`, `playerValues` and returned `items` references (`instanceId`, `itemKey`). Entry dictionaries `parameters` and snapshot `counts` preserve escaped string values; attachment amounts retain safe64-bit integers without first rounding through a double. Unknown attachment kinds or malformed numbers fail with INVALID_RESPONSE.
+
+`limits` reports the current configurable `targeted`, `broadcasts`, `freeTexts`, `freeTextBytes` (UTF-8) and `freeTextRetentionDays`. These govern new writes; a retained mailbox remains readable after a limit is lowered. Revisions are safe integers and may jump. Keep entry IDs opaque: a later event from the same source has a distinct ID, and read/remove/claim must use the selected original ID.
+
+For known system messages, `entry.TryGetSource(out source)` exposes typed Friends, Groups, Match and Market references for navigation. The referenced feature API owns its current state and actions. Custom/legacy messages still expose their original type, reference and parameters. `entry.TryGetFreeText(out text)` returns the separate plain text form; disable rich text/markup in your UI. Other entries use `textKey` and localization parameters. There is no trusted publication route in the client SDK.
+
+`CurrentInbox` returns a defensive copy. Unchanged HTTP snapshots keep cached entries and update polling metadata. Changed snapshots replace the entire cache, including removals. One active refresh and one coalesced follow-up preserve expiry ordering even when revision numbers are equal. Mutations invalidate in-flight reads. Session/project/host and cache epochs reject late answers; revision/server-time watermarks survive ClearCache. A conditional response without cached entries triggers one bounded full reload. JSON payloads use the shared 32 MiB technical frame and typed field/depth validation; current operator quotas are not generic array ceilings. Inbox payload contents are not copied into raw-response logs.
+
+Claims reuse the original entry ID after an uncertain response. They never choose rewards or add returned amounts locally. The SDK accepts the complete authorized Player Values snapshot through `PlayerValuesManager.AcceptServerState(userId,state)` and rejects stale state rather than replacing a newer balance. INBOX_FULL/value-limit/UNCLAIMED_REWARD errors remain visible and do not destroy pending attachments. The sample exposes only explicit player-triggered claims.
+
+For a new selection use `InboxExample.ClaimNewEntry(entryId, persistOriginalIntent)`: it checks `entry.CanClaim` in the authorized SDK snapshot before calling your synchronous persistence callback. Value rewards and `attachment.itemReturn` (`listingId`, `instanceId`, `itemKey`) are claimable, including an item return with no values. After an item return, refresh the inventory; the descriptor and claim references do not contain a complete item. The callback must durably save or verify the exact entry ID under the current project/player, refuse a conflicting pending intent and return true only on success. A failed write or an identity/cache change sends no claim. Use `ClaimEntry(savedOriginalEntryId)` only for an already saved intent; it remains replayable when that entry is absent or already claimed. Never generate a replacement ID or overwrite a pending claim. Informational entries do not create reward intents.
+
+There is no automatic polling or socket connection. A screen waits at least `pollAfterSeconds` between lifecycle-driven refreshes. Optional realtime `inbox:<userId>` and `inbox:project.<projectApiKeyId>` metadata calls ClearCache, followed by an explicit HTTP refresh. InboxExample demonstrates lifecycle cleanup without closing another feature's shared realtime manager.
+
+PlayerValuesExample now binds pending storage to project/player across regional hosts and migrates original configured-host keys without changing the command. Conflicts and damaged data block replacement. Because portable PlayerPrefs cannot enumerate unknown historical hosts, an existing player with no known pending intent requires game-owned reconciliation before this automatic sample creates another purchase. New players get one demo intent. Cache reads never delete an invalid old anonymous token, and restore failure never creates a replacement identity in these value-bearing samples.
+
+The statistics sample scopes saved batches to the project API key and player. An older projectless pending batch is preserved and blocks a new batch until game-specific reconciliation. Its identity recovery and signup marker are saved before authentication, so a transient restore error or lost SDK token cache cannot silently create another guest.
+
+## Achievements (TASK-1008)
+
+`AchievementsManager.Instance` provides these explicit player-session calls:
+
+| Method | Result |
+|---|---|
+| `GetAchievements(userId, definitionVersion: null)` | `AchievementsResult` |
+| `Unlock(userId, originalKey)` | `AchievementUnlockResult` |
+| `DeliverRewards(userId, originalKeys)` | `AchievementDeliveryResult` |
+
+Each result exposes `IsSuccess`, `Data`, `ErrorCode`, `Error`. Snapshot `Data` contains `userId`, `revision`, opaque `definitionVersion`, `definitions`, `progress`, `limits` and `serverTime`. Unlock `Data` contains `achievements`, `newlyUnlocked`, `replayed` and `deliveryResults`; delivery `Data` contains `achievements` and per-key `results`. Namespaces follow the other managers and response DTOs.
+
+Use the currently authenticated player's `UserManager.Instance.CurrentUser.UserId`; all calls attach that player's Bearer session and current project key. No call signs up, polls or opens a socket. `CurrentAchievements` returns a defensive copy; `ClearCache()` invalidates on matching own-player `achievements:<userId>` realtime metadata or reconnect, followed by an explicit HTTP refresh. Host/project/session changes, including switching away and back, invalidate cached metadata and late results. Revision/time watermarks survive a materialized-cache clear. Calls are serialized.
+
+The version is an opaque64-character token. Only a matching metadata cache is sent conditionally: `definitions:null` retains that exact cache, while `definitions:[]` replaces it. An unknown caller version causes a full request; an unexpected null payload permits one bounded full reload. Hidden locked metadata is absent and becomes visible after its unlock. Versions are never ordered numerically or lexically.
+
+Fresh achievements atomically grant rewards with the durable unlock. Compact progress uses `rewardState:"complete"` and `unlockedAt:null`; it creates no new pending reward or Inbox entry. `DeliverRewards` is a compatibility/status call for one to eight original keys, not a second grant. Retained legacy `pendingReward`/`inboxEntryId` fields describe old accepted rewards only; unresolved originals require explicit source migration (`MIGRATION_REQUIRED`), never reconstruction from current definitions or automatic regrant. Repeat an uncertain manual unlock with the same key, and read current Player Values instead of adding reward deltas locally.
+
+`AchievementsExample` exposes explicit progress, manual unlock and legacy reward-status actions. `RefreshAfterStatistics(report)` reacts only to a matching successful, non-replayed report with nonempty `newlyUnlocked`. Saved legacy Inbox claims retain their original project/player/entry ID after uncertainty; they are not part of a fresh compact unlock. Exact safe64 reward/threshold lexemes are validated before conversion.
+
+## Friends (TASK-1009)
+
+Use `FriendsManager.Instance` with the currently signed-in player's `UserManager.Instance.CurrentUser.UserId`. Every call sends the matching Bearer session and current project key. Results expose `IsSuccess`, `Data`, `ErrorCode`, `Error`.
+
+| Method | Result |
+|---|---|
+| `GetFriends(userId)` | `FriendsResult` |
+| `FindPlayer(userId, exactUuidOrHCode)` | `FriendLookupResult` |
+| `SendRequest(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `AcceptRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `DeclineRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `CancelRequest(userId, targetUserId, expectedRevision, originalRequestId)` | `FriendsResult` |
+| `RemoveFriend(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `BlockPlayer(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+| `UnblockPlayer(userId, targetUserId, expectedRevision)` | `FriendsResult` |
+
+Snapshot `Data` includes camelCase `userId`, `revision`, `friendCode`, `friends`, `incoming`, `outgoing`, `blocked`, `limits`, `serverTime`. Find returns only `userId`, `friendCode`, `display`. Search accepts an exact UUID or canonical `H-` share code; it never trims identifiers or searches names/emails/substrings. UUID bytes in share codes use network order, matching the server.
+
+Friends and requests expose only public `display.name` and `display.profile` (`avatarId`, `frameId`, `badges`). Missing names/cosmetic IDs remain null. A friend's nullable `lastActiveAt` is approximate activity, **not an online flag**; show unknown when absent. Blocked rows contain only `userId` and `blockedAt`. Private/login fields and complete social responses are excluded from raw response logs.
+
+Before a mutation, durably store its action, target UUID, original `expectedRevision` (including zero), and the original incoming/outgoing `requestId` for accept/decline/cancel under the matching project/player. Each mutation makes exactly one transport attempt, including global429,5xx and timeout responses. A failed or uncertain result keeps that original intent. Explicitly refresh and reconcile `REVISION_CONFLICT`; never automatically insert the new revision, substitute a different request ID or resend the action after refresh. `FriendsExample.ApplySavedAction` accepts this already stored command and never creates another identity.
+
+`CurrentFriends` is a defensive copy. Calls are serialized; current host/project/session, network-instance generation and cache epoch fence late responses, including switches away and back. `ClearCache()` preserves revision/server-time watermarks. Own-player `friends:<userId>` realtime metadata can invalidate the cache; the game explicitly reloads by HTTP. There is no automatic polling, realtime connection or signup. Lists retained after a downgrade remain readable/removable even if their size exceeds the returned current `limits.maxFriends`; capacity decisions belong to the server. `NetworkService.ContextGeneration` is a read-only scope counter available to game UI callbacks, including the shipped example.
+
+## Groups (TASK-1010, Develop)
+
+`GroupsManager.Instance` uses the current player's `UserManager.Instance.CurrentUser.UserId`, project key and matching Bearer session. Each method returns `GroupsResult<T>` with `IsSuccess`, `Data`, `ErrorCode`, `Error`; `LastErrorCode` is also available. No signup, polling, pagination loop or socket is started.
+
+| Method | Data |
+|---|---|
+| `GetGroups(userId)` | `MyGroupsView` |
+| `GetGroup(userId, groupId)` | `GroupView` |
+| `GetMembers(userId, groupId, afterUserId: null, limit: 50)` | `GroupMembersView` |
+| `GetPending(userId, groupId)` | `GroupPendingSnapshot` |
+| `CreateGroup(userId, expectedPlayerRevision, name, description: "", joinMode: "open", data: null)` | `GroupMutationView` |
+| `UpdateGroup(userId, groupId, expectedRevision, name, description, joinMode, data)` | `GroupMutationView` |
+| `JoinGroup`, `RequestJoin`, `LeaveGroup`, `DeleteGroup` `(userId, groupId, expectedRevision)` | `GroupMutationView` |
+| `InvitePlayer`, `RemoveMember`, `TransferLeadership` `(userId, groupId, expectedRevision, targetUserId)` | `GroupMutationView` |
+| `AcceptInvite`, `DeclineInvite`, `CancelRequest` `(userId, groupId, expectedRevision, requestId)` | `GroupMutationView` |
+| `CancelInvite`, `AcceptRequest`, `DeclineRequest` `(userId, groupId, expectedRevision, targetUserId, requestId)` | `GroupMutationView` |
+| `SetMemberRole(userId, groupId, expectedRevision, targetUserId, role)` | `GroupMutationView` |
+
+Data is `GroupJsonData.FromJson("{...}")`, an immutable original JSON object; `data.Json` preserves arbitrary keys, null and finite numeric lexemes, including integers beyond double precision. Omitted private `GroupView.data` and `myRole` remain null. Pass a received wrapper unchanged when editing other metadata. Creation defaults to `{}`; Update requires a data object. Current name/description/data-byte/data-depth policies are Admin System Config values. Former 120/1024/2048-byte and depth 16 defaults are not decoder or write ceilings. The Groups decoder uses an iterative grammar with a separate 1024-level technical nesting bound; it preserves retained metadata after policy reductions. Nullable public profile names/cosmetic IDs remain null. All DTO/cache copies are separate except immutable JSON wrappers.
+
+All 16 mutations (including PUT) send the frozen original input exactly once, even after429/5xx/timeout. Keep the caller-reviewed revision and exact pending request UUID; no client group UUID or operation ID is generated for creation. On uncertainty, retain the durable original intent and explicitly read/reconcile before another decision. Never replace its revision/request ID automatically. Snapshot/member/pending replies carry their own revision; explicitly restart member pages when it changes. Lists retained after a plan downgrade stay readable; current server limits govern additions. Calls are serialized and host/project/session/generation/epoch fenced. `CurrentGroups` is a defensive own-player snapshot; `ClearCache()` preserves bounded revision/time history. Hosted `groups:{groupId}` carries optional invalidation metadata; explicitly read HTTP after invalidation/reconnect. simpleServer supports REST without hosted realtime.
+
+`GroupsExample` demonstrates explicit two-player UI actions: Refresh, ReviewGroup, one member page, create, invite/accept, officer/leadership transfer and leave/delete. Configure its stable project UUID. `GroupsSampleStore` flushes and verifies original project/player-scoped input before every send and blocks replacement after uncertain results. A saved confirmed result is presented for explicit acknowledgement without another HTTP mutation. `AcknowledgeSavedSuccess` archives the whole original/result directory with one rename after the game applies the result. A persistent exclusive OS handle releases ownership when the process exits; the lock file itself is never deleted or treated as an owner marker. These are process-death recovery guarantees, not a filesystem/power-loss durability guarantee.
+
+A `SendLease` retains exclusive project/player ownership across preparation, the HTTP await and result persistence; competing replay and ACK attempts fail before another mutation. A fully flushed, canonical matching `result.*.writing` is recovered before send. Partial, mismatched or conflicting temporary results preserve the original and block replacement for explicit reconciliation.
+
+New journals use `groups-PROJECT-PLAYER.json.journal/intent.json` and `result.json`. Existing flat `.json`/`.success` originals migrate only after a complete flushed journal is atomically published; exact legacy copies remain inside it for inspection. An old interrupted two-file ACK can recover its original only from the exact matching owned archive hash/scope. Interrupted migration resumes only for identical copies; missing/conflicting originals or results remain blocked for game-owned reconciliation. No migration changes a revision, request ID, command hash or player identity. Production games own archive retention/transactional persistence. WebGL must supply a game-owned durable browser store; this filesystem sample fails closed there. New pending commands must select a current matching request; saved original replay never substitutes it. Failed restoration never creates a replacement identity.
+
+
+## Items (TASK-1011, Develop extension)
+
+Use `ItemsManager.Instance` with the current signed-in `UserManager.Instance.CurrentUser.UserId`.
+Every result has `IsSuccess`, `Data`, `ErrorCode`, `Error`; `LastErrorCode` is also available.
+There is no signup, background poller, automatic page loop, local grant or automatic revision replacement.
+
+| Method | Data |
+|---|---|
+| `GetInventory(userId)` | `InventorySnapshot` |
+| `GetCatalog(userId, afterKey: null, limit: 50, catalogRevision: null)` | `ItemCatalogPage` |
+| `AdjustProperties(userId, instanceId, expectedRevision, IList<ItemPropertyDelta> changes)` | `InventorySnapshot` |
+| `SetEquipped(userId, instanceId, expectedRevision, equipped)` | `InventorySnapshot` |
+| `DiscardItem(userId, instanceId, expectedRevision)` | `InventorySnapshot` |
+
+`ItemsResult<T>` and the DTOs are in `PM.horizOn.Cloud.Objects.Network.Responses`. Snapshot fields
+are camelCase: `userId`, `revision`, `instances`, `limits`, `serverTime`; an instance has
+`instanceId`, `itemKey`, `properties`, `equipped`, `createdAt`. Catalog pages have `revision`,
+`definitions`, `nextAfterKey` (null at the end), `total`, `limits`, `serverTime`. Explicitly pass
+the first page's revision to subsequent pages; a conflict requires a deliberate restart. Catalog
+includes archived templates so old instances stay interpretable; never treat `active:false` as deletion.
+
+Flat property objects become `ItemProperty[]`: `key`, `type` (`ItemPropertyType.Integer`,
+`Boolean`, `String`) and the corresponding `integerValue` (`long`), `booleanValue`, `stringValue`.
+Strings preserve Unicode and embedded U+0000; keys retain the server's strict ASCII grammar.
+Original integer tokens are validated before conversion; fractions, exponents, negative zero,
+unsafe integers and decoded duplicate keys fail. Canonical UTF-8 property bytes obey the server's
+256-byte limit. No floating-point dictionary projection or native JSON string clone is used for
+Items DTOs. `CurrentInventory` and `CurrentCatalogPage` are defensive typed copies.
+
+All three inventory writes send the frozen original body exactly once, including global429,
+5xx and timeout cases. Keep the caller-reviewed `instanceId`, revision (including zero) and deltas
+or equipment choice. On uncertainty, explicitly read/reconcile; never automatically substitute
+the new revision or another instance. Server snapshots replace matching state. Requests serialize,
+and actual network instance/host/project/player/session/generation plus cache epoch fence late
+responses and away/back changes. `ClearCache()` preserves separate inventory/catalog revision and
+server-time watermarks. Current tier limits do not delete retained downgraded state.
+
+`limits.catalog`, `limits.inventory` and `limits.receipts` carry current positive Int32
+operator configuration. The SDK accepts inventories above the old 150-instance default and
+retains all server-provided instances after limits are lowered. Catalog `total` is independent
+of the current quota, bounded by the permanent UInt16 slot format (65,536 templates); each page
+still contains at most 50 definitions. Compact server storage does not change public instance
+properties, original revision-fenced writes or property deltas.
+
+Player Values balance/offer lists follow current server configuration without tariff clamps.
+Retired offer-day quotas may be omitted/null and stay unlimited (`purchasesPerDay == -1`).
+Current balances and earned totals remain authoritative after a lower daily cap; compact replay
+never reconstructs historical deltas or item grants.
+
+Player Values DTOs add `offer.itemRewards` (`ItemReward[]{itemKey,quantity}`) and
+`state.operation.items` (`ItemReference[]{instanceId,itemKey}`), defaulting to empty arrays for
+legacy payloads. A fresh purchase returns immediate references; compact replay returns current
+state and empty `applied`/`items`, including after offer changes or discarded items. Persist one
+original purchase `operationId` before HTTP, reuse it
+on uncertain retry and explicitly GET inventory after success. Never synthesize an item, add
+local balance deltas or buy again to recover a failed inventory refresh.
+
+Import `ItemsExample` and `ItemsSampleStore` from the Examples sample. Configure the stable
+project UUID; use an existing matching session. Explicitly call `ReadOneCatalogPage`,
+`ReviewOffers`, then `SavePurchaseAfterReview` for an active configured item offer. The reviewed
+page must contain its active item templates. After success, `SaveEquipAfterReview`,
+`SaveAdjustAfterReview` and the deliberately destructive `SaveDiscardAfterReview` illustrate
+explicit inventory CAS. No action runs automatically in Start/Update. New adjustments select a
+current numeric property and reviewed rule before persisting an intent.
+
+The sample writes a hashed project-key/player-scoped original command using CreateNew, durable
+flush and readback before HTTP; regional hosts are callback fences, not journal identities. An
+uncertain/conflicting mutation remains saved after Refresh. `ApplySavedIntent` preserves its
+original body. A persistent OS-exclusive `SendLease` spans preparation, awaited HTTP and result
+persistence, so another actor or process cannot send the same journal concurrently. Fully flushed
+unpublished result files recover before HTTP; partial/conflicting files block replacement sends. If an uncertain purchase's offer changed or disappeared,
+`ApplySavedIntent(confirmOfferChanged:true)` is an explicit game/player confirmation to repeat
+the original ID, allowing the server to replay the retained receipt before today's offer check.
+It never creates a replacement ID. A matching confirmed purchase receipt is flushed **before**
+GET inventory; after GET failure or actor recreation, the saved success path performs GET only.
+`AcknowledgeSavedSuccess` is explicit after reviewing that exact original result and, for purchases,
+inventory recovery. The same exclusive lease archives the complete original/result directory in
+one rename without another network operation; stale actors cannot acknowledge a newer journal.
+After a lost inventory mutation response, explicitly Refresh, inspect the saved original against
+current state, call `ReconcileSavedMutationAfterReview`, then acknowledge. Its journal labels this
+as a player reconciliation, never server-confirmed success. The reviewed inventory revision must
+be strictly greater than the original CAS revision, permanently fencing a delayed write; equal or
+older snapshots cannot release it. This path cannot close an uncertain purchase. Production games own transactional persistence and
+archive retention. WebGL games must supply a game-owned durable browser journal; this filesystem
+sample refuses new writes before HTTP on WebGL. Restore failures must retain identity and pending
+commands; this example never signs up a replacement player.
+
+Sample journals use a persistent exclusive lock handle, released by process termination, rather than
+a stale CreateNew lock marker. ACK renames the complete journal directory atomically, keeping
+original and result together. A confirmed changed-offer purchase with zero item references is
+still recorded under its original operation ID; inventory recovery stays GET-only.
+
+
+### Shared Objects
+
+`SharedObjectsManager.Instance` exposes explicit collection pages, owner usage, point reads,
+typed queries and single-attempt `CreateObject`, `UpdateObject`, `DeleteObject` with the caller's
+original `If-Match` revision. All calls use the signed-in matching player and project key.
+`SharedObjectsResult<T>` carries `IsSuccess`, `Data`, `ErrorCode`, `Error`, an opaque `Identity`
+and `RetryAfterSeconds`. `GetCached<T>(identity)` returns a deep copy. Repeated reads respect
+`pollAfterSeconds` (collection pages default120s); no timer or automatic next page is installed.
+An explicit continuation page remains separate. `ClearCache()` invalidates content and queued
+responses while preserving bounded revision/server-time/cadence fences for the current identity.
+
+Objects expose both exact `dataBase64` and decoded opaque `byte[] data`. Search values are typed
+`SharedScalar` (safe integer or Unicode string), positions use safe64-bit integers; null partitions,
+expiry, empty bytes and embedded NUL are preserved. Never deserialize object bytes as trusted game
+state without your game's own format checks. Query cursors stay opaque and never grant access.
+
+`Samples~/Examples/Features/SharedObjectsExample.cs` is an executable explicit-action recipe:
+collection/rectangle/opponent reads, reviewed create/update, distinct confirmed delete, and frozen
+opponent bytes/digest passed to Validated Actions. Its stable project-key/player journal retains
+one complete original across regional host changes. An OS-exclusive handle owns preparation,
+HTTP and atomic result persistence. A sent CREATE is **never resent**, even after an uncertain
+response or recreation. `GetRecoveryUsage` and restricted own `QueryRecoveryObjects` are explicit
+read-only reconciliation helpers; a complete consistent owner snapshot must permanently fence
+the original usage revision before acknowledgement. Acknowledgement archives original and result
+together; partial/corrupt/conflicting journals block replacements. Production games own archive
+retention and UI review. Browser games must supply durable browser storage: the filesystem sample
+fails before writes in a WebGL player. An unknown defense start remains guarded durably; after a
+process restart that lost its VA ticket, use game-owned restoration/reconciliation instead of
+starting another run. No automatic restore, replacement guest, reward or trusted Inbox send occurs.
+
+Validated Actions generic/defense starts and future ranked starts share one start/submit lease.
+`HasPendingOperation` includes synchronous result callbacks. An existing `CurrentRun` must be
+explicitly discarded before a different logical run starts. Discard invalidates a late reply;
+it never releases an in-flight HTTP owner. Run adoption is fenced by actual network generation,
+host, project, player and session, including A→B→A transitions.
+
+
+## Matches (TASK-1013, Develop)
+
+Use `MatchesManager.Instance` with the existing signed-in
+`UserManager.Instance.CurrentUser.UserId`. Restore a stored anonymous identity before offering
+signup; failed restore must never replace that player. The manager requires the matching Bearer
+session and project key. It creates no identity, poller, automatic page, timeout action or report.
+
+All methods return `Task<MatchesResult<T>>` (`PM.horizOn.Cloud.Objects.Network.Responses`), with
+`IsSuccess`, `Data`, `ErrorCode`, `Error`, actual `HttpStatusCode` (zero for local failures), and an
+opaque `Identity`/`RetryAfterSeconds` for read cadence. Switch on error codes, never message text.
+
+| Method | Typed data |
+| --- | --- |
+| `GetMatches(userId, recovery: false)` | `MyMatches` (`revision`, `active`, `invites`, `recent`, `limits`) |
+| `GetLimits(userId)` | `MatchLimitsView` (`config`, `limits`, `capabilities`) |
+| `FindOpenMatches(userId, minStrength, maxStrength, limit: 20, cursor: null)` | `MatchPage` |
+| `GetMatch(userId, matchId, recovery: false)` | `MatchRead` (`match`, `serverTime`, `pollAfterSeconds`) |
+| `CreateMatch(userId, expectedPlayerRevision, MatchCreateInput)` | `MatchCreated` (`match`, `playerRevision`) |
+| `JoinMatch/DeclineInvite/AdvanceTimeout/LeaveMatch/CancelMatch(userId, matchId, expectedRevision)` | `MatchRead` |
+| `StartMatch(userId, matchId, expectedRevision, turnOrder)` | `MatchRead` |
+| `SubmitTurn(userId, matchId, expectedRevision, byte[] data, finish: false)` | `MatchRead` |
+| `ReportResult(userId, matchId, finalStateRevision, byte[] result, winnerIds)` | `MatchReported` (`match`, `replayed`) |
+| `StartRankedRun(userId, matchId, finalStateRevision)` | Existing `ValidatedRun` |
+
+First explicitly read the player ledger and a selected Match, then persist the full original
+action before sending. Creation uses the original **player ledger** revision; the seven ordinary
+actions use the original **Match** revision. Every Matches write makes one transport attempt,
+including global429 and503. On uncertainty keep the same request, bytes and revision. Reports
+keep the frozen final-state revision, result bytes and winner IDs even after later Match revisions.
+The SDK canonicalizes/sorts winner IDs without changing their membership. It never trusts a
+client winner, adds rewards locally or silently substitutes a new revision.
+
+`MatchView.data` is an opaque `byte[]`, alongside exact canonical `dataBase64`. An invitation or
+removal projection has **null** data; an accepted empty state is `byte[0]`. Report bytes similarly
+appear as `result`/`resultBase64`. Safe integer revisions/strength stay `long`, including the full
+±9,007,199,254,740,991 range. Names preserve valid Unicode and NUL. `recent` can contain an ongoing
+Match when this player already forfeited. Disputed/unconfirmed outcomes and `notificationPending`
+remain visible; the latter is server notification metadata, not a grant or a reason to claim locally.
+
+Read calls serialize. Respect server `pollAfterSeconds` and the game screen lifecycle. An opaque
+next cursor is one explicit next-page action, including an empty candidate page with a cursor;
+there is no automatic pagination. `GetMatches/GetMatch(recovery: true)` is an explicit uncertain
+original reconciliation read. `GetCached<T>(identity)` returns a defensive copy. `ClearCache()`
+invalidates content/queued responses while retaining bounded cadence/revision/server-time fences.
+Host, project, user, session, network-instance and ABA/generation changes fence late responses.
+Optional realtime `matches:{matchId}` is invalidation metadata; explicitly reread HTTP on event or
+reconnect. simpleServer supports the ordinary REST paths and advertises `matchesRanked=false`
+and `realtime=false`; unsupported ranked operations return501 `FEATURE_NOT_SUPPORTED`.
+
+`StartRankedRun` shares the existing VA start/submit lease with generic starts and Shared Objects
+defense. It cannot overwrite a current or in-flight ticket, including during callbacks; discard
+invalidates adoption without releasing in-flight ownership. A confirmed ranked Match resumes
+only its original server run. `RUN_EXPIRED`/`RUN_ALREADY_USED` never create another run.
+`GetCurrentRankedRun(userId, matchId, finalStateRevision)` reads only a matching actual local
+binding. Submit through `ValidatedActionsManager.SubmitValidated` using the same persisted score
+and input log, then apply only returned state. VA's existing transport retries retain that tuple.
+
+Import `MatchesExample` and `MatchesSampleStore` from the Examples sample and set the stable
+project UUID. The executable explicit-action recipe covers ledger/Match review, create/join/start,
+turns, reports, ranked start/submit and reconciliation. Its exclusive OS handle spans preparation,
+HTTP, result persistence and exact reviewed-hash acknowledgement. Journal scope is project key
+plus player, so regional host/session changes do not erase the original. An uncertain create is
+never sent again: a complete explicitly reviewed, stable **strictly newer** player ledger must
+fence its old CAS. This resolves uncertainty without guessing that any candidate Match was this
+request. A fresh, explicitly rejected create can instead be reviewed/acknowledged only for known
+nonapplying feature errors and their actual400/401/403/404/422/501 status;503, transaction conflict
+and unknown responses remain unresolved. Lost leave/decline acknowledgement needs signed
+`MATCH_NOT_FOUND`, absence from the player ledger and a strictly advanced original player revision.
+
+The sample saves the full original ranked run ID/score/input log before VA submit. Conflicting
+replacement data, partial/corrupt/interrupted results and another live actor/process block sends.
+Complete interrupted results recover before HTTP. Explicit acknowledgement retires the proven original/result journal atomically and then removes only that new terminal directory. It cannot erase a newer original reviewed by another actor. Existing `*.acknowledged` archives are preserved; a crash between retirement and removal can leave a terminal `.completed` directory for game-owned cleanup. No new completed state archive is maintained.
+These are tested process-death recovery properties, not a power-loss/filesystem durability claim.
+WebGL mutations require game-owned durable browser storage; the sample fails closed without it.
+Local native/protocol evidence does not imply a deployed game, hosted SDK E2E or release.
+
+
+### Operator configuration and compact source references
+
+Friends' four limits and all eleven Group limits are positive Int32 values from
+current Admin System Config. Retained friends, requests, blocks, memberships,
+pending entries and inventory remain readable after lowering a quota; no old
+200/20/100/500/5/2048-element default truncates them. Legacy Friends `since` and
+Friends/Groups pending `createdAt` may be missing or null and remain null.
+Group limits additionally expose `maxPlayerInvitations`, `maxPlayerRequests`,
+`maxNameBytes`, `maxDescriptionBytes` and `maxDataDepth`; `memberPageSize` governs
+server page admission. The sample's `ReadOneMemberPageWithLimit(limit,next)` makes
+an explicit configured page possible; 50 remains a convenience default.
+
+Shared collection/storage/owner counts accept higher configured values. The
+independent opaque-byte contract is 1 MiB decoded per object and per query result,
+with explicit 50-row pages. Exact bytes survive a lower current quota. Sample
+journals admit the complete original payload before sending.
+
+Matches retain all seven limits: `activeMatches`, `stateBytes`, `retainedMatches`,
+`pendingInvites`, `settlementMatches`, `historyRetentionSeconds`,
+`rankedSettlementSeconds`; retained count/history seconds may be zero. The physical
+BSON/Jackson state envelope is 14,648 KiB, separate from current policy. Read lists
+are projected summaries plus `pendingResults` entries containing only `matchId`,
+`finalStateRevision`, nullable `ownRankedRunId`, `expiresAt`. After an explicit
+`ReadLedger`, `SaveRankedAfterPendingResultReview(matchId)` persists that original
+source for the existing retry lifecycle even when full detail expired. Known run
+IDs cannot be replaced by a different fresh response. No result/item reconstruction.
+The 32 MiB technical response/journal frame admits the maximum opaque Match state;
+it is not a claim that every possible unpaginated retained-list cardinality fits.
+Groups journals separately admit 64 MiB for nested original JSON escaping; Shared
+journals admit 2 MiB. The ordinary decoder retains its 24-level transport guard;
+Groups uses the explicit iterative 1024-level path. These bounds are technical,
+independent of System Config admission and database-storage accounting.
+
+Chat channels/sends/reports accept 0 through Int32.MaxValue. Its fixed 20/15-message
+projection and retention/operation protocols are unchanged; there is no App
+all-channel response multiplied by the account's configured channel quota.
+
+### Chat and device history
+
+`ChatManager.Instance` provides `GetLimits`, `OpenChannel`, `SyncChannel`,
+`SendMessage`, `GetOperation`, and `ReportMessage`. Hosted Chat is available in
+all plans including Free. simpleServer reports Chat/realtime as unsupported.
+
+`WatchChannel(userId, channelId)` listens to metadata over realtime and fetches
+only missing message bodies over authorized HTTP. `GetFeed(channelId)` returns
+the current server window: up to20 messages in project chat, up to15 messages
+for30seconds in private/group chat. Offline/revoked subscriptions hide this
+window. There is no polling fallback for Chat. `SyncChannel` is an explicit
+REST snapshot and also works without a connected socket. Pass its complete
+previous result to request only missing messages.
+
+Successfully received or confirmed sent messages are copied to device history.
+`ReadLocalHistory(channelId, before: null, limit: 50)` returns the newest delivered
+messages first and an opaque next-page cursor (maximum100 per page). Server
+expiry, epoch changes, logout and permission changes do not erase these copies.
+`ClearLocalHistory(channelId)` and `ClearAllLocalHistory()` are explicit local
+deletions. Files are isolated by API key and player beneath
+`Application.persistentDataPath/horizon/chat`, with hashed directories and no
+stored access token or plaintext API key. No hidden history count limit applies.
+
+`GetServerTime()` advances the latest accepted server timestamp with a monotonic clock
+for a new send. It returns null until a successful Chat response.
+
+`FeedChanged`, `LocalHistoryChanged`, `LocalHistoryFailed` and `ChannelError`
+separate live state from local persistence. An I/O error leaves a successful
+server send successful and never resends it. Corrupt/partial local records are
+reported, never silently overwritten. Native history uses an append log and a
+small ID/hash/offset index, loaded once per channel and extended by new records.
+Pagination is local delivery order, not a global original-timestamp sort.
+
+Every write is sent once, including429/503. Preserve the original operation ID,
+server-clock issuedAt and text to investigate an uncertain send. A missing
+`GetOperation` result does not prove the server never accepted it and never
+triggers an automatic new send. See `Samples~/Examples/Features/ChatExample.cs`.
+
+Local native checks include a separate-process archive restart, actual HTTP
+requests, and a real metadata WebSocket. Start
+`python3 Tests~/ChatSocketFixture/mock_chat_server.py` before the Editor run and
+set `HORIZON_CHAT_FIXTURE_URL=http://127.0.0.1:20124` and
+`HORIZON_CHAT_FIXTURE_WS=ws://127.0.0.1:20125`. The fixture exits after the test.
+These checks do not constitute a hosted deployment or a browser-device test.
+
+WebGL flushes local changes to the browser IndexedDB filesystem explicitly and
+coalesces writes during an in-flight flush. Browser storage errors are reported
+through `LocalHistoryFailed`; they do not resend messages. Browser storage is
+subject to browser quotas and user deletion. The flush bridge has automated
+contract tests; native tests do not prove an exported browser game.
+
+
+## Marketplace: current escrow and durable original actions
+
+`MarketplaceManager.Instance` implements all ten authenticated App routes: `GetLimits`,
+`GetRules`, `GetMarketplace`, `QueryListings`, `GetListing`, `CreateListing`,
+`BuyListing`, `CancelListing`, `GetOperation`, and `RetryReturn`. Rules/query pages
+are explicit (1–50 rows); continuation retains its original catalog revision or
+opaque cursor. Every call uses the current player's Bearer and project key. No
+method creates a player or polls automatically.
+
+The five operator quotas are exact positive Int32 values, including values above
+old tariff defaults. Current state keeps every retained listing/history reference
+even after a quota is lowered. The Marketplace decoder uses the shared 32 MiB
+JSON / 24-level transport frame without the generic 2,048-element guard. This is a
+transport limitation, not a database-size or product-quota claim. Original item
+properties, embedded NUL/Unicode and safe integers remain exact. Nullable fields
+use the explicit Marketplace codec; Unity `JsonUtility` is not its wire decoder.
+
+Import `MarketplaceExample.cs`, `MarketplaceSampleStore.cs` and `MarketplaceQuickstart.cs` from the Examples
+sample. Set the real stable project UUID in `projectId`, retain the normal existing
+SDK session, and call the explicit screen methods to read config/rules/inventory or
+a listing. `ReviewCreate`, `ReviewBuy` and `ReviewCancel` freeze displayed terms;
+only `ConfirmReviewedTrade` creates an operation UUID and a server-clock UTC
+millisecond timestamp. The sample flushes and verifies the complete original JSON
+before its single POST. A project/player OS-exclusive handle spans the entire
+asynchronous send; closing the screen releases it after the in-flight task returns.
+
+After an uncertain response use `RetryPending` for the same original bytes or
+`RecoverOriginalOperation` to look up that original operation. Neither a 404 nor
+expiry authorizes a new purchase. Replays may contain today's later terminal
+listing (with `item == null`) or no retained listing at all. They do not restore
+old inventory or balances. Only a minimal known identity is saved before explicit
+current Inventory, Player Values and Marketplace GETs; after all three succeed,
+the one resolved original is removed. Confirmed restarts perform only GETs. There
+is no local completed-purchase/result archive or synthetic item grant. Storage
+errors preserve originals and surface as exceptions; partial/conflicting files
+require recovery and must not be deleted to permit a new trade.
+
+`RetryReturnDelivery` retries the same listing's source-owned delivery.
+`ClaimReturn` delegates the same original entry to Inbox. `INBOX_FULL` and
+`INVENTORY_FULL` remain recoverable; a later replay after discard/resale is only a
+reference and never recreates the item. The supplied file journal supports native
+platforms. WebGL writes require a game-owned durable browser journal with exclusive
+ownership; the native sample rejects writes instead of pretending a synchronous
+file flush persisted browser storage.
+
+`Tests/Editor/MarketplaceTransportTests.cs` runs the actual imported sample and
+production transport against an isolated strict Python HTTP fixture: all ten
+routes, 2,051 retained open offers and 151 history references after lowering,
+actor destruction during an uncertain send, original retries, GET-only recovery,
+and original escrow claim followed by discard/replay. The shared .NET source gate
+also kills real journal-owner processes at five persistence boundaries. These
+artificial local tests do not prove a hosted deployment or exported browser game.
+
+The Groups sample's `ReadOneMemberPage()` reads the current auth-bound
+`CurrentGroups.limits.memberPageSize`; missing limits require an explicit own-group
+refresh. A changed size restarts the sample traversal without its old cursor.
+`ReadOneMemberPageWithLimit(limit, next)` preserves the explicit wire parameter.
+
+Minimal Match/final-revision→run-ID pairs stay in the current authenticated
+context even with201 distinct pending sources; another read cannot evict a
+still-protected source. Auth changes clear these local bindings. Their memory
+can grow across reads; no result/item/state history or server record is added.
+
+Group revision/time fences likewise retain only minimal IDs and watermarks until auth changes, including257 retained groups after policy is lowered to1. They hold no copied group content.
+
+Minimal Match revision/time watermarks also survive more than512 retained entries until auth changes. Payload caches and polling-hint caches keep their existing small bounds.
+
+Groups responses aggregate independent BSON records and can duplicate a group in a mutation. A6MiB control-character name needs about36MiB JSON; the same mutation can exceed72MiB. Groups alone parses its already received body/fragments at their actual length, preserving strict field/grammar/depth checks. There is no derived32/96/192MiB aggregate product quota. Available engine/HTTP memory remains a technical client limit; a parse/transport failure must preserve the original for explicit recovery. Other feature frames and small payload caches are unchanged.

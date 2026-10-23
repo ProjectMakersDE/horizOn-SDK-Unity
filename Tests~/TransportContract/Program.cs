@@ -12,6 +12,21 @@ using PM.horizOn.Cloud.Service;
 using UnityEngine;
 using PM.horizOn.Cloud.Transport;
 
+if (ChatHistoryContractTests.TryRunChild(args)) return;
+if (args.Length == 1 && args[0] == "--chat-only") { ChatHistoryContractTests.Run(); return; }
+if (MatchesJournalContractTests.TryRunChild(args)) return;
+if (SharedObjectsJournalContractTests.TryRunChild(args)) return;
+if (ItemsJournalContractTests.TryRunChild(args)) return;
+if (MarketplaceContractTests.TryRunChild(args)) return;
+if (GroupsJournalContractTests.TryRunChild(args)) return;
+ChatHistoryContractTests.Run();
+MarketplaceContractTests.Run();
+GroupsJournalContractTests.Run();
+SharedObjectsJournalContractTests.Run();
+ItemsJournalContractTests.Run();
+MatchesContractTests.Run();
+MatchesJournalContractTests.Run();
+
 const string host = "http://127.0.0.1:18722/";
 using var listener = new HttpListener();
 listener.Prefixes.Add(host);
@@ -55,24 +70,8 @@ Require(!LeaderboardTransportContract.TryCreateSubmitPlan(
 Require(!LeaderboardTransportContract.TryCreateSubmitPlan(
     user, "stale-token", 99, "season one", out _), "current transport session gate");
 
-// Gift code redeem (TASK-886): the plan carries the session, and no plan exists without a matching session.
-if (!GiftCodeTransportContract.TryCreateRedeemPlan(user, "session-token-720", "SUMMER2026", out var redeemPlan))
-{
-    throw new InvalidOperationException("signed user did not produce a redeem plan");
-}
-Require(GiftCodeRedeemPlan.Endpoint == "/api/v1/app/gift-codes/redeem", "redeem endpoint");
-Require(redeemPlan.UseSessionToken, "redeem uses the session token");
-Require(redeemPlan.Request.userId == "user-720", "redeem userId body field");
-Require(redeemPlan.Request.code == "SUMMER2026", "redeem code body field");
-var redeemHeaders = HorizonRequestHeaders.Create("project-key-720", "session-token-720", redeemPlan.UseSessionToken);
-Require(redeemHeaders.TryGetValue("Authorization", out var redeemAuthorization) &&
-    redeemAuthorization == "Bearer session-token-720", "redeem authorization");
-Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
-    new UserData(), "session-token-720", "SUMMER2026", out _), "redeem missing user session gate");
-Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
-    user, "stale-token", "SUMMER2026", out _), "redeem current transport session gate");
-Require(!GiftCodeTransportContract.TryCreateRedeemPlan(
-    user, "session-token-720", "", out _), "redeem empty code gate");
+// V1 cannot mint a replacement V2 operation.
+Require(!GiftCodeTransportContract.TryCreateRedeemPlan(user, "session-token-720", "SUMMER2026", out _), "V1 is closed");
 
 // Player profile (TASK-881): GET and PUT carry the session; PUT sends the whole profile.
 if (!PlayerProfileTransportContract.TryCreateGetPlan(user, "session-token-720", out var profileGetPlan))
@@ -507,6 +506,126 @@ Require(!HorizonApp.Events.WasPublished(EventKeys.UserAuthCheckSuccess),
 Console.WriteLine("Unity SDK leaderboard, gift code, player profile and validated actions (runs, start context, state and evidence) transport contract passed");
 Console.WriteLine("Unity SDK anonymous session contract passed");
 
+// Statistics: exact integers, explicit stable operation IDs, no auth/startup fetch and session-safe cache.
+long statisticsTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+string statisticsOperation = StatisticsTransportContract.CreateOperationId(statisticsTime);
+var statisticsUpdates = new[] { new StatisticUpdate("kills", 9007199254740991L) };
+Require(StatisticsTransportContract.TryUpdate(user, "session-token-720", statisticsUpdates, statisticsOperation,
+    out var statisticsBody, out _), "statistics valid batch");
+statisticsUpdates[0].value = 1;
+Require(statisticsBody.updates[0].value == 9007199254740991L, "statistics freezes the original payload");
+Require(statisticsBody.operationId == statisticsOperation, "statistics preserves operation ID");
+string statisticsJson = JsonHelper.ToJsonExcludeEmpty(statisticsBody);
+Require(statisticsJson.Contains("9007199254740991"), "statistics safe integer exact JSON");
+Require(!StatisticsTransportContract.TryUpdate(user, "stale-token", statisticsUpdates, statisticsOperation, out _, out var statisticsError)
+    && statisticsError == StatisticsErrorCodes.SessionRequired, "statistics session gate");
+Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", statisticsUpdates, Guid.NewGuid().ToString(), out _, out _), "statistics explicit timestamp UUID");
+Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", new[] { new StatisticUpdate("kills", 1), new StatisticUpdate("kills", 2) }, statisticsOperation, out _, out _), "statistics duplicate keys");
+Require(!StatisticsTransportContract.TryUpdate(user, "session-token-720", new[] { new StatisticUpdate("kills", 9007199254740992L) }, statisticsOperation, out _, out _), "statistics integer upper bound");
+var largeStatisticsBatch = new System.Collections.Generic.List<StatisticUpdate>();
+for (int index = 0; index < 201; index++) largeStatisticsBatch.Add(new StatisticUpdate("stat" + index, index));
+Require(StatisticsTransportContract.TryUpdate(user, "session-token-720", largeStatisticsBatch, statisticsOperation, out var largeStatisticsRequest, out _)
+    && largeStatisticsRequest.updates.Length == 201, "statistics admin-configured catalog above100 remains sendable with the original operation ID");
+var parsedStatistics = JsonHelper.FromJson<StatisticsSnapshot>("{\"userId\":\"u\",\"values\":[{\"key\":\"kills\",\"value\":-9007199254740991,\"hasValue\":true}],\"definitions\":[{\"key\":\"kills\",\"mode\":\"sum\",\"reset\":\"none\"}]}");
+Require(parsedStatistics.values[0].value == -9007199254740991L && !parsedStatistics.definitions[0].HasMaxPerUpdate, "statistics response safe negative and absent bound");
+
+var statisticsManager = new StatisticsManager();
+int beforeStatistics = authTransport.RequestCount;
+statisticsManager.Init();
+Require(authTransport.RequestCount == beforeStatistics, "statistics manager never fetches during init");
+authTransport.SetActiveHost("http://statistics.test");
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(StatisticsResult(1, 3)));
+Require(await statisticsManager.GetStatistics() != null && authTransport.LastUseSessionToken, "statistics GET uses bearer");
+Require(statisticsManager.CurrentDefinitions.Length == 1, "statistics catalog cached from snapshot");
+var conditionalStatistics = StatisticsResult(2, 4);
+conditionalStatistics.definitions = null;
+authTransport.RespondAsync = (endpoint, request) =>
+{
+    Require(endpoint.Contains("definitionVersion=1"), "statistics snapshot carries known catalog version");
+    return Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(conditionalStatistics));
+};
+Require((await statisticsManager.GetStatistics()).definitions.Length == 1, "statistics unchanged definitions folded from cache");
+string stableOperation = statisticsManager.CreateOperationId();
+authTransport.RespondAsync = (endpoint, request) =>
+{
+    Require(((UpdateStatisticsRequest)request).operationId == stableOperation, "statistics original ID crosses transport unchanged");
+    var result = StatisticsResult(3, 5); result.operationId = stableOperation;
+    return Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(result));
+};
+Require(await statisticsManager.UpdateStatistics(new[] { new StatisticUpdate("kills", 1) }, stableOperation) != null, "statistics batch accepted");
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Failure("timeout", 0));
+Require(await statisticsManager.UpdateStatistics(new[] { new StatisticUpdate("kills", 1) }, stableOperation) == null
+    && statisticsManager.LastSubmittedOperationId == stableOperation && statisticsManager.LastErrorCode == "NETWORK_ERROR", "statistics timeout never replaces ID");
+var delayedStatistics = new TaskCompletionSource<object>();
+authTransport.RespondAsync = (endpoint, request) => delayedStatistics.Task;
+Task<StatisticsSnapshot> lateStatistics = statisticsManager.GetStatistics();
+delayedStatistics.SetResult(NetworkResponse<StatisticsSnapshot>.Success(StatisticsResult(1, 1)));
+Require(await lateStatistics == null && statisticsManager.CurrentStatistics.revision == 3, "statistics late lower revision cannot replace cache");
+delayedStatistics = new TaskCompletionSource<object>();
+Task<StatisticsSnapshot> oldStatisticsSession = statisticsManager.GetStatistics();
+authTransport.SetSessionToken("statistics-new-session");
+restoredManager.CurrentUser.AccessToken = "statistics-new-session";
+Require(statisticsManager.CurrentStatistics == null && statisticsManager.CurrentDefinitions == null, "statistics session change clears both caches");
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(StatisticsResult(1, 9)));
+Require(await statisticsManager.GetStatistics() != null, "statistics fresh session snapshot");
+delayedStatistics.SetResult(NetworkResponse<StatisticsSnapshot>.Failure("expired", 401));
+Require(await oldStatisticsSession == null && statisticsManager.CurrentStatistics.values[0].value == 9, "statistics late old session response cannot clear new cache");
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsDefinitionsResponse>.Success(new StatisticsDefinitionsResponse
+    { definitionVersion = 2, definitions = new[] { new StatisticDefinition { key = "kills", name = "Kills", mode = "max", reset = "none" } } }));
+Require(await statisticsManager.GetDefinitions() != null && statisticsManager.CurrentStatistics == null, "statistics new policy invalidates old counter projection");
+var catalogTwo = statisticsManager.CurrentDefinitions;
+var oldRevisionNewCatalog = StatisticsResult(0, 1);
+oldRevisionNewCatalog.definitionVersion = 2; oldRevisionNewCatalog.definitions = catalogTwo;
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(oldRevisionNewCatalog));
+Require(await statisticsManager.GetStatistics() == null && statisticsManager.LastErrorCode == StatisticsErrorCodes.StateConflict,
+    "statistics observed revision survives catalog invalidation");
+var mondaySnapshot = StatisticsResult(2, 7);
+mondaySnapshot.definitionVersion = 2; mondaySnapshot.definitions = catalogTwo;
+long mondayTime = new DateTimeOffset(DateTime.UtcNow.Date.AddDays(8 - (int)DateTime.UtcNow.DayOfWeek).AddSeconds(1)).ToUnixTimeMilliseconds();
+mondaySnapshot.operationWindow.serverTimeUnixMillis = mondayTime;
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
+Require(await statisticsManager.GetStatistics() != null, "statistics latest period projection accepted");
+var sundaySnapshot = StatisticsResult(2, 99);
+sundaySnapshot.definitionVersion = 2; sundaySnapshot.definitions = catalogTwo;
+sundaySnapshot.operationWindow.serverTimeUnixMillis = mondayTime - 2000;
+authTransport.RespondAsync = (endpoint, request) => Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(sundaySnapshot));
+Require(await statisticsManager.GetStatistics() == null && statisticsManager.CurrentStatistics.values[0].value == 7,
+    "statistics older UTC projection cannot replace equal revision");
+delayedStatistics = new TaskCompletionSource<object>();
+authTransport.RespondAsync = (endpoint, request) => delayedStatistics.Task;
+Task<StatisticsSnapshot> preClearStatistics = statisticsManager.GetStatistics();
+statisticsManager.ClearCache();
+Require(statisticsManager.CurrentDefinitions == null, "statistics explicit clear drops catalog");
+mondaySnapshot.definitions = null;
+delayedStatistics.SetResult(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
+Require(await preClearStatistics == null && statisticsManager.CurrentDefinitions == null,
+    "statistics clear rejects old conditional read instead of poisoning empty catalog");
+mondaySnapshot.definitions = catalogTwo;
+authTransport.RespondAsync = (endpoint, request) =>
+{
+    Require(!endpoint.Contains("definitionVersion"), "statistics after clear requests full definitions");
+    return Task.FromResult<object>(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
+};
+Require(await statisticsManager.GetStatistics() != null, "statistics full reload after clear succeeds");
+delayedStatistics = new TaskCompletionSource<object>();
+authTransport.RespondAsync = (endpoint, request) => delayedStatistics.Task;
+Task<StatisticsSnapshot> oldStatisticsProject = statisticsManager.GetStatistics();
+authTransport.ApiKey = "replacement-statistics-project";
+Require(statisticsManager.CurrentStatistics == null && statisticsManager.CurrentDefinitions == null,
+    "statistics project change clears both caches even with unchanged host/user/session");
+delayedStatistics.SetResult(NetworkResponse<StatisticsSnapshot>.Success(mondaySnapshot));
+Require(await oldStatisticsProject == null && statisticsManager.LastErrorCode == StatisticsErrorCodes.SessionChanged,
+    "statistics late old-project response cannot restore the previous catalog");
+Console.WriteLine("Unity SDK statistics atomic batch, safe integer, cache and retry contract passed");
+
+StatisticsSnapshot StatisticsResult(long revision, long value) => new StatisticsSnapshot
+{
+    userId = restoredManager.CurrentUser.UserId, definitionVersion = 1, revision = revision,
+    definitions = new[] { new StatisticDefinition { key = "kills", name = "Kills", mode = "sum", reset = "none" } },
+    values = new[] { new StatisticValue { key = "kills", value = value, hasValue = true } },
+    operationWindow = new StatisticsOperationWindow { serverTimeUnixMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), maxAgeSeconds = 86400, maxFutureSkewSeconds = 30 }
+};
+
 void RequireSubmitError(UserData submitUser, string token, ValidatedRun run, string hash, string expectedCode, string name)
 {
     Require(!ValidatedActionsTransportContract.TryCreateSubmitPlan(submitUser, token, run, 1, hash, null, null, null, out var rejectedPlan, out var code) &&
@@ -532,3 +651,14 @@ static void Require(bool condition, string name)
         throw new InvalidOperationException($"transport contract failed: {name}");
     }
 }
+
+RateLimitRetryContractTests.Run();
+GiftCodeValuesContractTests.Run();
+await InboxContractTests.Run();
+AchievementsContractTests.Run();
+FriendsContractTests.Run();
+
+GroupsContractTests.Run();
+ItemsContractTests.Run();
+
+SharedObjectsContractTests.Run();

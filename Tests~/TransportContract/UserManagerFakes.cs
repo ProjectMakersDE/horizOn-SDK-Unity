@@ -37,7 +37,16 @@ namespace PM.horizOn.Cloud.Base
 {
     public abstract class BaseManager<T> where T : class
     {
-        public static T Instance { get; private set; }
+        private static T _instance;
+        public static T Instance
+        {
+            get
+            {
+                if (_instance == null) ((BaseManager<T>)(object)Activator.CreateInstance<T>()).Init();
+                return _instance;
+            }
+            private set { _instance = value; }
+        }
 
         public virtual bool Init()
         {
@@ -47,6 +56,9 @@ namespace PM.horizOn.Cloud.Base
         }
 
         protected virtual void OnInit() { }
+        protected virtual void RegisterEvents() { }
+        protected virtual void OnDisable() { }
+        protected void RegisterEvent<TData>(EventKeys key, Action<TData> handler) { }
     }
 }
 
@@ -101,16 +113,35 @@ namespace PM.horizOn.Cloud.Service
         public Func<string, object, object> Respond { get; set; }
         public Func<string, object, Task<object>> RespondAsync { get; set; }
         public string SessionToken { get; private set; }
+        public string ActiveHost { get; private set; }
+        private string _apiKey = "statistics-project";
+        internal long ContextGeneration { get; private set; }
+        public string ApiKey { get => _apiKey; set { if (_apiKey != value) ContextGeneration++; _apiKey = value; } }
+        public bool LastUseSessionToken { get; private set; }
+        public int RequestCount { get; private set; }
 
         public NetworkService() => Instance = this;
 
-        public async Task<NetworkResponse<T>> PostAsync<T>(string endpoint, object requestData) where T : class
-            => (NetworkResponse<T>)(RespondAsync == null
+        public async Task<NetworkResponse<T>> PostAsync<T>(string endpoint, object requestData, bool useSessionToken = false) where T : class
+        {
+            LastUseSessionToken = useSessionToken;
+            RequestCount++;
+            return (NetworkResponse<T>)(RespondAsync == null
                 ? Respond(endpoint, requestData)
                 : await RespondAsync(endpoint, requestData));
+        }
+        public Task<NetworkResponse<T>> GetAsync<T>(string endpoint, bool useSessionToken = false) where T : class
+            => PostAsync<T>(endpoint, null, useSessionToken);
+        // This boundary has no retry layer; expose the production once-only entry point as one delegate call.
+        public Task<NetworkResponse<T>> PostOnceAsync<T>(string endpoint, object requestData = null, bool useSessionToken = false) where T : class
+            => PostAsync<T>(endpoint, requestData, useSessionToken);
 
-        public void SetSessionToken(string token) => SessionToken = token;
-        public void ClearSessionToken() => SessionToken = null;
+        public void SetSessionToken(string token) { if (SessionToken != token) ContextGeneration++; SessionToken = token; }
+        public void ClearSessionToken() => SetSessionToken(null);
+        public string GetSessionToken() => SessionToken;
+        public void SetActiveHost(string host) { if (ActiveHost != host) ContextGeneration++; ActiveHost = host; }
+        public string GetActiveHost() => ActiveHost;
+        public string GetApiKey() => ApiKey;
     }
 
     public sealed class NetworkResponse<T> where T : class
@@ -118,12 +149,14 @@ namespace PM.horizOn.Cloud.Service
         public bool IsSuccess { get; private set; }
         public T Data { get; private set; }
         public string Error { get; private set; }
+        public string ErrorBody { get; private set; }
         public long StatusCode { get; private set; }
+        public string ErrorCode { get; private set; }
 
         public static NetworkResponse<T> Success(T data, long statusCode = 200)
             => new NetworkResponse<T> { IsSuccess = true, Data = data, StatusCode = statusCode };
 
-        public static NetworkResponse<T> Failure(string error, long statusCode)
-            => new NetworkResponse<T> { IsSuccess = false, Error = error, StatusCode = statusCode };
+        public static NetworkResponse<T> Failure(string error, long statusCode, string errorCode = null)
+            => new NetworkResponse<T> { IsSuccess = false, Error = error, StatusCode = statusCode, ErrorCode = errorCode };
     }
 }
