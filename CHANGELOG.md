@@ -1,3 +1,59 @@
+# [1.12.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.11.0...v1.12.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* accept compact achievements and refresh atomic reward state ([8a84a76](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/8a84a76dbaf5d9b149b12046ad2d3bf7c3bf6428))
+* **achievements:** preserve nullable fields in defensive copies ([7d291d5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/7d291d5d389db1d8aa4b8bf69f10b22e96078baa))
+* **docs:** document atomic achievement rewards ([21d61cc](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/21d61cc772a1037f849ed8aad0eef886df3bbb7b))
+* **gift-codes:** bind fresh receipts to original count and revision ([9d0b68e](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/9d0b68e3eb8708075c9bf6aba0db35017396d0b5))
+* **gift-codes:** display unresolved protocol errors in example UI ([fb8bcc3](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/fb8bcc36d8a887dd86b08075e9d9ec904c97bcf3))
+* **gift-codes:** preserve pure payloads across values invalidation (TASK-1007) ([650bb89](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/650bb89891c21ce5fb7df104d44b79098a031ff8))
+* **gift-codes:** serialize example UI preparation before consumption ([0b98fba](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0b98fbafe3fbea2430f23201ebdcdc065f1513d5))
+* **groups:** recover durable sample journals after process death ([30623ab](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/30623abc34f02542db75bef66c8b4b6f84b6c0d1))
+* import native SDK samples in the release test host ([f1bf87e](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/f1bf87e35a8aad07822351e639aca78de0eec05c))
+* **inbox:** preserve optional reward presence in Unity cache copies ([84c0e3f](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/84c0e3fdafeda13953ffae82bf993f2529a6f4d6))
+* **inbox:** reject whitespace in exact entry and source UUIDs ([02b59db](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/02b59dbaaeaa56449f705fcf15250ee94ad93eac))
+* **inbox:** retain legacy group acceptance references ([902aed7](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/902aed7f6463f33b99570fb62942061198b4a0a8))
+* **inbox:** validate new sample claims before intent persistence ([5529780](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/55297808ee2e13d267f093308f12d8bcc01f5f7b))
+* **items:** preserve configurable quotas and retained inventory ([#37](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/37)) ([5450643](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/54506431e4540d74de3908dff761b236e933467c))
+* **items:** retain exclusive journal ownership through recovery ([fd76106](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/fd76106d1fdb97d9db9c8914220be7fb3ce8897b))
+* keep budgeted Groups string decoding distinct from LINQ delegates ([228df89](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/228df89efeddac27190221b78e7c83ec3e06e92c))
+* **player-values:** preserve compact replay and configurable catalog contracts ([#36](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/issues/36)) ([0abb9fd](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0abb9fdadc79f6b6a2be539513fda9d523f25118))
+* preserve configured quotas and compact match sources across SDK consumers ([0de77d5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0de77d5c167afb2d8f84fbe8107b8703332f56fc))
+* preserve match watermarks and parse actual groups response envelopes ([0c96f35](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/0c96f353f903f618a4226da02bba53939c5086eb))
+* preserve source bindings and configured sample member pages ([5e08baa](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/5e08baad168c9f74810facedc43cbc3531ba9432))
+* **readme:** link the horizOn Discord with its real invite code (TASK-1046) ([4f5b838](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/4f5b838a33e87f727c050b9d362ea312bb7d0170))
+* **realtime:** correlate subscription replies and acknowledge resync (TASK-995) ([d0e8048](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/d0e804809c7c8d746faaed3fb73977b022726075))
+* require an eligible email sample recipient and bound OAuth claims ([885b7b2](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/885b7b2b8d1e7fe1208c709787dd40dd9a5bb082))
+* retain group revision floors after configurable quota lowering ([144d719](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/144d719144d95af03b0ee49e6cb87c0e36c26f50))
+* retain single-argument JSON string decoder overload ([7a60f6d](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/7a60f6d142b4abb7b2381244749353ce1087eb40))
+* **statistics:** expose safe batched Unity counters (TASK-1005) ([1f9242f](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/1f9242f497bd5bf412f54ae98882ad026804839c))
+* **statistics:** honor server configured catalog limits ([76d543e](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/76d543e413e6ef5fa72420bf3febacb2df51f977))
+* **statistics:** preserve project context and saved player identity (TASK-1005) ([a88090c](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/a88090c1cf4956ddc569ca7f894936c985368066))
+* **transport:** honor account waits and feature limits (TASK-996) ([d352de9](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/d352de97c5dc4f30055e476b95803c036878586c))
+* validate compact unlock result consistency ([f418f6b](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/f418f6be234a702b632fa18571a35568f553184e))
+* **values:** serialize signed amounts independently of device locale ([15cf98f](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/15cf98f0b0127e5f138b4c973745c2450d0b6f83))
+
+
+### Features
+
+* **achievements:** add scoped Unity progress and Inbox rewards ([641d05a](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/641d05af67e26db9e169b854995d114b31fe376f))
+* add revision-safe asynchronous matches and durable sample ([471b640](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/471b6408cb0153a418be57fbfe2204a8f7175520))
+* add revision-safe Items SDK and durable sample ([284d721](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/284d7214199487e4fc029a3fbcbf649234aa861d))
+* **chat:** keep history on device with bounded shared server windows ([78338dd](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/78338dd1f9dbf286c21634775d19a329c47d5e65))
+* **friends:** add scoped Unity social graph manager ([85ad867](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/85ad867ce55d053600d8585d2b29c36cc5614423))
+* **gift-codes:** add replay-safe Unity value rewards (TASK-1007) ([d4a4cea](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/d4a4cea79cbb9cbf026e5ec8b049b25f115481cb))
+* **gift-codes:** persist and retry prepared V2 campaign intents ([31d380b](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/31d380b10b9a7beca9e49c079a08310326f27a69))
+* **groups:** add session-safe manager and durable two-player example ([e1caad1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/e1caad1de0616f8c1cda250bfc20cdec427d2dfb))
+* **inbox:** add bounded Unity snapshots and atomic reward claims ([740a54c](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/740a54c95f9dd0c36c7cff91269de0f483ca71ed))
+* **inbox:** support source notices and configurable mailbox limits ([bc46a83](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/bc46a835872f291061dfe12a1fb62128eaad1464))
+* **marketplace:** add typed ten-route app consumer and exact wire codec ([14ae97d](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/14ae97d40eebc629cff2c0a008520bce72d39206))
+* **marketplace:** persist original intents and verify native escrow recovery ([c3092e4](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/c3092e420f63fcdf985e9b8b0c1477fa3948627b))
+* **realtime:** add bounded native and WebGL subscriptions (TASK-995) ([8324492](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/83244928799ae4e35adce7a95e1061ae6fbd722d))
+* **shared-objects:** add guarded Unity adapter and durable examples ([2125bd1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/2125bd1695e5531a43d114dac4c5e0e1f71b1004))
+* **values:** add atomic player value operations and safe retry context ([172bec6](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/172bec60b2ca7d43b901f0005902610d675d15ae))
+
 # [1.11.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.10.1...v1.11.0) (2026-10-10)
 
 

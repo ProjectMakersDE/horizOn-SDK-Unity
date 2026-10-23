@@ -2153,7 +2153,7 @@ else
 - **Quick Start**: See [QUICKSTART.md](../QUICKSTART.md)
 - **README**: See [README.md](../README.md)
 
-**Version**: 1.11.0
+**Version**: 1.12.0
 **Last Updated**: 2026-09-29
 
 
