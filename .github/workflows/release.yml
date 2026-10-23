@@ -29,7 +29,9 @@ jobs:
         run: dotnet run --project Tests~/TransportContract/TransportContract.csproj
 
       - name: Check WebGL realtime bridge
-        run: node Tests~/WebGLRealtimeBridge.test.cjs
+        run: |
+          node Tests~/WebGLRealtimeBridge.test.cjs
+          node Tests~/WebGLChatStorage.test.cjs
 
   unity-editor-transport:
     runs-on: ubuntu-latest
@@ -42,12 +44,29 @@ jobs:
 
       - name: Import actual feature samples for executable sample regressions
         run: |
+          mkdir -p .unity-ci-project/Assets/GiftSample .unity-ci-project/Assets/GiftExampleUI
+          cp Samples~/Examples/Features/GiftCodesExample.cs Samples~/Examples/Features/GiftCodeSampleStore.cs .unity-ci-project/Assets/GiftSample/
+          cp Samples~/ExampleUI/HorizonExampleUIController.cs Samples~/ExampleUI/HorizonSDKExample.cs Samples~/ExampleUI/HorizonExampleWindow.cs .unity-ci-project/Assets/GiftExampleUI/
+          mkdir -p .unity-ci-project/Assets/MarketplaceSample
+          cp Samples~/Examples/Features/MarketplaceExample.cs Samples~/Examples/Features/MarketplaceSampleStore.cs Samples~/Examples/Features/MarketplaceQuickstart.cs .unity-ci-project/Assets/MarketplaceSample/
           mkdir -p .unity-ci-project/Assets/InboxSample
           cp Samples~/Examples/Features/InboxExample.cs .unity-ci-project/Assets/InboxSample/InboxExample.cs
           mkdir -p .unity-ci-project/Assets/AchievementsSample
           cp Samples~/Examples/Features/AchievementsExample.cs .unity-ci-project/Assets/AchievementsSample/AchievementsExample.cs
+          mkdir -p .unity-ci-project/Assets/GroupsSample
+          cp Samples~/Examples/Features/GroupsExample.cs Samples~/Examples/Features/GroupsSampleStore.cs .unity-ci-project/Assets/GroupsSample/
           mkdir -p .unity-ci-project/Assets/FriendsSample
           cp Samples~/Examples/Features/FriendsExample.cs .unity-ci-project/Assets/FriendsSample/FriendsExample.cs
+          mkdir -p .unity-ci-project/Assets/ItemsSample
+          cp Samples~/Examples/Features/ItemsExample.cs Samples~/Examples/Features/ItemsSampleStore.cs .unity-ci-project/Assets/ItemsSample/
+          mkdir -p .unity-ci-project/Assets/SharedObjectsSample
+          cp Samples~/Examples/Features/SharedObjectsExample.cs Samples~/Examples/Features/SharedObjectsSampleStore.cs .unity-ci-project/Assets/SharedObjectsSample/
+
+          mkdir -p .unity-ci-project/Assets/MatchesSample
+          cp Samples~/Examples/Features/MatchesExample.cs Samples~/Examples/Features/MatchesSampleStore.cs .unity-ci-project/Assets/MatchesSample/
+
+          mkdir -p .unity-ci-project/Assets/ChatSample
+          cp Samples~/Examples/Features/ChatExample.cs .unity-ci-project/Assets/ChatSample/ChatExample.cs
 
       - name: Run actual Unity Editor transport tests
         id: unity-tests
