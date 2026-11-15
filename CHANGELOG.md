@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.12.0...v1.12.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* **matches:** handle the account open match limit ([7c78172](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/7c781724df4b68ac8fb39c18a89881e0c52e6a28))
+
 # [1.12.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.11.0...v1.12.0) (2026-10-23)
 
 
