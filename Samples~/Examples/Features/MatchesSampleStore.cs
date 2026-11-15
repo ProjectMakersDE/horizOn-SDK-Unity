@@ -176,7 +176,7 @@ namespace PM.horizOn.Cloud.Examples.Features
             try{return JsonUtility.FromJson<T>(raw);}catch(Exception e){throw new IOException("Corrupt/partial Matches JSON",e);}
         }
         private static bool Uuid(string s)=>s!=null&&Regex.IsMatch(s,@"\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z");
-        public static bool DefinitiveCreateCode(string code)=>new[]{"INVALID_REQUEST","STATE_SIZE_LIMIT_REACHED","ACTIVE_MATCH_LIMIT_REACHED","HISTORY_LIMIT_REACHED","MATCH_RELATION_BLOCKED","INVITE_LIMIT_REACHED","RANKED_NOT_CONFIGURED","PLAYER_NOT_FOUND","FEATURE_NOT_SUPPORTED","SESSION_REQUIRED","SESSION_FORBIDDEN"}.Contains(code);
+        public static bool DefinitiveCreateCode(string code)=>new[]{"INVALID_REQUEST","STATE_SIZE_LIMIT_REACHED","ACTIVE_MATCH_LIMIT_REACHED","ACCOUNT_MATCH_LIMIT_REACHED","HISTORY_LIMIT_REACHED","MATCH_RELATION_BLOCKED","INVITE_LIMIT_REACHED","RANKED_NOT_CONFIGURED","PLAYER_NOT_FOUND","FEATURE_NOT_SUPPORTED","SESSION_REQUIRED","SESSION_FORBIDDEN"}.Contains(code);
         private static bool Safe(long n)=>n>=-9007199254740991L&&n<=9007199254740991L;
         private static bool Blank(string s)=>s==null||s.All(c=>c>='\t'&&c<='\r'||c>=0x1c&&c<=0x1f||char.GetUnicodeCategory(c)==System.Globalization.UnicodeCategory.SpaceSeparator||char.GetUnicodeCategory(c)==System.Globalization.UnicodeCategory.LineSeparator||char.GetUnicodeCategory(c)==System.Globalization.UnicodeCategory.ParagraphSeparator);
     }

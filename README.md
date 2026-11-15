@@ -1230,7 +1230,10 @@ journals admit the complete original payload before sending.
 
 Matches retain all seven limits: `activeMatches`, `stateBytes`, `retainedMatches`,
 `pendingInvites`, `settlementMatches`, `historyRetentionSeconds`,
-`rankedSettlementSeconds`; retained count/history seconds may be zero. The physical
+`rankedSettlementSeconds`; retained count/history seconds may be zero. `CreateMatch` can
+also fail with 422 `ACCOUNT_MATCH_LIMIT_REACHED` when the account's open Matches (lobby,
+active, reporting, across all its projects) are at the plan limit; join, turns, leave,
+report and cancel are never blocked by it. The physical
 BSON/Jackson state envelope is 14,648 KiB, separate from current policy. Read lists
 are projected summaries plus `pendingResults` entries containing only `matchId`,
 `finalStateRevision`, nullable `ownRankedRunId`, `expiresAt`. After an explicit

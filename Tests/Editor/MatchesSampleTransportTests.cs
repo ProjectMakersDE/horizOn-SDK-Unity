@@ -84,10 +84,10 @@ namespace PM.horizOn.Cloud.Tests
             UnityEngine.Object.DestroyImmediate(a.gameObject);a=Actor();Assert.That(await ActReply(a,"ApplySavedIntent",Run),Is.True,"manager="+Manager.LastErrorCode+" va="+ValidatedActionsManager.Instance.LastErrorCode);Assert.That(ValidatedActionsManager.Instance.CurrentRun.runId,Is.EqualTo(RunId));
             t=Act(a,"SubmitOriginalRanked",3L,new byte[]{0,255,0});var c=await Incoming();Assert.That(await Body(c),Is.EqualTo(original));await Respond(c,"{\"accepted\":true,\"runId\":\""+RunId+"\",\"state\":null,\"evidence\":null}");Assert.That(await t,Is.True);Ack(a);
         }
-        [TestCase(422,true)][TestCase(503,false)]
-        public async Task FreshDefinitiveCreateRejectionCanBeReviewedButUncertainCodeNeverReleasesOriginal(int status,bool resolved)
+        [TestCase(422,true,"ACTIVE_MATCH_LIMIT_REACHED")][TestCase(422,true,"ACCOUNT_MATCH_LIMIT_REACHED")][TestCase(503,false,"ACTIVE_MATCH_LIMIT_REACHED")]
+        public async Task FreshDefinitiveCreateRejectionCanBeReviewedButUncertainCodeNeverReleasesOriginal(int status,bool resolved,string code)
         {
-            var a=Actor();Assert.That(await ActReply(a,"ReadLedger",Ledger(),false),Is.True);var t=Act(a,"SaveCreateAfterLedgerReview",new MatchCreateInput{name="bounded"});await Respond(await Incoming(),"{\"code\":\"ACTIVE_MATCH_LIMIT_REACHED\"}",status);Assert.That(await t,Is.False);
+            var a=Actor();Assert.That(await ActReply(a,"ReadLedger",Ledger(),false),Is.True);var t=Act(a,"SaveCreateAfterLedgerReview",new MatchCreateInput{name="bounded"});await Respond(await Incoming(),"{\"code\":\""+code+"\"}",status);Assert.That(await t,Is.False);
             Assert.That(File.Exists(Path.Combine(Journal(),"result.json")),Is.EqualTo(resolved));Ack(a);Assert.That(Directory.Exists(Journal()),Is.EqualTo(!resolved));
         }
         [Test] public async Task ActualSharedDefenseAndMatchRankedStartShareOneHttpOwner()
