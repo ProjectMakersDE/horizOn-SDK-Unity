@@ -8,10 +8,10 @@ mergeInto(LibraryManager.library, {
     HorizonRealtimeSockets.sockets[id] = socket;
     socket.onopen = function() { SendMessage(objectName, 'OnHorizonRealtimeOpen', String(id)); };
     socket.onmessage = function(event) {
-      if (typeof event.data === 'string' && event.data.length <= 8192) SendMessage(objectName, 'OnHorizonRealtimeMessage', id + '|' + event.data);
+      if (typeof event.data === 'string' && event.data.length <= 65536) SendMessage(objectName, 'OnHorizonRealtimeMessage', id + '|' + event.data);
       else socket.close();
     };
-    socket.onclose = function() { delete HorizonRealtimeSockets.sockets[id]; SendMessage(objectName, 'OnHorizonRealtimeClosed', String(id)); };
+    socket.onclose = function(event) { delete HorizonRealtimeSockets.sockets[id]; SendMessage(objectName, 'OnHorizonRealtimeClosed', id + '|' + (event && event.code ? event.code : 0)); };
     return id;
   },
   HorizonRealtimeSend__deps: ['$HorizonRealtimeSockets'],
