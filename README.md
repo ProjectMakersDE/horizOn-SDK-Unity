@@ -24,6 +24,7 @@ Official Unity SDK for **horizOn** Backend-as-a-Service by [ProjectMakers](https
 | 🎒 **Items** | `ItemsManager` | Bounded catalog, unique inventory and explicit revision-fenced equip/adjust/discard |
 | 🤝 **Friends** | `FriendsManager` | Exact share-code lookup, revision-fenced requests/friends/blocks and public profile projections |
 | 📬 **Inbox** | `InboxManager` | Explicit snapshots, read/remove, atomic claim/replay and authoritative value-cache updates |
+| 🎀 **Item Gifts** | `ItemGiftsManager` | Send one item privately through the inbox, optional fixed fee, decline, safe return to the sender |
 | 🔄 **Realtime** | `RealtimeManager` | Optional Cloud invalidations for inbox, matches and chat; HTTP content reload |
 | ⚙️ **Remote Config** | `RemoteConfigManager` | Dynamic settings without redeploying |
 | 🌍 **Localization** | `LocalizationManager` | Multi-language strings fetched at runtime (15 languages) |
@@ -153,6 +154,7 @@ Attach one to an empty GameObject and press Play.
 | Friends | `FriendsExample.cs` (explicit lookup, saved original actions and reconciliation) |
 | Matches | `MatchesExample.cs`, `MatchesSampleStore.cs` (two-player original intents, reports and guarded ranked runs) |
 | Items | `ItemsExample.cs`, `ItemsSampleStore.cs` (durable original purchase/CAS and GET-only recovery) |
+| Item Gifts | `ItemGiftsExample.cs`, `ItemGiftsSampleStore.cs`, `ItemGiftsQuickstart.cs` (reviewed send, durable original, decline and Inbox claims) |
 | Validated Actions | `ValidatedActionsExample.cs`, `ValidatedStateExample.cs` (server-owned values) |
 | Feedback | `FeedbackExample.cs` |
 
@@ -917,13 +919,13 @@ Use `InboxManager.Instance.GetInbox(userId, since: null)`, `MarkRead(userId, ent
 
 `limits` reports the current configurable `targeted`, `broadcasts`, `freeTexts`, `freeTextBytes` (UTF-8) and `freeTextRetentionDays`. These govern new writes; a retained mailbox remains readable after a limit is lowered. Revisions are safe integers and may jump. Keep entry IDs opaque: a later event from the same source has a distinct ID, and read/remove/claim must use the selected original ID.
 
-For known system messages, `entry.TryGetSource(out source)` exposes typed Friends, Groups, Match and Market references for navigation. The referenced feature API owns its current state and actions. Custom/legacy messages still expose their original type, reference and parameters. `entry.TryGetFreeText(out text)` returns the separate plain text form; disable rich text/markup in your UI. Other entries use `textKey` and localization parameters. There is no trusted publication route in the client SDK.
+For known system messages, `entry.TryGetSource(out source)` exposes typed Friends, Groups, Match, Market and item gift references for navigation. The referenced feature API owns its current state and actions. Custom/legacy messages still expose their original type, reference and parameters. `entry.TryGetFreeText(out text)` returns the separate plain text form; disable rich text/markup in your UI. Other entries use `textKey` and localization parameters. There is no trusted publication route in the client SDK.
 
 `CurrentInbox` returns a defensive copy. Unchanged HTTP snapshots keep cached entries and update polling metadata. Changed snapshots replace the entire cache, including removals. One active refresh and one coalesced follow-up preserve expiry ordering even when revision numbers are equal. Mutations invalidate in-flight reads. Session/project/host and cache epochs reject late answers; revision/server-time watermarks survive ClearCache. A conditional response without cached entries triggers one bounded full reload. JSON payloads use the shared 32 MiB technical frame and typed field/depth validation; current operator quotas are not generic array ceilings. Inbox payload contents are not copied into raw-response logs.
 
 Claims reuse the original entry ID after an uncertain response. They never choose rewards or add returned amounts locally. The SDK accepts the complete authorized Player Values snapshot through `PlayerValuesManager.AcceptServerState(userId,state)` and rejects stale state rather than replacing a newer balance. INBOX_FULL/value-limit/UNCLAIMED_REWARD errors remain visible and do not destroy pending attachments. The sample exposes only explicit player-triggered claims.
 
-For a new selection use `InboxExample.ClaimNewEntry(entryId, persistOriginalIntent)`: it checks `entry.CanClaim` in the authorized SDK snapshot before calling your synchronous persistence callback. Value rewards and `attachment.itemReturn` (`listingId`, `instanceId`, `itemKey`) are claimable, including an item return with no values. After an item return, refresh the inventory; the descriptor and claim references do not contain a complete item. The callback must durably save or verify the exact entry ID under the current project/player, refuse a conflicting pending intent and return true only on success. A failed write or an identity/cache change sends no claim. Use `ClaimEntry(savedOriginalEntryId)` only for an already saved intent; it remains replayable when that entry is absent or already claimed. Never generate a replacement ID or overwrite a pending claim. Informational entries do not create reward intents.
+For a new selection use `InboxExample.ClaimNewEntry(entryId, persistOriginalIntent)`: it checks `entry.CanClaim` in the authorized SDK snapshot before calling your synchronous persistence callback. Value rewards, `attachment.itemReturn` (`listingId`, `instanceId`, `itemKey`) and `attachment.itemGift` (`giftId`, `instanceId`, `itemKey`, `direction`) are claimable, including an item reference with no values. After an item return, refresh the inventory; the descriptor and claim references do not contain a complete item. The callback must durably save or verify the exact entry ID under the current project/player, refuse a conflicting pending intent and return true only on success. A failed write or an identity/cache change sends no claim. Use `ClaimEntry(savedOriginalEntryId)` only for an already saved intent; it remains replayable when that entry is absent or already claimed. Never generate a replacement ID or overwrite a pending claim. Informational entries do not create reward intents.
 
 There is no automatic polling or socket connection. A screen waits at least `pollAfterSeconds` between lifecycle-driven refreshes. Optional realtime `inbox:<userId>` and `inbox:project.<projectApiKeyId>` metadata calls ClearCache, followed by an explicit HTTP refresh. InboxExample demonstrates lifecycle cleanup without closing another feature's shared realtime manager.
 
@@ -1355,6 +1357,55 @@ actor destruction during an uncertain send, original retries, GET-only recovery,
 and original escrow claim followed by discard/replay. The shared .NET source gate
 also kills real journal-owner processes at five persistence boundaries. These
 artificial local tests do not prove a hosted deployment or exported browser game.
+
+## Item gifts: private sends through the inbox
+
+`ItemGiftsManager.Instance` implements the six authenticated App routes:
+`GetConfig` (enabled flag, fee currency and amount, config revision, limits),
+`GetState` (own open sent gifts and pending returns, retained history and open
+received offers), `GetGift`, `GetOperation`, `SendGift` and `Decline`.
+`SubmitPrepared(ItemGiftIntent)` sends a persisted original. There is no claim
+route: the recipient claims an offer and the sender claims a return with
+`InboxManager.Instance.Claim(userId, entryId)`, which lists the original in `items`.
+Every call uses the current player's Bearer and project key. No method polls.
+
+One gift carries exactly one unequipped item instance. A configured fee is
+charged once on send in a Player Values currency and never refunded. The offer
+expires seven days after the send, by server time. A decline or expiry returns the
+original to the sender as an `item_gift_return` inbox entry that stays until claimed.
+Inbox entries of type `item_gift` and `item_gift_return` expose
+`attachment.itemGift` and `TryGetSource` with kind `ItemGiftOffer` or
+`ItemGiftReturn`, the gift ID as `SourceId` and the other player as `UserId`.
+Resolve a public friend code with `FriendsManager.Instance.FindPlayer` and show
+that profile, the item, the fee and the expiry before the player confirms.
+
+`ItemGiftIntent.Send(userId, operationId, issuedAt, recipientId, instanceId,
+expectedInventoryRevision, expectedConfigRevision)` builds the seven-field original
+body. Persist it before the first call. After a timeout, restart or `STATE_CONFLICT`,
+send the identical bytes again or call `GetOperation`. Never create a new operation
+ID or a new expected revision for the same intent. A missing receipt never proves
+that a send did not happen, and a replay never withdraws or charges again.
+
+Import `ItemGiftsExample.cs`, `ItemGiftsSampleStore.cs` and `ItemGiftsQuickstart.cs`
+from the Examples sample and set the stable project UUID in `projectId`.
+`ItemGiftsQuickstart.ReadRulesAndInventory(screen)` reads config and inventory.
+`ReviewSend` freezes recipient, item, inventory revision and fee rules, and only
+`ConfirmReviewedSend` creates the operation UUID and a server-clock timestamp. The
+journal is scoped to project and player and holds an OS-exclusive handle across
+the send, so another player or project never resumes a foreign original. Use
+`RetryPending` or `RecoverOriginalOperation` after uncertainty. After a known
+result the sample reads current Inventory, Player Values and gift state, then
+removes the one resolved original. `DeclineGift` declines at the revision of the
+last state read, and `ClaimGiftEntry` claims an offer or return through Inbox. The
+native file journal rejects WebGL writes; a browser game needs a durable journal
+with exclusive send ownership.
+
+`Tests/Editor/ItemGiftsTransportTests.cs` runs the imported sample and the
+production transport against a strict Python HTTP fixture: interrupted send,
+GET-only recovery, original byte replay, operation conflict, decline replay, offer
+and return claims through Inbox and an identity switch during a read. The shared
+.NET contract kills real journal-owner processes at five persistence boundaries.
+These artificial local tests do not prove a hosted deployment.
 
 The Groups sample's `ReadOneMemberPage()` reads the current auth-bound
 `CurrentGroups.limits.memberPageSize`; missing limits require an explicit own-group
