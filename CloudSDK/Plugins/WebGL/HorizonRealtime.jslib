@@ -8,7 +8,7 @@ mergeInto(LibraryManager.library, {
     HorizonRealtimeSockets.sockets[id] = socket;
     socket.onopen = function() { SendMessage(objectName, 'OnHorizonRealtimeOpen', String(id)); };
     socket.onmessage = function(event) {
-      if (typeof event.data === 'string' && event.data.length <= 65536) SendMessage(objectName, 'OnHorizonRealtimeMessage', id + '|' + event.data);
+      if (typeof event.data === 'string' && event.data.length <= 262144) SendMessage(objectName, 'OnHorizonRealtimeMessage', id + '|' + event.data);
       else socket.close();
     };
     socket.onclose = function(event) { delete HorizonRealtimeSockets.sockets[id]; SendMessage(objectName, 'OnHorizonRealtimeClosed', id + '|' + (event && event.code ? event.code : 0)); };

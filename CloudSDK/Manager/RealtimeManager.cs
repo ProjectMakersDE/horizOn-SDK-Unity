@@ -233,8 +233,9 @@ namespace PM.horizOn.Cloud.Manager
 #if !(UNITY_WEBGL && !UNITY_EDITOR)
         private async Task Receive(ClientWebSocket socket, CancellationToken cancellation, int generation)
         {
-            // Snapshots carry a whole chat window or match state, so frames are larger than v1 invalidations.
-            var buffer = new byte[65536];
+            // Snapshots carry a whole chat window (20 messages of up to 2,000 bytes) or match state.
+            // 256 KiB leaves headroom over the largest window, like the Godot SDK.
+            var buffer = new byte[262144];
             try
             {
                 while (!cancellation.IsCancellationRequested && socket.State == WebSocketState.Open)
