@@ -1,3 +1,16 @@
+# [1.13.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.12.1...v1.13.0) (2026-11-16)
+
+
+### Bug Fixes
+
+* **realtime:** accept snapshot frames up to 256 KiB ([935ad81](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/935ad8184313c6f0890a2c8057f6830f8ac04596))
+
+
+### Features
+
+* **item-gifts:** add item gifts manager, inbox gift entries and durable send sample (TASK-1140) ([990304d](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/990304d26273b8b83271f6751c2aa7b8f259d036))
+* **realtime:** send chat and match actions over socket v2 (TASK-1139) ([8ec5580](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/8ec55803e7209126ff94d8be134542fa79024d21))
+
 ## [1.12.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.12.0...v1.12.1) (2026-11-15)
 
 
