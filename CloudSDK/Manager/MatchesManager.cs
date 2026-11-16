@@ -35,12 +35,16 @@ namespace PM.horizOn.Cloud.Manager
         private string _rankedMatch, _rankedRun; private long _rankedFinal;
         internal Func<double> NowSeconds = () => (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
         public string LastErrorCode { get; private set; }
+        /// <summary>A match subscription snapshot (socket v2), applied to the cache like a <see cref="GetMatch"/> answer without an HTTP reload.</summary>
+        public event Action<MatchRead> MatchSnapshotApplied;
         protected override void RegisterEvents()
         {
             RegisterEvent<DateTime>(EventKeys.UserSignOutSuccess, _ => ResetIdentity());
             RegisterEvent<UserData>(EventKeys.UserSignInSuccess, _ => ResetIdentity());
         }
-        protected override void OnDisable() { ResetIdentity(); base.OnDisable(); }
+        protected override void OnInit() { RealtimeManager.Snapshots -= OnSnapshot; RealtimeManager.Snapshots += OnSnapshot; }
+        protected override void OnEnable() { RealtimeManager.Snapshots -= OnSnapshot; RealtimeManager.Snapshots += OnSnapshot; base.OnEnable(); }
+        protected override void OnDisable() { RealtimeManager.Snapshots -= OnSnapshot; ResetIdentity(); base.OnDisable(); }
         /// <summary>Invalidate private content and queued responses, retaining auth-context revision/time fences and bounded cadence hints and an actual current ranked-run binding.</summary>
         public void ClearCache() { SyncIdentity(); _epoch++; InvalidateContent(); }
         public T GetCached<T>(string identity) where T : class
@@ -115,8 +119,11 @@ namespace PM.horizOn.Cloud.Manager
             {
                 if (!FriendsJson.IsUuid(match) || !WritableRevision(revision) || revision == 0) return Invalid<MatchRead>();
                 string body = MatchesJson.UserJson(user) + fields + "}";
+                // Over the socket while it is ready: the HTTP body without userId as input, the If-Match revision as revision.
+                string frame = ",\"matchId\":" + ItemsJson.Quote(match) + ",\"action\":" + ItemsJson.Quote(action) + ",\"revision\":" + N(revision) + ",\"input\":{" + (fields.StartsWith(",", StringComparison.Ordinal) ? fields.Substring(1) : fields) + "}";
                 return Call<MatchRead>(user, MatchKey(match), Path(match) + "/" + action, body, revision,
-                    x => Same(x.match.id, match) && x.match.revision == revision + 1 && (AuthorizedView(x.match, user) || (action == "leave" || action == "decline") && x.match.data == null) && (extra == null || extra(x.match)));
+                    x => Same(x.match.id, match) && x.match.revision == revision + 1 && (AuthorizedView(x.match, user) || (action == "leave" || action == "decline") && x.match.data == null) && (extra == null || extra(x.match)),
+                    socketFrame: frame, parser: MatchesJson.Read);
             }
             catch (FormatException) { return Invalid<MatchRead>(); }
         }
@@ -172,7 +179,8 @@ namespace PM.horizOn.Cloud.Manager
                 finally { _requests.Release(); }
             }
         }
-        private async Task<MatchesResult<T>> Call<T>(string user, string resource, string path, string body, long? revision, Func<T, bool> valid, bool bypassCadence = false) where T : class
+        private async Task<MatchesResult<T>> Call<T>(string user, string resource, string path, string body, long? revision, Func<T, bool> valid, bool bypassCadence = false,
+            string socketFrame = null, Func<string, MatchRead> parser = null) where T : class
         {
             if (!Begin(user, out string scope, out long epoch)) return Failure<T>(LastErrorCode);
             string identity = Hash(scope + "\n" + path + "\n" + body); var network = _network;
@@ -184,7 +192,16 @@ namespace PM.horizOn.Cloud.Manager
                 if (body == null && !bypassCadence && delay > 0) return Failure<T>("REFRESH_TOO_SOON", identity: identity, delay: delay);
                 if (body != null) InvalidateContent();
                 var headers = revision.HasValue ? new Dictionary<string, string> { ["If-Match"] = N(revision.Value) } : null;
-                var response = body == null ? await network.GetAsync<T>(path, true) : await network.PostOnceAsync<T>(path, new MatchesJsonRequest(body), true, headers);
+                NetworkResponse<T> response = null;
+                var realtime = socketFrame == null ? null : RealtimeManager.Active;
+                if (realtime != null && realtime.CanSendOverSocket)
+                {
+                    var sent = await realtime.SendRequest("match.action", socketFrame);
+                    if (!IsCurrent(scope, epoch)) return Failure<T>("STALE_RESPONSE");
+                    // Unknown outcome: the HTTP retry below carries the same revision, so a 409 then means the first send landed.
+                    if (sent != null && sent.Delivered) response = RealtimeManager.ToResponse<T>(sent, raw => parser(raw) as T);
+                }
+                if (response == null) response = body == null ? await network.GetAsync<T>(path, true) : await network.PostOnceAsync<T>(path, new MatchesJsonRequest(body), true, headers);
                 if (!IsCurrent(scope, epoch)) return Failure<T>("STALE_RESPONSE");
                 if (!response.IsSuccess)
                 {
@@ -192,19 +209,38 @@ namespace PM.horizOn.Cloud.Manager
                     return Failure<T>(ResponseCode(response), response.Error, identity, status: response.StatusCode);
                 }
                 if (response.Data == null || !valid(response.Data)) return Failure<T>("INVALID_RESPONSE", identity: identity);
-                var data = response.Data; long time = MatchesJson.Millis(ServerTime(data)); var versions = Versions(data);
-                var sources=KnownSources(data).ToArray();
-                if(sources.Any(x=>_sourceRuns.TryGetValue(x.Key,out var original)&&!Same(original,x.Value)))return Failure<T>("STALE_RESPONSE",identity:identity);
-                if (_times.TryGetValue(resource, out var previousTime) && time < previousTime
-                    || versions.Any(v => _revisions.TryGetValue(v.Key, out var old) && v.Value < old || _times.TryGetValue(v.Key, out var oldTime) && time < oldTime)) return Failure<T>("STALE_RESPONSE", identity: identity);
-                _times[resource] = time;
-                foreach (var v in versions) { _revisions[v.Key] = v.Value; _times[v.Key] = time; }
-                foreach(var source in sources)_sourceRuns[source.Key]=source.Value;
-                Put(_cache, _cacheOrder, identity, MatchesJson.Clone(data), 8);
-                if (body == null) Put(_refresh, _refreshOrder, identity, new Refresh { At = NowSeconds(), Seconds = Poll(data) }, 512);
-                LastErrorCode = null; return new MatchesResult<T> { IsSuccess = true, Data = MatchesJson.Clone(data), Identity = identity, HttpStatusCode = response.StatusCode };
+                return Accept(resource, identity, response.Data, body == null, response.StatusCode);
             }
             finally { _requests.Release(); }
+        }
+        /// <summary>Fences, cache and cadence of one authorized answer, shared by HTTP reads, writes and socket snapshots.</summary>
+        private MatchesResult<T> Accept<T>(string resource, string identity, T data, bool read, long status) where T : class
+        {
+            long time = MatchesJson.Millis(ServerTime(data)); var versions = Versions(data);
+            var sources=KnownSources(data).ToArray();
+            if(sources.Any(x=>_sourceRuns.TryGetValue(x.Key,out var original)&&!Same(original,x.Value)))return Failure<T>("STALE_RESPONSE",identity:identity);
+            if (_times.TryGetValue(resource, out var previousTime) && time < previousTime
+                || versions.Any(v => _revisions.TryGetValue(v.Key, out var old) && v.Value < old || _times.TryGetValue(v.Key, out var oldTime) && time < oldTime)) return Failure<T>("STALE_RESPONSE", identity: identity);
+            _times[resource] = time;
+            foreach (var v in versions) { _revisions[v.Key] = v.Value; _times[v.Key] = time; }
+            foreach(var source in sources)_sourceRuns[source.Key]=source.Value;
+            Put(_cache, _cacheOrder, identity, MatchesJson.Clone(data), 8);
+            if (read) Put(_refresh, _refreshOrder, identity, new Refresh { At = NowSeconds(), Seconds = Poll(data) }, 512);
+            LastErrorCode = null; return new MatchesResult<T> { IsSuccess = true, Data = MatchesJson.Clone(data), Identity = identity, HttpStatusCode = status };
+        }
+        private void OnSnapshot(string topic, string raw)
+        {
+            if (this == null) { RealtimeManager.Snapshots -= OnSnapshot; return; }
+            if (topic == null || !topic.StartsWith("matches:", StringComparison.Ordinal) || !FriendsJson.IsUuid(topic.Substring(8)) || !HorizonApp.IsInitialized) return;
+            string id = topic.Substring(8), last = LastErrorCode; SyncIdentity(); var user = UserManager.Instance.CurrentUser;
+            if (_network == null || user == null || !user.IsValid() || user.AccessToken != _network.GetSessionToken() || !FriendsJson.IsUuid(user.UserId)) return;
+            MatchRead data;
+            try { data = MatchesJson.Read(raw); if (!Same(data.match.id, id) || !AuthorizedView(data.match, user.UserId)) return; }
+            catch (Exception e) when (e is FormatException || e is ArgumentException || e is KeyNotFoundException || e is NullReferenceException || e is OverflowException) { return; }
+            string path = Path(id) + "?userId=" + Escape(user.UserId);
+            var applied = Accept(MatchKey(id), Hash(_scope + "\n" + path + "\n"), data, true, 200);
+            LastErrorCode = last;
+            if (applied.IsSuccess) MatchSnapshotApplied?.Invoke(applied.Data);
         }
         private static bool AuthorizedView(MatchView match, string user) => match.participantIds.Any(x => Same(x, user)) ? match.data != null : match.invitedIds.Any(x => Same(x, user)) && match.data == null;
         private static string SourceBinding(string match,long revision)=>match.ToLowerInvariant()+":"+N(revision);
