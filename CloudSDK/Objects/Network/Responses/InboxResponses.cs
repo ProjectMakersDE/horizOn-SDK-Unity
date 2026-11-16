@@ -3,13 +3,16 @@ using System.Collections.Generic;
 namespace PM.horizOn.Cloud.Objects.Network.Responses
 {
     [Serializable] public class InboxItemReturn { public string listingId, instanceId, itemKey; }
+    /// <summary>A reference to an escrowed item gift. direction "offer" is the recipient's gift, "return" the sender's original coming back.</summary>
+    [Serializable] public class InboxItemGift { public string giftId, instanceId, itemKey, direction; }
     [Serializable] public class InboxAttachment
     {
         public PlayerValueAmount[] values = Array.Empty<PlayerValueAmount>();
         public InboxItemReturn itemReturn;
-        public bool HasReward => values != null && values.Length > 0 || itemReturn != null;
+        public InboxItemGift itemGift;
+        public bool HasReward => values != null && values.Length > 0 || itemReturn != null || itemGift != null;
     }
-    public enum InboxSourceKind { Unknown, FriendRequest, FriendAccepted, GroupInvitation, GroupRequest, GroupInvitationAccepted, GroupRequestAccepted, MatchTurn, MarketReturn }
+    public enum InboxSourceKind { Unknown, FriendRequest, FriendAccepted, GroupInvitation, GroupRequest, GroupInvitationAccepted, GroupRequestAccepted, MatchTurn, MarketReturn, ItemGiftOffer, ItemGiftReturn }
     /// <summary>A display/navigation reference. Actions still use the original Inbox entry ID and the authoritative source API.</summary>
     public sealed class InboxSource
     {
@@ -45,6 +48,8 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
                 if (type == "group_accept-request" && textKey == "horizon.groups.accept-request") return InboxSourceKind.GroupRequestAccepted;
                 if (type == "match_turn" && textKey == "horizon.matches.your_turn") return InboxSourceKind.MatchTurn;
                 if (type == "marketplace" && textKey == "marketplace.item_return") return InboxSourceKind.MarketReturn;
+                if (type == "item_gift" && textKey == "horizon.item_gifts.offer") return InboxSourceKind.ItemGiftOffer;
+                if (type == "item_gift_return" && textKey == "horizon.item_gifts.return") return InboxSourceKind.ItemGiftReturn;
                 return InboxSourceKind.Unknown;
             }
         }
@@ -71,6 +76,16 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
                     || !parameters.TryGetValue("revision", out var revision) || !long.TryParse(revision, System.Globalization.NumberStyles.None,
                         System.Globalization.CultureInfo.InvariantCulture, out var n) || n < 0 || n > 9007199254740991L) return false;
                 result.Revision = n;
+            }
+            else if (sourceKind == InboxSourceKind.ItemGiftOffer || sourceKind == InboxSourceKind.ItemGiftReturn)
+            {
+                // SourceId is the gift ID. UserId is the sender of an offer or the recipient who declined or let a return expire.
+                var gift = attachment?.itemGift;
+                bool offer = sourceKind == InboxSourceKind.ItemGiftOffer;
+                if (gift == null || gift.direction != (offer ? "offer" : "return") || !Guid.TryParseExact(gift.giftId, "D", out var giftId) || giftId != id
+                    || !ParameterId(offer ? "senderId" : "recipientId", out var userId)) return false;
+                if (!offer && (parameters == null || !parameters.TryGetValue("reason", out var reason) || reason != "declined" && reason != "expired")) return false;
+                result.UserId = userId;
             }
             else if (attachment?.itemReturn == null || !Guid.TryParseExact(attachment.itemReturn.listingId, "D", out var listingId) || listingId != id) return false;
             source = result; return true;

@@ -26,7 +26,8 @@ namespace PM.horizOn.Cloud.Manager
         private const string Endpoint = "/api/v1/app/chat";
         private readonly SemaphoreSlim _requests = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, Watch> _watches = new Dictionary<string, Watch>();
-        private sealed class Watch { internal string User, Channel; internal ChatSynced Snapshot; internal bool Busy, Dirty; internal double ReceivedAt; }
+        // Known keeps the last authorized window after Hide, so a resubscription asks only for what was missed.
+        private sealed class Watch { internal string User, Channel; internal ChatSynced Snapshot, Known, Basis; internal bool Busy, Dirty; internal double ReceivedAt; }
         private NetworkService _network; private RealtimeManager _realtime;
         private ChatHistoryStore _history; private string _scope, _owner;
         private readonly Dictionary<string, long> _channelArchiveGenerations = new Dictionary<string, long>();
@@ -73,7 +74,11 @@ namespace PM.horizOn.Cloud.Manager
         protected override void OnDisable()
         {
             ResetIdentity();
-            if (_realtime != null) { _realtime.EventReceived -= OnEvent; _realtime.ResyncRequired -= OnResync; _realtime.ConnectionError -= OnConnectionError; _realtime = null; }
+            if (_realtime != null)
+            {
+                _realtime.EventReceived -= OnEvent; _realtime.ResyncRequired -= OnResync; _realtime.ConnectionError -= OnConnectionError;
+                _realtime.SnapshotReceived -= OnSnapshot; if (ReferenceEquals(_realtime.SyncFor?.Target, this)) _realtime.SyncFor = null; _realtime = null;
+            }
             base.OnDisable();
         }
         public Task<ChatResult<ChatLimitsView>> GetLimits(string userId)
@@ -103,22 +108,25 @@ namespace PM.horizOn.Cloud.Manager
                 if (old != null) foreach (var m in old.messages) ChatJson.Message(ChatJson.MessageJson(m));
                 string body = User(userId) + ",\"epoch\":" + (old == null ? "null" : ChatJson.Quote(ChatJson.Id(old.channel.epoch)))
                     + ",\"knownMessageIds\":[" + string.Join(",", (old?.visibleMessageIds ?? Array.Empty<string>()).Select(x => ChatJson.Quote(ChatJson.Id(x)))) + "]}";
-                return Call(userId, channelId, Path(channelId) + "/sync", body, ChatJson.Synced, result =>
-                {
-                    if (result.channel.id != channelId || result.channel.kind == "direct" && !result.channel.peerIds.Contains(userId)) return false;
-                    if (old != null && (ChatJson.Millis(result.serverTime) < ChatJson.Millis(old.serverTime)
-                        || old.channel.epoch == result.channel.epoch && result.channel.revision < old.channel.revision)) return false;
-                    var cache = old != null && old.channel.epoch == result.channel.epoch ? old.messages.ToDictionary(m => m.id, ChatJson.Copy) : new Dictionary<string, ChatMessage>();
-                    var newIds = result.messages.Select(m => m.id).ToHashSet();
-                    if (newIds.Any(cache.ContainsKey) || !newIds.SetEquals(result.visibleMessageIds.Where(id => !cache.ContainsKey(id)))) return false;
-                    foreach (var message in result.messages) cache[message.id] = message;
-                    result.messages = result.visibleMessageIds.Select(id => cache[id]).ToArray();
-                    long time = ChatJson.Millis(result.serverTime);
-                    return result.messages.All(m => ChatJson.Millis(m.expiresAt) > time && ChatJson.Millis(m.createdAt) <= time)
-                        && result.messages.Zip(result.messages.Skip(1), (a, b) => ChatJson.Millis(a.createdAt) <= ChatJson.Millis(b.createdAt)).All(x => x);
-                }, result => Archive(channelId, result.messages), snapshot: true);
+                return Call(userId, channelId, Path(channelId) + "/sync", body, ChatJson.Synced, result => Compose(userId, channelId, old, result),
+                    result => Archive(channelId, result.messages), snapshot: true);
             }
             catch (Exception e) when (e is FormatException || e is ArgumentException || e is NullReferenceException) { return Invalid<ChatSynced>(); }
+        }
+        /// <summary>Validates a sync answer against the prior window and composes the complete new window into result.</summary>
+        private static bool Compose(string userId, string channelId, ChatSynced old, ChatSynced result)
+        {
+            if (result.channel.id != channelId || result.channel.kind == "direct" && !result.channel.peerIds.Contains(userId)) return false;
+            if (old != null && (ChatJson.Millis(result.serverTime) < ChatJson.Millis(old.serverTime)
+                || old.channel.epoch == result.channel.epoch && result.channel.revision < old.channel.revision)) return false;
+            var cache = old != null && old.channel.epoch == result.channel.epoch ? old.messages.ToDictionary(m => m.id, ChatJson.Copy) : new Dictionary<string, ChatMessage>();
+            var newIds = result.messages.Select(m => m.id).ToHashSet();
+            if (newIds.Any(cache.ContainsKey) || !newIds.SetEquals(result.visibleMessageIds.Where(id => !cache.ContainsKey(id)))) return false;
+            foreach (var message in result.messages) cache[message.id] = message;
+            result.messages = result.visibleMessageIds.Select(id => cache[id]).ToArray();
+            long time = ChatJson.Millis(result.serverTime);
+            return result.messages.All(m => ChatJson.Millis(m.expiresAt) > time && ChatJson.Millis(m.createdAt) <= time)
+                && result.messages.Zip(result.messages.Skip(1), (a, b) => ChatJson.Millis(a.createdAt) <= ChatJson.Millis(b.createdAt)).All(x => x);
         }
         public Task<ChatResult<ChatSent>> SendMessage(string userId, string channelId, string operationId, string issuedAt, string text)
         {
@@ -126,9 +134,11 @@ namespace PM.horizOn.Cloud.Manager
             {
                 ChatJson.Id(channelId); ChatJson.Id(operationId); ChatJson.Time(ChatJson.Quote(issuedAt)); ChatJson.Text(text);
                 string body = User(userId) + ",\"operationId\":" + ChatJson.Quote(operationId) + ",\"issuedAt\":" + ChatJson.Quote(issuedAt) + ",\"text\":" + ChatJson.Quote(text) + "}";
+                // Over the socket while it is ready: the same values without userId, which the gateway sets.
+                string frame = ",\"channelId\":" + ChatJson.Quote(channelId) + ",\"operationId\":" + ChatJson.Quote(operationId) + ",\"issuedAt\":" + ChatJson.Quote(issuedAt) + ",\"text\":" + ChatJson.Quote(text);
                 return Call(userId, channelId, Path(channelId) + "/messages", body, ChatJson.Sent,
                     x => x.receipt.channelId == channelId && x.receipt.operationId == operationId && x.receipt.issuedAt == issuedAt,
-                    x => Archive(channelId, new[] { new ChatMessage { id = x.receipt.messageId, channelId = channelId, authorId = userId, text = text, createdAt = x.receipt.createdAt, expiresAt = x.receipt.expiresAt } }));
+                    x => Archive(channelId, new[] { new ChatMessage { id = x.receipt.messageId, channelId = channelId, authorId = userId, text = text, createdAt = x.receipt.createdAt, expiresAt = x.receipt.expiresAt } }), socketFrame: frame);
             }
             catch (FormatException) { return Invalid<ChatSent>(); }
         }
@@ -189,7 +199,7 @@ namespace PM.horizOn.Cloud.Manager
             try { History().ClearAll(); FlushBrowserStorage(); LastErrorCode = null; LocalHistoryChanged?.Invoke(null); return true; }
             catch (Exception e) when (LocalError(e)) { LastErrorCode = StorageCode(e); LocalHistoryFailed?.Invoke(null, LastErrorCode); return false; }
         }
-        private async Task<ChatResult<T>> Call<T>(string user, string channel, string path, string body, Func<string, T> parser, Func<T, bool> valid, Action<T> accepted = null, bool snapshot = false) where T : class
+        private async Task<ChatResult<T>> Call<T>(string user, string channel, string path, string body, Func<string, T> parser, Func<T, bool> valid, Action<T> accepted = null, bool snapshot = false, string socketFrame = null) where T : class
         {
             if (!Begin(user, out string scope, out long epoch)) return Failure<T>(LastErrorCode);
             long archiveGeneration = _archiveGeneration, channelGeneration = ChannelGeneration(channel), syncEpoch = _syncEpoch; var network = _network;
@@ -197,8 +207,17 @@ namespace PM.horizOn.Cloud.Manager
             try
             {
                 if (!Current(scope, epoch) || snapshot && syncEpoch != _syncEpoch) return Failure<T>("STALE_RESPONSE");
+                NetworkResponse<T> response = null;
+                var realtime = socketFrame == null ? null : RealtimeManager.Active;
+                if (realtime != null && realtime.CanSendOverSocket)
+                {
+                    var sent = await realtime.SendRequest("chat.send", socketFrame);
+                    if (!Current(scope, epoch)) return Failure<T>("STALE_RESPONSE");
+                    // An unknown outcome (closed or timed out) falls through to the idempotent HTTP send with the same operationId and issuedAt.
+                    if (sent != null && sent.Delivered) response = RealtimeManager.ToResponse(sent, parser);
+                }
                 // NetworkService uses the same strict parser for native and WebGL transports.
-                var response = body == null ? await network.GetAsync<T>(path, true) : await network.PostOnceAsync<T>(path, new ChatJsonRequest(body), true);
+                if (response == null) response = body == null ? await network.GetAsync<T>(path, true) : await network.PostOnceAsync<T>(path, new ChatJsonRequest(body), true);
                 if (!Current(scope, epoch) || snapshot && syncEpoch != _syncEpoch) return Failure<T>("STALE_RESPONSE");
                 if (!response.IsSuccess)
                 {
@@ -259,6 +278,31 @@ namespace PM.horizOn.Cloud.Manager
         {
             if (_realtime != null) return; _realtime = RealtimeManager.Instance;
             _realtime.EventReceived += OnEvent; _realtime.ResyncRequired += OnResync; _realtime.ConnectionError += OnConnectionError;
+            _realtime.SnapshotReceived += OnSnapshot; _realtime.SyncFor = SyncState;
+        }
+        /// <summary>Catch-up state of a resubscription: current epoch and up to 20 newest known message ids.</summary>
+        private string SyncState(string topic)
+        {
+            if (topic == null || !topic.StartsWith("chat:", StringComparison.Ordinal) || !_watches.TryGetValue(topic.Substring(5), out var w)) return null;
+            w.Basis = w.Known == null ? null : ChatJson.Copy(w.Known);
+            var ids = w.Basis == null ? Array.Empty<string>() : w.Basis.visibleMessageIds.Skip(Math.Max(0, w.Basis.visibleMessageIds.Length - 20));
+            try { return "{\"epoch\":" + (w.Basis == null ? "null" : ChatJson.Quote(ChatJson.Id(w.Basis.channel.epoch))) + ",\"knownMessageIds\":[" + string.Join(",", ids.Select(x => ChatJson.Quote(ChatJson.Id(x)))) + "]}"; }
+            catch (FormatException) { w.Basis = null; return "{\"epoch\":null,\"knownMessageIds\":[]}"; }
+        }
+        /// <summary>A subscription snapshot is the sync answer: applied like it, without an HTTP reload. A bad one reloads over HTTP.</summary>
+        private void OnSnapshot(string topic, string raw)
+        {
+            SyncIdentity();
+            if (topic == null || !topic.StartsWith("chat:", StringComparison.Ordinal) || !_watches.TryGetValue(topic.Substring(5), out var w)) return;
+            try
+            {
+                var result = ChatJson.Synced(raw);
+                if (!Compose(w.User, w.Channel, w.Basis, result)) { Schedule(w); return; }
+                RecordClock(result); Archive(w.Channel, result.messages);
+                w.Snapshot = ChatJson.Copy(result); w.Known = ChatJson.Copy(result); w.ReceivedAt = NowSeconds(); w.Dirty = false;
+                FeedChanged?.Invoke(w.Channel, GetFeed(w.Channel));
+            }
+            catch (Exception e) when (e is FormatException || e is ArgumentException || e is KeyNotFoundException || e is NullReferenceException) { Schedule(w); }
         }
         private void OnEvent(RealtimeFrame frame)
         { SyncIdentity(); if (frame.topic != null && frame.topic.StartsWith("chat:", StringComparison.Ordinal) && _watches.TryGetValue(frame.topic.Substring(5), out var w)) Schedule(w); }
@@ -284,7 +328,7 @@ namespace PM.horizOn.Cloud.Manager
                     if (!_watches.TryGetValue(watch.Channel, out current) || !ReferenceEquals(current, watch)) return;
                     if (!result.IsSuccess) { Hide(watch); if (result.ErrorCode != "STALE_RESPONSE") ChannelError?.Invoke(watch.Channel, result.ErrorCode); continue; }
                     if (!_realtime.IsSubscribed("chat:" + watch.Channel)) { Hide(watch); return; }
-                    watch.Snapshot = ChatJson.Copy(result.Data); watch.ReceivedAt = NowSeconds();
+                    watch.Snapshot = ChatJson.Copy(result.Data); watch.Known = ChatJson.Copy(result.Data); watch.ReceivedAt = NowSeconds();
                     FeedChanged?.Invoke(watch.Channel, GetFeed(watch.Channel));
                 }
             }
