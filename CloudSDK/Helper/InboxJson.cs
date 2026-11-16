@@ -38,7 +38,7 @@ namespace PM.horizOn.Cloud.Helper
                 if (fields.TryGetValue("attachment", out var attachment) && attachment != "null")
                 {
                     var raw = JsonFragments.Object(attachment);
-                    foreach (var key in raw.Keys) if (key != "values" && key != "itemReturn") throw new FormatException("Unsupported Inbox attachment");
+                    foreach (var key in raw.Keys) if (key != "values" && key != "itemReturn" && key != "itemGift") throw new FormatException("Unsupported Inbox attachment");
                     var amounts = raw.TryGetValue("values", out var values) ? JsonFragments.Array(values) : new List<string>();
                     if (amounts.Count > 8) throw new FormatException("Inbox reward bound");
                     var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -57,6 +57,13 @@ namespace PM.horizOn.Cloud.Helper
                         if (item.Count != 3 || !FriendsJson.IsUuid(JsonFragments.String(item["listingId"]))
                             || !FriendsJson.IsUuid(JsonFragments.String(item["instanceId"])) || !ItemsJson.Key(JsonFragments.String(item["itemKey"]))) throw new FormatException("Inbox return invalid");
                         entry.attachment.itemReturn = new InboxItemReturn { listingId = JsonFragments.String(item["listingId"]), instanceId = JsonFragments.String(item["instanceId"]), itemKey = JsonFragments.String(item["itemKey"]) };
+                    }
+                    if (raw.TryGetValue("itemGift", out var itemGift) && itemGift != "null")
+                    {
+                        var gift = JsonFragments.Object(itemGift);
+                        if (gift.Count != 4 || !FriendsJson.IsUuid(JsonFragments.String(gift["giftId"])) || !FriendsJson.IsUuid(JsonFragments.String(gift["instanceId"]))
+                            || !ItemsJson.Key(JsonFragments.String(gift["itemKey"])) || JsonFragments.String(gift["direction"]) != "offer" && JsonFragments.String(gift["direction"]) != "return") throw new FormatException("Inbox item gift invalid");
+                        entry.attachment.itemGift = new InboxItemGift { giftId = JsonFragments.String(gift["giftId"]), instanceId = JsonFragments.String(gift["instanceId"]), itemKey = JsonFragments.String(gift["itemKey"]), direction = JsonFragments.String(gift["direction"]) };
                     }
                 }
                 if (entry.SourceKind != InboxSourceKind.Unknown && !entry.TryGetSource(out _)) throw new FormatException("Inbox source invalid");
@@ -104,9 +111,11 @@ namespace PM.horizOn.Cloud.Helper
                 // Preserve optional reward presence explicitly; Unity serialization may materialize an absent nested class.
                 var attachment = source.entries[i].attachment;
                 var item = attachment?.itemReturn;
+                var gift = attachment?.itemGift;
                 result.entries[i].attachment = attachment == null ? null : new InboxAttachment {
                     values = Array.ConvertAll(attachment.values ?? Array.Empty<PlayerValueAmount>(), value => new PlayerValueAmount { key = value.key, amount = value.amount }),
-                    itemReturn = item == null ? null : new InboxItemReturn { listingId = item.listingId, instanceId = item.instanceId, itemKey = item.itemKey }
+                    itemReturn = item == null ? null : new InboxItemReturn { listingId = item.listingId, instanceId = item.instanceId, itemKey = item.itemKey },
+                    itemGift = gift == null ? null : new InboxItemGift { giftId = gift.giftId, instanceId = gift.instanceId, itemKey = gift.itemKey, direction = gift.direction }
                 };
             }
             return result;

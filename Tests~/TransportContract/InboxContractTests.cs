@@ -139,6 +139,17 @@ internal static class InboxContractTests
         Check(InboxJson.Clone(plain).entries[0].attachment == null && !InboxJson.Clone(InboxJson.Snapshot(WithEntries("[" + row.Replace("9007199254740991", "1").Replace("[{\"key\":\"gold\",\"amount\":1}]", "[]") + "]"))).entries[0].CanClaim, "optional reward presence survives clone");
         var copy = InboxJson.Clone(returned); copy.entries[0].attachment.itemReturn.itemKey = "changed";
         Check(returned.entries[0].attachment.itemReturn.itemKey == "sword", "item descriptor deep clone");
+        const string Sender = "00000000-0000-4000-8000-000000001140";
+        string GiftAttachment(string direction) => "{\"values\":[],\"itemGift\":{\"giftId\":\"" + User + "\",\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\",\"direction\":\"" + direction + "\"}}";
+        string offer = SourceEntry("item_gift", "horizon.item_gifts.offer", User, "{\"senderId\":\"" + Sender + "\"}", GiftAttachment("offer"));
+        string giftReturn = SourceEntry("item_gift_return", "horizon.item_gifts.return", User, "{\"recipientId\":\"" + Sender + "\",\"reason\":\"declined\"}", GiftAttachment("return"));
+        var gifts = InboxJson.Snapshot(WithEntries("[" + offer + "," + giftReturn.Replace(Entry, "message:00000000-0000-4000-8000-000000001141") + "]"));
+        Check(gifts.entries[0].CanClaim && gifts.entries[0].attachment.itemGift.direction == "offer" && gifts.entries[0].TryGetSource(out var offered) && offered.Kind == InboxSourceKind.ItemGiftOffer && offered.SourceId == User && offered.UserId == Sender, "gift offer is a typed claimable source");
+        Check(gifts.entries[1].CanClaim && gifts.entries[1].TryGetSource(out var back) && back.Kind == InboxSourceKind.ItemGiftReturn && back.UserId == Sender, "gift return is a typed claimable source");
+        var giftCopy = InboxJson.Clone(gifts); giftCopy.entries[0].attachment.itemGift.itemKey = "changed";
+        Check(gifts.entries[0].attachment.itemGift.itemKey == "sword" && giftCopy.entries[1].attachment.itemGift.direction == "return", "gift descriptor deep clone");
+        foreach (string bad in new[] { offer.Replace("\"direction\":\"offer\"", "\"direction\":\"return\""), offer.Replace("\"direction\":\"offer\"", "\"direction\":\"other\""), offer.Replace("\"itemKey\":\"sword\"", "\"itemKey\":\"sword\",\"unknown\":1"), offer.Replace("\"senderId\"", "\"userId\""), giftReturn.Replace("declined", "lost") })
+            Refuses(WithEntries("[" + bad + "]"), "invalid gift source or descriptor");
         foreach (string bad in new[] { market.Replace("\"itemKey\":\"sword\"", "\"itemKey\":\"sword\",\"unknown\":1"), market.Replace("\"values\":[]", "\"values\":[],\"unknown\":1"), market.Replace("\"instanceId\":\"" + User + "\"", "\"instanceId\":\"bad\"") }) Refuses(WithEntries("[" + bad + "]"), "unsupported valuable content");
         string state = "{\"userId\":\"" + User + "\",\"day\":\"2026-10-16\",\"revision\":1,\"definitionVersion\":1,\"values\":[],\"operationWindow\":{\"serverTime\":\"2026-10-16T00:00:00Z\",\"oldestAcceptedAt\":\"2026-09-16T00:00:00Z\"}}";
         string claim = "{\"entryId\":\"" + Entry + "\",\"replayed\":true,\"inbox\":" + WithEntries("[]") + ",\"playerValues\":" + state + ",\"items\":[{\"instanceId\":\"" + User + "\",\"itemKey\":\"sword\"}]}";
