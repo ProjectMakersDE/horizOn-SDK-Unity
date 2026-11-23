@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.14.0...v1.15.0) (2026-11-23)
+
+
+### Features
+
+* **auth:** link a guest account to email, Google or Apple ([a0066e5](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/a0066e5b26d91c5a92e55bab4c2f12ab6f869cc0))
+
 # [1.14.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.13.0...v1.14.0) (2026-11-23)
 
 
