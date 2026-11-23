@@ -13,12 +13,17 @@ permissions:
 
 jobs:
   transport-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, proxmox-ci, horizon-sdk-ci]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           lfs: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -34,7 +39,7 @@ jobs:
           node Tests~/WebGLChatStorage.test.cjs
 
   unity-editor-transport:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, proxmox-ci, horizon-sdk-ci]
     timeout-minutes: 30
     steps:
       - name: Checkout repository
