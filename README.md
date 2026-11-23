@@ -195,6 +195,13 @@ await UserManager.Instance.SignUpEmail("user@example.com", "password", "DisplayN
 // Email sign-in
 await UserManager.Instance.SignInEmail("user@example.com", "password");
 
+// Switch a signed-in guest account to email, Google or Apple with the SAME user ID.
+// EMAIL sends a verification mail (CurrentUser.IsEmailVerified stays false until verified).
+await UserManager.Instance.LinkEmail("user@example.com", "password");
+// await UserManager.Instance.LinkGoogle(googleAuthorizationCode, redirectUri);
+// await UserManager.Instance.LinkApple(identityToken);
+// Failures (e.g. email or provider account already taken) arrive via EventKeys.UserLinkFailed.
+
 // Check authentication state
 if (UserManager.Instance.IsSignedIn)
 {

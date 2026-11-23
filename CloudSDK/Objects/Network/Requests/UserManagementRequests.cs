@@ -50,4 +50,21 @@ namespace PM.horizOn.Cloud.Objects.Network.Requests
         public string sessionToken;
         public string newName;
     }
+
+    /// <summary>
+    /// Request object for linking a guest (anonymous) account to EMAIL, GOOGLE or APPLE
+    /// while keeping the same user ID.
+    /// </summary>
+    [Serializable]
+    public class LinkAccountRequest
+    {
+        public string userId;
+        public string sessionToken;
+        public string type; // EMAIL, GOOGLE, APPLE
+        public string email;
+        public string password;
+        public string googleAuthorizationCode;
+        public string googleRedirectUri;
+        public string appleIdentityToken;
+    }
 }
