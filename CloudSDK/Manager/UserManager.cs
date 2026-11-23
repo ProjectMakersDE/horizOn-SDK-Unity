@@ -389,6 +389,144 @@ namespace PM.horizOn.Cloud.Manager
             }
         }
 
+        // ===== LINK GUEST ACCOUNT =====
+
+        /// <summary>
+        /// Link the signed-in guest (anonymous) account to an email and password.
+        /// The user ID stays the same. The server sends a verification mail and answers
+        /// USER_NOT_VERIFIED, which counts as success here; CurrentUser.IsEmailVerified stays false
+        /// until the email is verified.
+        /// </summary>
+        /// <param name="email">User email</param>
+        /// <param name="password">User password</param>
+        /// <returns>True if the account was linked, false otherwise</returns>
+        public async Task<bool> LinkEmail(string email, string password)
+        {
+            if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+            {
+                HorizonApp.Log.Error("Email and password are required");
+                return false;
+            }
+
+            return await LinkAccount(new LinkAccountRequest
+            {
+                type = AuthType.EMAIL.ToString(),
+                email = email,
+                password = password
+            });
+        }
+
+        /// <summary>
+        /// Link the signed-in guest (anonymous) account to a Google account.
+        /// The user ID stays the same.
+        /// </summary>
+        /// <param name="googleAuthorizationCode">Google authorization code from Google Sign-In SDK</param>
+        /// <param name="redirectUri">OAuth redirect URI. Leave empty for mobile apps (Android/iOS).</param>
+        /// <returns>True if the account was linked, false otherwise</returns>
+        public async Task<bool> LinkGoogle(string googleAuthorizationCode, string redirectUri = "")
+        {
+            if (string.IsNullOrEmpty(googleAuthorizationCode))
+            {
+                HorizonApp.Log.Error("Google authorization code is required");
+                return false;
+            }
+
+            return await LinkAccount(new LinkAccountRequest
+            {
+                type = AuthType.GOOGLE.ToString(),
+                googleAuthorizationCode = googleAuthorizationCode,
+                googleRedirectUri = redirectUri
+            });
+        }
+
+        /// <summary>
+        /// Link the signed-in guest (anonymous) account to an Apple account using a pre-obtained identity token.
+        /// The user ID stays the same.
+        /// </summary>
+        /// <param name="identityToken">JWT returned by Apple after user consent</param>
+        /// <returns>True if the account was linked, false otherwise</returns>
+        public async Task<bool> LinkApple(string identityToken)
+        {
+            if (string.IsNullOrEmpty(identityToken))
+            {
+                HorizonApp.Log.Error("Apple identity token is required");
+                HorizonApp.Events.Publish(EventKeys.UserLinkFailed, "INVALID_APPLE_TOKEN");
+                return false;
+            }
+
+            return await LinkAccount(new LinkAccountRequest
+            {
+                type = AuthType.APPLE.ToString(),
+                appleIdentityToken = identityToken
+            });
+        }
+
+        /// <summary>
+        /// Internal link method. The current session token keeps working; the server deletes the
+        /// guest anonymous token, so the locally stored one is removed on success.
+        /// </summary>
+        private async Task<bool> LinkAccount(LinkAccountRequest request)
+        {
+            if (!IsSignedIn || !_currentUser.IsAnonymous)
+            {
+                HorizonApp.Log.Error("Linking requires a signed-in guest account");
+                HorizonApp.Events.Publish(EventKeys.UserLinkFailed, "NOT_GUEST");
+                return false;
+            }
+
+            string linkedUserId = _currentUser.UserId;
+            string linkedToken = _currentUser.AccessToken;
+            request.userId = linkedUserId;
+            request.sessionToken = linkedToken;
+
+            HorizonApp.Events.Publish(EventKeys.UserLinkRequested, request.type);
+
+            var response = await HorizonApp.Network.PostAsync<AuthResponse>("/api/v1/app/user-management/link", request);
+            _lastAuthStatus = response.Data?.authStatus;
+
+            // The session may have been replaced while the request was in flight.
+            if (_currentUser == null || _currentUser.UserId != linkedUserId || _currentUser.AccessToken != linkedToken)
+                return false;
+
+            if (response.IsSuccess && response.Data != null &&
+                (response.Data.authStatus == "AUTHENTICATED" || response.Data.authStatus == "USER_NOT_VERIFIED"))
+            {
+                // The link response carries no access token: the current one keeps working.
+                _currentUser.Email = response.Data.email ?? string.Empty;
+                _currentUser.AuthType = !string.IsNullOrEmpty(response.Data.appleUserId)
+                    ? "APPLE"
+                    : (!string.IsNullOrEmpty(response.Data.googleId) ? "GOOGLE" : "EMAIL");
+                _currentUser.AppleUserId = response.Data.appleUserId ?? string.Empty;
+                _currentUser.IsPrivateRelayEmail = response.Data.isPrivateRelayEmail;
+                _currentUser.IsEmailVerified = response.Data.isVerified;
+                _currentUser.IsAnonymous = false;
+                _currentUser.AnonymousToken = string.Empty;
+
+                ClearAnonymousToken();
+                CacheSession();
+
+                HorizonApp.Log.Info($"Guest account linked to {_currentUser.AuthType}: {_currentUser.UserId}");
+                HorizonApp.Events.Publish(EventKeys.UserDataChanged, _currentUser);
+                HorizonApp.Events.Publish(EventKeys.UserLinkSuccess, _currentUser);
+
+                return true;
+            }
+            else
+            {
+                // Prefer the server-reported authStatus (e.g. INVALID_APPLE_TOKEN, APPLE_NOT_CONFIGURED),
+                // then the error body (e.g. 409 email or provider account already taken).
+                string errorPayload = response.Data?.authStatus
+                    ?? response.Error
+                    ?? response.Data?.message
+                    ?? "NETWORK_ERROR";
+
+                HorizonApp.Log.Error($"Link failed: {errorPayload}");
+                HorizonApp.Events.Publish(EventKeys.UserLinkFailed, errorPayload);
+
+                return false;
+            }
+        }
+
         // ===== CHECK AUTH =====
 
         /// <summary>
