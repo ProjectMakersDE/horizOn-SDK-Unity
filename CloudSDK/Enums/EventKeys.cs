@@ -27,6 +27,9 @@ namespace PM.horizOn.Cloud.Enums
         UserEmailVerified = 109,
         UserPasswordResetRequested = 110,
         UserPasswordResetSuccess = 111,
+        UserLinkRequested = 112,
+        UserLinkSuccess = 113,
+        UserLinkFailed = 114,
 
         // Data Change Events (200-299) - Trigger persistence
         UserDataChanged = 200,

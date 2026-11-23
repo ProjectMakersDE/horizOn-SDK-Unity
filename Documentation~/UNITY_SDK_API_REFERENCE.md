@@ -421,6 +421,35 @@ else
 
 ---
 
+### Link Guest Account
+
+**Endpoint**: `POST /api/v1/app/user-management/link`
+
+**Description**: Switch a signed-in guest (anonymous) account to EMAIL, GOOGLE or APPLE and keep the same user ID. The session token keeps working; the guest anonymous token is deleted on the server and by the SDK. Errors: 409 (email/provider account taken or account is not a guest), 401 (invalid session), 400 (weak password, bad token, `APPLE_NOT_CONFIGURED`, `INVALID_APPLE_TOKEN`).
+
+**Request Body**: `userId`, `sessionToken`, `type` (`EMAIL | GOOGLE | APPLE`), plus `email` and `password` (EMAIL), `googleAuthorizationCode` and `googleRedirectUri` (GOOGLE) or `appleIdentityToken` (APPLE).
+
+**Response (200 OK)**: `authStatus` is `USER_NOT_VERIFIED` for EMAIL (verification mail sent) and `AUTHENTICATED` for GOOGLE and APPLE.
+
+#### Unity SDK Usage
+
+```csharp
+using PM.horizOn.Cloud.Manager;
+
+// Requires a signed-in guest account (SignUpAnonymous / RestoreAnonymousSession)
+bool linked = await UserManager.Instance.LinkEmail("user@example.com", "password");
+// bool linked = await UserManager.Instance.LinkGoogle(googleAuthorizationCode, redirectUri);
+// bool linked = await UserManager.Instance.LinkApple(identityToken);
+
+if (linked)
+{
+    var user = UserManager.Instance.CurrentUser; // same UserId, IsAnonymous == false
+}
+// Events: EventKeys.UserLinkRequested, UserLinkSuccess, UserLinkFailed (error code string)
+```
+
+---
+
 ## Gift Codes
 
 Base path: `/api/v1/app/gift-codes`
