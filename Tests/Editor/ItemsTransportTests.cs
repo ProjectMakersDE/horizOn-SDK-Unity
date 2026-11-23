@@ -71,6 +71,27 @@ namespace PM.horizOn.Cloud.Tests
             if (action == "equip") Assert.That(body, Does.Contain("\"equipped\":false"));
             await Respond(c, Inventory(1)); Assert.That((await call).IsSuccess, Is.True);
         }
+        [TestCase("equip")][TestCase("discard")]
+        public async Task StackMutationsSendItemKeyAndReadStacks(string action)
+        {
+            string stacks = ",\"stacks\":[{\"itemKey\":\"potion\",\"count\":7,\"equipped\":true}]";
+            var request = _listener.GetContextAsync();
+            var call = action == "equip" ? Manager.SetStackEquipped(User, "potion", 3, true) : Manager.DiscardStack(User, "potion", 3, 2);
+            var c = await Timeout(request); Headers(c); Assert.That(c.Request.RawUrl, Is.EqualTo("/api/v1/app/items/" + action));
+            string body = await new StreamReader(c.Request.InputStream).ReadToEndAsync();
+            Assert.That(body, Is.EqualTo("{\"userId\":\"" + User + "\",\"itemKey\":\"potion\",\"expectedRevision\":3" + (action == "equip" ? ",\"equipped\":true" : ",\"count\":2") + "}"));
+            await Respond(c, Inventory(4).Replace(",\"limits\":", stacks + ",\"limits\":")); var result = await call;
+            Assert.That(result.IsSuccess, Is.True); Assert.That(result.Data.stacks.Length, Is.EqualTo(1));
+            Assert.That(result.Data.stacks[0].itemKey, Is.EqualTo("potion")); Assert.That(result.Data.stacks[0].count, Is.EqualTo(7)); Assert.That(result.Data.stacks[0].equipped, Is.True);
+            Assert.That(Manager.CurrentInventory.stacks[0].count, Is.EqualTo(7));
+        }
+        [Test] public async Task InvalidStackInputsNeverReachHttp()
+        {
+            Assert.That((await Manager.SetStackEquipped(User, "Bad Key", 0, true)).ErrorCode, Is.EqualTo("INVALID_REQUEST"));
+            foreach (long n in new[] { 0L, -1L, 1000000L }) Assert.That((await Manager.DiscardStack(User, "potion", 0, n)).ErrorCode, Is.EqualTo("INVALID_REQUEST"));
+            Assert.That((await Manager.DiscardStack(User, "potion", -1)).ErrorCode, Is.EqualTo("INVALID_REQUEST"));
+            var request = _listener.GetContextAsync(); Assert.That(await Task.WhenAny(request, Task.Delay(100)), Is.Not.SameAs(request));
+        }
         [TestCase(429)][TestCase(503)] public async Task InventoryWritesHaveExactlyOneTransportAttempt(int status)
         {
             var request = _listener.GetContextAsync(); var task = Manager.SetEquipped(User, Item, 9, true); var c = await Timeout(request);
