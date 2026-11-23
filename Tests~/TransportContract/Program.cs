@@ -450,6 +450,23 @@ Require(manager.CurrentUser.IsAnonymous && manager.CurrentUser.AuthType == "ANON
 Require(manager.CurrentUser.AnonymousToken == "server-issued-token", "signin retains server token");
 Require(PlayerPrefs.GetString("horizOn_AnonymousToken") == "server-issued-token", "server token is cached");
 
+// Guest start: a failed restore must not create another guest.
+{
+    var realRespond = authTransport.Respond;
+    int signupCalls = 0;
+    authTransport.Respond = (endpoint, request) =>
+    {
+        if (endpoint.EndsWith("/signup")) signupCalls++;
+        if (endpoint.EndsWith("/signin")) return NetworkResponse<AuthResponse>.Failure("NETWORK_ERROR", 0);
+        return realRespond(endpoint, request);
+    };
+    Require(manager.HasCachedAnonymousToken(), "guest token is cached before quick sign-in");
+    Require(!await manager.QuickSignInAnonymous("Player"), "quick sign-in reports a failed restore");
+    Require(signupCalls == 0, "failed restore never creates a new guest");
+    Require(PlayerPrefs.GetString("horizOn_AnonymousToken") == "server-issued-token", "failed restore keeps the stored token");
+    authTransport.Respond = realRespond;
+}
+
 var staleAuthResponse = new TaskCompletionSource<object>();
 string checkedToken = "session-721";
 int authChecks = 0;

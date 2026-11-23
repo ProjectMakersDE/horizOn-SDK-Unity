@@ -336,6 +336,24 @@ namespace PM.horizOn.Cloud.Manager
         }
 
         /// <summary>
+        /// Guest start: restores the stored guest when a token exists, otherwise creates a new guest.
+        /// A failed restore (network error, timeout) never creates another player as a fallback,
+        /// because the progress of the stored guest would be orphaned. The game decides explicitly
+        /// whether to retry or to call <see cref="ClearAnonymousToken"/> and <see cref="SignUpAnonymous"/>.
+        /// </summary>
+        /// <param name="displayName">Display name, used only when a new guest is created</param>
+        /// <returns>True if signed in, false otherwise</returns>
+        public async Task<bool> QuickSignInAnonymous(string displayName = "")
+        {
+            if (HasCachedAnonymousToken())
+            {
+                return await RestoreAnonymousSession();
+            }
+
+            return await SignUpAnonymous(displayName);
+        }
+
+        /// <summary>
         /// Internal signin method.
         /// </summary>
         private async Task<bool> SignIn(SignInRequest request)
