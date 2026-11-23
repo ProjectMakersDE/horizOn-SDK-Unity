@@ -1,3 +1,11 @@
+## [1.15.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.15.0...v1.15.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* install .NET into the runner tool cache on the local runner ([806c6ea](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/806c6ea75585ab772ae9bf52a4a6774e1bbc2ea6))
+* run SDK CI on the local proxmox runners and test Unity only on release ([e62f3e4](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/e62f3e427d3b7eeeaefaa000bef3c1361ca88d3f))
+
 # [1.15.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.14.0...v1.15.0) (2026-11-23)
 
 
