@@ -187,6 +187,10 @@ if (UserManager.Instance.HasCachedAnonymousToken())
     bool success = await UserManager.Instance.RestoreAnonymousSession();
 }
 
+// Safe guest start: restores a stored guest, else creates a new one.
+// A failed restore (network error, timeout) never creates a new guest as a fallback.
+bool signedIn = await UserManager.Instance.QuickSignInAnonymous("GuestPlayer");
+
 // Google sign-in
 bool success = await UserManager.Instance.SignInGoogle(
     googleAuthCode,    // from Google Sign-In SDK
