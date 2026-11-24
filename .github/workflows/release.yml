@@ -15,6 +15,12 @@ jobs:
   transport-test:
     runs-on: [self-hosted, Linux, X64, proxmox-ci, horizon-sdk-ci]
     steps:
+      # game-ci runs Unity as root in Docker and leaves root-owned files behind; hand them back first.
+      - name: Reclaim workspace
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ] && find "$GITHUB_WORKSPACE" -mindepth 1 ! -user "$(id -u)" -print -quit | grep -q .; then
+            docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3.20 chown -R "$(id -u):$(id -g)" /w
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -44,6 +50,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64, proxmox-ci, horizon-sdk-ci]
     timeout-minutes: 30
     steps:
+      # game-ci runs Unity as root in Docker and leaves root-owned files behind; hand them back first.
+      - name: Reclaim workspace
+        run: |
+          if [ -d "$GITHUB_WORKSPACE" ] && find "$GITHUB_WORKSPACE" -mindepth 1 ! -user "$(id -u)" -print -quit | grep -q .; then
+            docker run --rm -v "$GITHUB_WORKSPACE:/w" alpine:3.20 chown -R "$(id -u):$(id -g)" /w
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
