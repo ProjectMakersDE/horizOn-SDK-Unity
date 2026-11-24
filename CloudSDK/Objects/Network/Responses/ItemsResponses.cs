@@ -14,11 +14,16 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
     }
     [Serializable] public class ItemPropertyDelta { public string key; public long amount; }
     [Serializable] public class ItemPropertyRule { public string key; public long min, max, maxChangePerCall; }
-    [Serializable] public class ItemLimits { public int catalog, inventory, receipts; }
+    /// <summary>inventory counts unique instances, stacks the stack slots (one per stack template). stacks is 0 on older servers.</summary>
+    [Serializable] public class ItemLimits { public int catalog, inventory, receipts, stacks; }
     [Serializable] public class ItemDefinition
     {
         public string key, name, type, rarity;
         public bool active;
+        /// <summary>"unique" (default, also for older servers) or "stack". Fixed when the template is created.</summary>
+        public string mode = "unique";
+        /// <summary>Highest count of one stack; only set for "stack" templates.</summary>
+        public long? maxStack;
         public ItemProperty[] baseProperties = Array.Empty<ItemProperty>();
         public ItemPropertyRule[] propertyRules = Array.Empty<ItemPropertyRule>();
     }
@@ -28,11 +33,22 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public ItemProperty[] properties = Array.Empty<ItemProperty>();
         public bool equipped;
     }
+    /// <summary>One stack per stack template and player. Its values come from the catalog template.</summary>
+    [Serializable] public class ItemStack
+    {
+        public string itemKey;
+        public long count;
+        public bool equipped;
+    }
+    /// <summary>Quantity a grant added to a stack and the resulting stack count.</summary>
+    [Serializable] public class ItemStackGrant { public string itemKey; public int quantity; public long count; }
     [Serializable] public class InventorySnapshot
     {
         public string userId, serverTime;
         public long revision;
         public ItemInstance[] instances = Array.Empty<ItemInstance>();
+        /// <summary>Empty on older servers.</summary>
+        public ItemStack[] stacks = Array.Empty<ItemStack>();
         public ItemLimits limits;
     }
     [Serializable] public class ItemCatalogPage

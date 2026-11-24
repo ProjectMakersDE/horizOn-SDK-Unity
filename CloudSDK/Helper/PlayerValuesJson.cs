@@ -30,6 +30,7 @@ namespace PM.horizOn.Cloud.Helper
             {
                 var operation = JsonFragments.Object(originalOperation);
                 state.operation.items = operation.TryGetValue("items", out var items) ? ItemsJson.References(items) : Array.Empty<ItemReference>();
+                state.operation.stacks = operation.TryGetValue("stacks", out var stacks) ? ItemsJson.StackGrants(stacks) : Array.Empty<ItemStackGrant>();
             }
             else state.operation = null;
             return state;
@@ -53,6 +54,7 @@ namespace PM.horizOn.Cloud.Helper
             raw = raw.Trim();
             if (member == "itemRewards") ItemsJson.Rewards(raw);
             if (member == "items") ItemsJson.References(raw);
+            if (member == "stacks") ItemsJson.StackGrants(raw);
             if (raw.StartsWith("{", StringComparison.Ordinal))
                 return "{" + string.Join(",", JsonFragments.Object(raw).Select(pair => Quote(pair.Key) + ":" + Rewrite(pair.Value, pair.Key))) + "}";
             if (raw.StartsWith("[", StringComparison.Ordinal))
@@ -77,7 +79,8 @@ namespace PM.horizOn.Cloud.Helper
                 copy = new PlayerValuesState { userId = s.userId, day = s.day, definitionVersion = s.definitionVersion, revision = s.revision,
                     values = Array.ConvertAll(s.values, Balance), operationWindow = s.operationWindow == null ? null : new PlayerValuesOperationWindow { serverTime = s.operationWindow.serverTime, oldestAcceptedAt = s.operationWindow.oldestAcceptedAt },
                     operation = s.operation == null ? null : new PlayerValuesOperation { operationId = s.operation.operationId, replayed = s.operation.replayed,
-                        applied = Array.ConvertAll(s.operation.applied ?? Array.Empty<PlayerValueAmount>(), Amount), items = Array.ConvertAll(s.operation.items ?? Array.Empty<ItemReference>(), x => new ItemReference { instanceId = x.instanceId, itemKey = x.itemKey }) } };
+                        applied = Array.ConvertAll(s.operation.applied ?? Array.Empty<PlayerValueAmount>(), Amount), items = Array.ConvertAll(s.operation.items ?? Array.Empty<ItemReference>(), x => new ItemReference { instanceId = x.instanceId, itemKey = x.itemKey }),
+                        stacks = Array.ConvertAll(s.operation.stacks ?? Array.Empty<ItemStackGrant>(), x => new ItemStackGrant { itemKey = x.itemKey, quantity = x.quantity, count = x.count }) } };
             else if (source is PlayerValuesOffers o)
                 copy = new PlayerValuesOffers { definitionVersion = o.definitionVersion, serverTime = o.serverTime, definitions = Array.ConvertAll(o.definitions, Balance),
                     offers = Array.ConvertAll(o.offers, x => new PlayerValueOffer { key = x.key, name = x.name, active = x.active, purchasesPerDay = x.purchasesPerDay,

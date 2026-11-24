@@ -25,8 +25,37 @@ static class ItemsContractTests
             Reject(() => ItemsJson.Rewards("[{\"itemKey\":\"sword\",\"quantity\":" + raw + "}]"), "exact reward quantity");
         Reject(() => ItemsJson.Rewards("[{\"itemKey\":\"a\",\"quantity\":3},{\"itemKey\":\"b\",\"quantity\":2}]"), "total quantity");
         Reject(() => JsonFragments.Object("{\"a\":1,\"\\u0061\":2}"), "decoded duplicate");
+        Stacks();
         Journal();
         Console.WriteLine("Items canonical, safe integer, typed/NUL string, original JSON key and bounded reward contracts passed.");
+    }
+    private static void Stacks()
+    {
+        const string user = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", head = "{\"userId\":\"" + user + "\",\"revision\":2,\"serverTime\":\"2026-11-23T00:00:00Z\",\"instances\":[]";
+        var old = ItemsJson.Inventory(head + ",\"limits\":{\"catalog\":1,\"inventory\":1,\"receipts\":1}}");
+        Require(old.stacks.Length == 0 && old.limits.stacks == 0, "old server inventory has no stacks");
+        var inv = ItemsJson.Inventory(head + ",\"stacks\":[{\"itemKey\":\"potion\",\"count\":999999,\"equipped\":true}],\"limits\":{\"catalog\":1,\"inventory\":1,\"receipts\":1,\"stacks\":25}}");
+        Require(inv.stacks.Length == 1 && inv.stacks[0].itemKey == "potion" && inv.stacks[0].count == 999999 && inv.stacks[0].equipped && inv.limits.stacks == 25, "stack inventory");
+        var copy = ItemsJson.Clone(inv); copy.stacks[0].count = 1; Require(inv.stacks[0].count == 999999 && copy.limits.stacks == 25, "stack copy is defensive");
+        Reject(() => ItemsJson.Inventory(head + ",\"stacks\":[{\"itemKey\":\"potion\",\"count\":1,\"equipped\":true},{\"itemKey\":\"potion\",\"count\":2,\"equipped\":false}],\"limits\":{\"catalog\":1,\"inventory\":1,\"receipts\":1}}"), "duplicate stack key");
+        Reject(() => ItemsJson.Inventory(head + ",\"stacks\":[{\"itemKey\":\"potion\",\"count\":-1,\"equipped\":true}],\"limits\":{\"catalog\":1,\"inventory\":1,\"receipts\":1}}"), "negative stack count");
+        string def = "{\"key\":\"potion\",\"name\":\"Potion\",\"type\":\"consumable\",\"rarity\":\"common\",\"active\":true,\"baseProperties\":{},\"propertyRules\":[]";
+        string page = "{\"revision\":1,\"nextAfterKey\":null,\"total\":1,\"limits\":{\"catalog\":1,\"inventory\":1,\"receipts\":1,\"stacks\":25},\"serverTime\":\"2026-11-23T00:00:00Z\",\"definitions\":[";
+        var legacy = ItemsJson.Catalog(page + def + "}]}").definitions[0];
+        Require(legacy.mode == "unique" && legacy.maxStack == null, "old server definition is unique");
+        var unique = ItemsJson.Catalog(page + def + ",\"mode\":\"unique\",\"maxStack\":null}]}").definitions[0];
+        Require(unique.mode == "unique" && unique.maxStack == null, "unique definition with null maxStack");
+        var stack = ItemsJson.Catalog(page + def + ",\"mode\":\"stack\",\"maxStack\":99}]}");
+        Require(stack.definitions[0].mode == "stack" && stack.definitions[0].maxStack == 99 && ItemsJson.Clone(stack).definitions[0].maxStack == 99 && stack.limits.stacks == 25, "stack definition");
+        Reject(() => ItemsJson.Catalog(page + def + ",\"mode\":\"bundle\"}]}"), "unknown mode");
+        Reject(() => ItemsJson.Catalog(page + def + ",\"mode\":\"stack\",\"maxStack\":1000000}]}"), "maxStack bound");
+        var grants = ItemsJson.StackGrants("[{\"itemKey\":\"potion\",\"quantity\":3,\"count\":42}]");
+        Require(grants.Length == 1 && grants[0].quantity == 3 && grants[0].count == 42 && ItemsJson.StackGrants("[]").Length == 0, "stack grants");
+        Reject(() => ItemsJson.StackGrants("[{\"itemKey\":\"potion\",\"quantity\":5,\"count\":5}]"), "stack grant quantity");
+        string state = "{\"userId\":\"" + user + "\",\"day\":\"2026-11-23\",\"definitionVersion\":1,\"revision\":1,\"values\":[],\"operationWindow\":{\"serverTime\":\"2026-11-23T00:00:00Z\",\"oldestAcceptedAt\":\"2026-10-23T00:00:00Z\"},\"operation\":{\"operationId\":\"op\",\"replayed\":false,\"applied\":[],\"items\":[]";
+        var bought = PlayerValuesJson.State(state + ",\"stacks\":[{\"itemKey\":\"potion\",\"quantity\":2,\"count\":9}]}}");
+        Require(bought.operation.stacks.Length == 1 && bought.operation.stacks[0].count == 9 && PlayerValuesJson.Clone(bought).operation.stacks[0].quantity == 2, "purchase stack grants");
+        Require(PlayerValuesJson.State(state + "}}").operation.stacks.Length == 0, "old server purchase has no stacks");
     }
     private static void Journal()
     {
