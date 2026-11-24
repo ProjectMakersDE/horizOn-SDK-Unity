@@ -1,3 +1,15 @@
+# [1.16.0](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.15.1...v1.16.0) (2026-11-24)
+
+
+### Bug Fixes
+
+* **ci:** reclaim root-owned Unity CI files before checkout on self-hosted runners ([69e3ccf](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/69e3ccfbb186c25302536bee332c346dc539a70c))
+
+
+### Features
+
+* **items:** stack inventory, equip and discard (TASK-1152) ([3d4f962](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/commit/3d4f962e3e4c64fad2f05b0e8c4864a4fbeb1a3f))
+
 ## [1.15.1](https://github.com/ProjectMakersDE/horizOn-SDK-Unity/compare/v1.15.0...v1.15.1) (2026-11-23)
 
 
