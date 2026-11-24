@@ -27,6 +27,8 @@ namespace PM.horizOn.Cloud.Objects.Network.Responses
         public PlayerValueAmount[] applied = Array.Empty<PlayerValueAmount>();
         /// <summary>Immediate fresh-purchase references. Compact replay returns an empty array and current state.</summary>
         public ItemReference[] items = Array.Empty<ItemReference>();
+        /// <summary>Stack grants of a fresh purchase (unique items stay in items). Empty on older servers and on compact replay.</summary>
+        public ItemStackGrant[] stacks = Array.Empty<ItemStackGrant>();
     }
     [Serializable] public class PlayerValuesState
     {

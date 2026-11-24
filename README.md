@@ -1026,6 +1026,8 @@ There is no signup, background poller, automatic page loop, local grant or autom
 | `AdjustProperties(userId, instanceId, expectedRevision, IList<ItemPropertyDelta> changes)` | `InventorySnapshot` |
 | `SetEquipped(userId, instanceId, expectedRevision, equipped)` | `InventorySnapshot` |
 | `DiscardItem(userId, instanceId, expectedRevision)` | `InventorySnapshot` |
+| `SetStackEquipped(userId, itemKey, expectedRevision, equipped)` | `InventorySnapshot` |
+| `DiscardStack(userId, itemKey, expectedRevision, count: 1)` | `InventorySnapshot` |
 
 `ItemsResult<T>` and the DTOs are in `PM.horizOn.Cloud.Objects.Network.Responses`. Snapshot fields
 are camelCase: `userId`, `revision`, `instances`, `limits`, `serverTime`; an instance has
@@ -1069,6 +1071,20 @@ state and empty `applied`/`items`, including after offer changes or discarded it
 original purchase `operationId` before HTTP, reuse it
 on uncertain retry and explicitly GET inventory after success. Never synthesize an item, add
 local balance deltas or buy again to recover a failed inventory refresh.
+
+Stack items (TASK-1152). A catalog definition carries `mode` (`"unique"`, the default for older
+servers, or `"stack"`) and `maxStack` (`long?`, set only for stack templates). A stack template
+gives each player one stack with a count instead of single instances. `InventorySnapshot.stacks`
+lists them as `ItemStack{itemKey, count, equipped}`; the values of a stack come from its catalog
+template. `limits.stacks` is the number of stack slots per player (0 on older servers), while
+`limits.inventory` counts unique instances only. Equip a stack with `SetStackEquipped` and remove
+from it with `DiscardStack` (`count` 1 to 999999, default 1); the instance methods stay unchanged
+for unique items. A Player Values purchase lists granted unique items in `operation.items` and
+stack grants in `operation.stacks` (`ItemStackGrant{itemKey, quantity, count}`, `count` is the new
+stack total). Missing fields from older servers become empty arrays. New error codes come back
+in `ErrorCode` like the others: `STACK_LIMIT_REACHED` (stack full or no free stack slot),
+`ITEM_STACK_TOO_SMALL` (discard count larger than the stack), `ITEM_MODE_LOCKED` (template mode
+change) and `ITEM_NOT_TRADABLE` (stacks cannot be sold on the marketplace or gifted).
 
 Import `ItemsExample` and `ItemsSampleStore` from the Examples sample. Configure the stable
 project UUID; use an existing matching session. Explicitly call `ReadOneCatalogPage`,

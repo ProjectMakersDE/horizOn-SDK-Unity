@@ -81,11 +81,21 @@ namespace PM.horizOn.Cloud.Manager
             => Mutation(userId, instanceId, expectedRevision, "/equip", ",\"equipped\":" + (equipped ? "true" : "false"));
         public Task<ItemsResult<InventorySnapshot>> DiscardItem(string userId, string instanceId, long expectedRevision)
             => Mutation(userId, instanceId, expectedRevision, "/discard", "");
-        private Task<ItemsResult<InventorySnapshot>> Mutation(string user, string instance, long revision, string route, string fields)
+        /// <summary>Equip or unequip the stack of a stack template. Unique items keep using SetEquipped.</summary>
+        public Task<ItemsResult<InventorySnapshot>> SetStackEquipped(string userId, string itemKey, long expectedRevision, bool equipped)
+            => Mutation(userId, null, expectedRevision, "/equip", ",\"equipped\":" + (equipped ? "true" : "false"), itemKey);
+        /// <summary>Remove count (1 to 999999) from a stack. More than the stack holds fails with ITEM_STACK_TOO_SMALL; a stack at zero is removed.</summary>
+        public Task<ItemsResult<InventorySnapshot>> DiscardStack(string userId, string itemKey, long expectedRevision, long count = 1)
+        {
+            if (count < 1 || count > ItemsJson.MaxStack) return Task.FromResult(Failure<InventorySnapshot>("INVALID_REQUEST"));
+            return Mutation(userId, null, expectedRevision, "/discard", ",\"count\":" + count.ToString(CultureInfo.InvariantCulture), itemKey);
+        }
+        private Task<ItemsResult<InventorySnapshot>> Mutation(string user, string instance, long revision, string route, string fields, string itemKey = null)
         {
             if (!Begin(user, out _, out _)) return Task.FromResult(Failure<InventorySnapshot>(LastErrorCode));
-            if (!FriendsJson.IsUuid(instance) || !ItemsJson.Revision(revision)) return Task.FromResult(Failure<InventorySnapshot>("INVALID_REQUEST"));
-            string body = "{\"userId\":" + ItemsJson.Quote(user) + ",\"instanceId\":" + ItemsJson.Quote(instance)
+            if ((itemKey == null ? !FriendsJson.IsUuid(instance) : !ItemsJson.Key(itemKey)) || !ItemsJson.Revision(revision)) return Task.FromResult(Failure<InventorySnapshot>("INVALID_REQUEST"));
+            string target = itemKey == null ? ",\"instanceId\":" + ItemsJson.Quote(instance) : ",\"itemKey\":" + ItemsJson.Quote(itemKey);
+            string body = "{\"userId\":" + ItemsJson.Quote(user) + target
                 + ",\"expectedRevision\":" + revision.ToString(CultureInfo.InvariantCulture) + fields + "}";
             return InventoryCall(user, route, new ItemsJsonRequest(body), revision);
         }

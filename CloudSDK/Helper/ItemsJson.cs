@@ -14,6 +14,7 @@ namespace PM.horizOn.Cloud.Helper
     {
         private static readonly Regex KeyPattern = new Regex(@"\A[a-z][a-z0-9_]{0,63}\z");
         private static readonly Regex IntegerPattern = new Regex(@"\A(?:0|-?[1-9][0-9]*)\z");
+        internal const long MaxStack = 999999;
         internal static bool Key(string key) => key != null && KeyPattern.IsMatch(key);
         internal static bool Revision(long n) => n >= 0 && n <= PlayerValuesManager.MaxSafeInteger;
         internal static bool Safe(long n) => n >= -PlayerValuesManager.MaxSafeInteger && n <= PlayerValuesManager.MaxSafeInteger;
@@ -38,7 +39,9 @@ namespace PM.horizOn.Cloud.Helper
         {
             var f = JsonFragments.Object(raw);
             // Operator quotas are positive Int32 values, not the old tariff defaults.
-            return new ItemLimits { catalog = Bound(f["catalog"], 1, int.MaxValue), inventory = Bound(f["inventory"], 1, int.MaxValue), receipts = Bound(f["receipts"], 1, int.MaxValue) };
+            // stacks is absent on servers without stack templates and may be zero.
+            return new ItemLimits { catalog = Bound(f["catalog"], 1, int.MaxValue), inventory = Bound(f["inventory"], 1, int.MaxValue), receipts = Bound(f["receipts"], 1, int.MaxValue),
+                stacks = f.TryGetValue("stacks", out var stacks) ? Bound(stacks, 0, int.MaxValue) : 0 };
         }
         private static T[] Rows<T>(string raw, int max, Func<string, T> parse, Func<T, string> key)
         {
@@ -88,7 +91,13 @@ namespace PM.horizOn.Cloud.Helper
         internal static InventorySnapshot Inventory(string raw)
         {
             var f = JsonFragments.Object(raw);
-            return new InventorySnapshot { userId = Uuid(f["userId"]), revision = Integer(f["revision"]), serverTime = Instant(f["serverTime"]), limits = Limits(f["limits"]), instances = Rows(f["instances"], int.MaxValue, Instance, x => x.instanceId) };
+            return new InventorySnapshot { userId = Uuid(f["userId"]), revision = Integer(f["revision"]), serverTime = Instant(f["serverTime"]), limits = Limits(f["limits"]), instances = Rows(f["instances"], int.MaxValue, Instance, x => x.instanceId),
+                stacks = f.TryGetValue("stacks", out var stacks) ? Rows(stacks, int.MaxValue, Stack, x => x.itemKey) : Array.Empty<ItemStack>() };
+        }
+        private static ItemStack Stack(string raw)
+        {
+            var f = JsonFragments.Object(raw);
+            return new ItemStack { itemKey = KeyValue(f["itemKey"]), count = Integer(f["count"]), equipped = Boolean(f["equipped"]) };
         }
         private static ItemInstance Instance(string raw)
         {
@@ -105,7 +114,9 @@ namespace PM.horizOn.Cloud.Helper
         {
             var f = JsonFragments.Object(raw); string name = Text(f["name"]);
             if (string.IsNullOrWhiteSpace(name) || Encoding.UTF8.GetByteCount(name) > 120) throw new FormatException("Items name invalid");
-            var result = new ItemDefinition { key = KeyValue(f["key"]), name = name, type = KeyValue(f["type"]), rarity = KeyValue(f["rarity"]), active = Boolean(f["active"]), baseProperties = Properties(f["baseProperties"]), propertyRules = Rows(f["propertyRules"], 16, Rule, x => x.key) };
+            var result = new ItemDefinition { key = KeyValue(f["key"]), name = name, type = KeyValue(f["type"]), rarity = KeyValue(f["rarity"]), active = Boolean(f["active"]), baseProperties = Properties(f["baseProperties"]), propertyRules = Rows(f["propertyRules"], 16, Rule, x => x.key),
+                mode = f.TryGetValue("mode", out var mode) ? Text(mode) : "unique", maxStack = f.TryGetValue("maxStack", out var max) && max != "null" ? Integer(max) : (long?)null };
+            if (result.mode != "unique" && result.mode != "stack" || result.maxStack.HasValue && (result.maxStack < 1 || result.maxStack > MaxStack)) throw new FormatException("Items mode invalid");
             foreach (var rule in result.propertyRules)
             {
                 var value = Array.Find(result.baseProperties, p => p.key == rule.key);
@@ -125,17 +136,20 @@ namespace PM.horizOn.Cloud.Helper
             if (result.Sum(x => x.quantity) > 4) throw new FormatException("Items reward bound");
             return result;
         }
+        internal static ItemStackGrant[] StackGrants(string raw)
+            => Rows(raw, 4, row => { var f = JsonFragments.Object(row); return new ItemStackGrant { itemKey = KeyValue(f["itemKey"]), quantity = Bound(f["quantity"], 1, 4), count = Integer(f["count"]) }; }, x => x.itemKey);
         internal static ItemReference[] References(string raw) => Rows(raw, 4, row => { var f = JsonFragments.Object(row); return new ItemReference { instanceId = Uuid(f["instanceId"]), itemKey = KeyValue(f["itemKey"]) }; }, x => x.instanceId);
         internal static T Clone<T>(T value) where T : class
         {
             if (value == null) return null;
-            object copy = value is InventorySnapshot s ? new InventorySnapshot { userId = s.userId, revision = s.revision, serverTime = s.serverTime, limits = Clone(s.limits), instances = Array.ConvertAll(s.instances, Clone) }
+            object copy = value is InventorySnapshot s ? new InventorySnapshot { userId = s.userId, revision = s.revision, serverTime = s.serverTime, limits = Clone(s.limits), instances = Array.ConvertAll(s.instances, Clone), stacks = Array.ConvertAll(s.stacks ?? Array.Empty<ItemStack>(), Clone) }
                 : value is ItemCatalogPage c ? new ItemCatalogPage { revision = c.revision, definitions = Array.ConvertAll(c.definitions, Clone), nextAfterKey = c.nextAfterKey, total = c.total, limits = Clone(c.limits), serverTime = c.serverTime }
                 : value is ItemInstance i ? new ItemInstance { instanceId = i.instanceId, itemKey = i.itemKey, properties = Array.ConvertAll(i.properties, Clone), equipped = i.equipped, createdAt = i.createdAt }
-                : value is ItemDefinition d ? new ItemDefinition { key = d.key, name = d.name, type = d.type, rarity = d.rarity, active = d.active, baseProperties = Array.ConvertAll(d.baseProperties, Clone), propertyRules = Array.ConvertAll(d.propertyRules, Clone) }
+                : value is ItemStack k ? new ItemStack { itemKey = k.itemKey, count = k.count, equipped = k.equipped }
+                : value is ItemDefinition d ? new ItemDefinition { key = d.key, name = d.name, type = d.type, rarity = d.rarity, active = d.active, mode = d.mode, maxStack = d.maxStack, baseProperties = Array.ConvertAll(d.baseProperties, Clone), propertyRules = Array.ConvertAll(d.propertyRules, Clone) }
                 : value is ItemProperty p ? new ItemProperty { key = p.key, type = p.type, integerValue = p.integerValue, booleanValue = p.booleanValue, stringValue = p.stringValue }
                 : value is ItemPropertyRule r ? new ItemPropertyRule { key = r.key, min = r.min, max = r.max, maxChangePerCall = r.maxChangePerCall }
-                : value is ItemLimits l ? new ItemLimits { catalog = l.catalog, inventory = l.inventory, receipts = l.receipts }
+                : value is ItemLimits l ? new ItemLimits { catalog = l.catalog, inventory = l.inventory, receipts = l.receipts, stacks = l.stacks }
                 : throw new ArgumentException("Unknown Items copy");
             return (T)copy;
         }
